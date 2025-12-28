@@ -1,0 +1,22 @@
+{
+  "name": "weixin-reader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "release": "tauri build && mkdir -p release && cp -r src-tauri/target/release/bundle/dmg/*.dmg release/ 2>/dev/null || true && cp -r src-tauri/target/release/bundle/macos/*.app release/ 2>/dev/null || true && echo '✨ 打包完成！文件已复制到项目根目录的 release/ 文件夹中'"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "vite": "^6.0.3",
+    "typescript": "~5.6.2"
+  }
+}
