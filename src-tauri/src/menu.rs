@@ -1,6 +1,6 @@
 use tauri::{
     menu::{Menu, MenuItem, Submenu, CheckMenuItem, PredefinedMenuItem},
-    App, Emitter, Manager, Runtime
+    App, Emitter, Manager, Runtime, WebviewWindowBuilder, WebviewUrl
 };
 use tauri_plugin_opener::OpenerExt;
 
@@ -8,10 +8,31 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let handle = app.handle();
 
     // 1. App Menu (macOS only mostly)
-    let app_menu = Submenu::new(
+    let about = MenuItem::with_id(handle, "about", "关于", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(handle, "check_update", "检查更新...", true, None::<&str>)?;
+    let settings = MenuItem::with_id(handle, "settings", "设置...", true, Some("CmdOrCtrl+,"))?;
+    
+    let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
+    let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
+    let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
+    let quit = PredefinedMenuItem::quit(handle, Some("退出"))?;
+
+    let app_menu = Submenu::with_items(
         handle,
         "App",
         true,
+        &[
+            &about,
+            &check_update,
+            &PredefinedMenuItem::separator(handle)?,
+            &settings,
+            &PredefinedMenuItem::separator(handle)?,
+            &hide,
+            &hide_others,
+            &show_all,
+            &PredefinedMenuItem::separator(handle)?,
+            &quit,
+        ],
     )?;
     
     // 2. View Menu
@@ -25,9 +46,10 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let zoom_in = MenuItem::with_id(handle, "zoom_in", "放大", true, Some("CmdOrCtrl+="))?;
     let zoom_out = MenuItem::with_id(handle, "zoom_out", "缩小", true, Some("CmdOrCtrl+-"))?;
     
-    // Check if fullscreen is predefined
-    // PredefinedMenuItem::fullscreen is NOT in list. Use custom.
-    let toggle_fullscreen = MenuItem::with_id(handle, "toggle_fullscreen", "切换全屏", true, Some("Ctrl+Cmd+F"))?;
+    // Native macOS Fullscreen MenuItem
+    // Using PredefinedMenuItem::fullscreen automatically binds to the system's "Enter Full Screen" action.
+    // This allows macOS to handle the shortcuts (Fn+F, Ctrl+Cmd+F) natively and show the correct icon/text in the menu.
+    let toggle_fullscreen = PredefinedMenuItem::fullscreen(handle, Some("切换全屏"))?;
     
     let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, false, Some("CmdOrCtrl+9"))?;
     let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, false, Some("CmdOrCtrl+O"))?;
@@ -129,27 +151,61 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             "zoom_in" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    // Primitive zoom
-                     let _ = win.eval("document.body.style.zoom = (parseFloat(document.body.style.zoom || 1) + 0.1)");
+                    let _ = win.emit("menu-action", "zoom_in");
                 }
             }
             "zoom_out" => {
                 if let Some(win) = app.get_webview_window("main") {
-                     let _ = win.eval("document.body.style.zoom = (parseFloat(document.body.style.zoom || 1) - 0.1)");
+                    let _ = win.emit("menu-action", "zoom_out");
                 }
             }
             "zoom_reset" => {
                 if let Some(win) = app.get_webview_window("main") {
-                     let _ = win.eval("document.body.style.zoom = 1");
+                    let _ = win.emit("menu-action", "zoom_reset");
                 }
             }
-            "toggle_fullscreen" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    if let Ok(is_fs) = win.is_fullscreen() {
-                        let _ = win.set_fullscreen(!is_fs);
+            "about" => {
+                if let Some(win) = app.get_webview_window("about") {
+                    let _ = win.set_focus();
+                } else {
+                     let _ = WebviewWindowBuilder::new(app, "about", WebviewUrl::App("about.html".into()))
+                        .title("关于")
+                        .inner_size(400.0, 300.0)
+                        .center()
+                        .resizable(false)
+                        .build();
+                }
+            }
+            "check_update" => {
+                if let Some(win) = app.get_webview_window("update") {
+                    let _ = win.set_focus();
+                } else {
+                    let win = WebviewWindowBuilder::new(app, "update", WebviewUrl::App("update.html".into()))
+                        .title("检查更新")
+                        .inner_size(400.0, 300.0)
+                        .center()
+                        .resizable(false)
+                        .decorations(false)
+                        .build();
+
+                    if let Ok(w) = win {
+                        let _ = w.set_shadow(true);
                     }
                 }
             }
+            "settings" => {
+                if let Some(win) = app.get_webview_window("settings") {
+                    let _ = win.set_focus();
+                } else {
+                     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+                        .title("设置")
+                        .inner_size(400.0, 300.0)
+                        .center()
+                        .resizable(false)
+                        .build();
+                }
+            }
+            // "toggle_fullscreen" event is handled natively by PredefinedMenuItem
             _ => {}
         }
     });

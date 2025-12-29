@@ -1,43 +1,163 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/src/main.ts" defer></script>
-  </head>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信读书桌面版</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #a1a1a1;
+            --accent-color: #4a90e2;
+        }
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            user-select: none;
+            overflow: hidden;
+        }
 
-  <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+        .ascii-art {
+            white-space: pre;
+            font-size: 12px;
+            line-height: 1.2;
+            margin-bottom: 2rem;
+            color: var(--text-color);
+            opacity: 0.8;
+        }
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+        .status {
+            margin-top: 1rem;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
-    </main>
-  </body>
+        .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--text-color);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+
+        .btn {
+            margin-top: 2rem;
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--text-color);
+            color: var(--text-color);
+            cursor: pointer;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.2s;
+            opacity: 0; /* Initially hidden */
+            pointer-events: none;
+        }
+
+        .btn:hover {
+            border-color: var(--accent-color);
+            color: var(--accent-color);
+        }
+
+        .btn.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 隐藏滚动条 */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="ascii-art">
+      .---.
+     /   /|
+    .---. |
+    |   | '
+    |   |/ 
+    '---'  
+   WEIXIN READER
+    </div>
+
+    <div class="status">
+        <div class="spinner" id="spinner"></div>
+        <span id="status-text">正在连接图书馆...</span>
+    </div>
+
+    <button class="btn" id="retry-btn">重新连接</button>
+
+    <script>
+        const TARGET_URL = 'https://weread.qq.com';
+        const spinner = document.getElementById('spinner');
+        const statusText = document.getElementById('status-text');
+        const retryBtn = document.getElementById('retry-btn');
+
+        function updateStatus(msg, loading = false, showRetry = false) {
+            statusText.textContent = msg;
+            spinner.style.display = loading ? 'block' : 'none';
+            if (showRetry) {
+                retryBtn.classList.add('visible');
+            } else {
+                retryBtn.classList.remove('visible');
+            }
+        }
+
+        function checkConnectionAndRedirect() {
+            if (!navigator.onLine) {
+                updateStatus('网络连接已断开', false, true);
+                return;
+            }
+
+            updateStatus('正在连接图书馆...', true, false);
+
+            // 尝试 fetch 以确保真的能连上（处理有网但无法访问的情况）
+            fetch(TARGET_URL, { mode: 'no-cors' })
+                .then(() => {
+                    window.location.href = TARGET_URL;
+                })
+                .catch(() => {
+                    // 如果 fetch 失败（可能是跨域或其他网络错误），但在桌面端环境下通常意味着无法访问
+                    // 这里我们简单地重试几次或者直接显示错误
+                    // 由于 no-cors 模式下我们拿不到状态码，只要不报错就算通
+                    // 如果真的报错，说明网络完全不通
+                     window.location.href = TARGET_URL;
+                });
+            
+            // 设置一个超时，如果 5秒 还没跳转，可能是有问题
+            setTimeout(() => {
+                if (window.location.href !== TARGET_URL) {
+                     // 强制跳转一次试试
+                     window.location.href = TARGET_URL;
+                }
+            }, 2000);
+        }
+
+        window.addEventListener('online', checkConnectionAndRedirect);
+        window.addEventListener('offline', () => updateStatus('网络已断开', false, true));
+
+        retryBtn.addEventListener('click', checkConnectionAndRedirect);
+
+        // Init
+        checkConnectionAndRedirect();
+    </script>
+</body>
 </html>

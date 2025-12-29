@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "微信阅读",
-  "version": "0.1.0",
-  "identifier": "com.dengcb.wxreader",
+  "version": "0.2.0",
+  "identifier": "com.dengcb.reader",
   "build": {
-    "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run build",
+    "devUrl": null,
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
@@ -13,7 +13,10 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {

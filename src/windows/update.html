@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>检查更新</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --bg-color: #f5f5f5;
+            --text-color: #000;
+            --button-bg: #007AFF;
+            --button-text: #FFF;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #222;
+                --text-color: #eee;
+                --button-bg: #0A84FF;
+                --button-text: #FFF;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            box-sizing: border-box;
+            user-select: none;
+            cursor: default;
+        }
+
+        .window-content {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            box-sizing: border-box;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            position: relative;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .window-content {
+                border: 1px solid rgba(255, 255, 255, 0.15);
+            }
+        }
+
+        .icon {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 24px;
+            /* Use img tag instead of background for better scaling control */
+            object-fit: contain;
+        }
+
+        .message {
+            font-size: 15px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .button {
+            background-color: var(--button-bg);
+            color: var(--button-text);
+            border: none;
+            border-radius: 5px;
+            padding: 4px 0;
+            width: 100%;
+            max-width: 100px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .button:active {
+            opacity: 0.8;
+        }
+
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .checkbox-container input {
+            margin-right: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="window-content">
+        <img src="icon.png" class="icon">
+        <div class="message" id="versionMsg">当前已是最新版本 (v0.9.0)。</div>
+        <button class="button" id="okBtn">好的</button>
+        
+        <div class="checkbox-container">
+            <input type="checkbox" id="autoUpdate" checked>
+            <label for="autoUpdate">自动后台更新</label>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // Wait for Tauri API to be ready if needed, though usually it's ready on load
+            const tauri = window.__TAURI__;
+            
+            if (!tauri) {
+                console.error("Tauri API not found. Make sure withGlobalTauri is set to true.");
+                return;
+            }
+
+            const invoke = tauri.core.invoke; 
+            
+            // Get Version
+            invoke('get_app_version').then(ver => {
+                if (ver) document.getElementById('versionMsg').innerText = `当前已是最新版本 (v${ver})。`;
+            }).catch(console.error);
+            
+            // Close window on button click
+            document.getElementById('okBtn').addEventListener('click', async () => {
+                console.log("OK button clicked");
+                try {
+                    // Try to invoke the backend command first
+                    await invoke('close_window');
+                } catch (e) {
+                    console.error('Failed to invoke close_window:', e);
+                    
+                    // Fallback to window API if invoke fails
+                    try {
+                        if (tauri.window && tauri.window.getCurrentWindow) {
+                            await tauri.window.getCurrentWindow().close();
+                        } else {
+                             window.close();
+                        }
+                    } catch (e2) {
+                        console.error('All close attempts failed:', e2);
+                        window.close();
+                    }
+                }
+            });
+
+            // Handle checkbox logic
+             const autoUpdateCheckbox = document.getElementById('autoUpdate');
+             
+             // Init state
+             invoke('get_settings').then((settings) => {
+                 if (settings.autoUpdate !== undefined) {
+                     autoUpdateCheckbox.checked = settings.autoUpdate;
+                 }
+             }).catch(e => console.error("Failed to load settings:", e));
+             
+             autoUpdateCheckbox.addEventListener('change', () => {
+                 const autoUpdate = autoUpdateCheckbox.checked;
+                 invoke('save_settings', { settings: { autoUpdate } }).catch(e => console.error("Failed to save settings:", e));
+             });
+        })();
+    </script>
+</body>
+</html>
