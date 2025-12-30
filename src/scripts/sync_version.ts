@@ -12,12 +12,12 @@ try {
     const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, 'utf-8'));
     
     if (tauriConfig.version !== version) {
-        console.log(`Syncing version from package.json (${version}) to tauri.conf.json (${tauriConfig.version})...`);
+        console.log(`Syncing version in Tauri from ${tauriConfig.version} to ${version}...`);
         tauriConfig.version = version;
         writeFileSync(tauriConfigPath, JSON.stringify(tauriConfig, null, 2));
-        console.log('Version synced successfully.');
+        console.log('Tauri synced successfully.');
     } else {
-        console.log('Version is already in sync.');
+        console.log('Tauri version is already in sync.');
     }
 
     // Sync README.md
@@ -31,15 +31,34 @@ try {
     if (readmeVersionRegex.test(readmeContent)) {
         const match = readmeContent.match(readmeVersionRegex);
         if (match && match[2] !== version) {
-             console.log(`Syncing version in README.md from ${match[2]} to ${version}...`);
+             console.log(`Syncing version in README from ${match[2]} to ${version}...`);
              readmeContent = readmeContent.replace(readmeVersionRegex, `$1${version}$3`);
              writeFileSync(readmePath, readmeContent);
-             console.log('README.md synced successfully.');
+             console.log('README synced successfully.');
         } else {
-             console.log('README.md version is already in sync.');
+             console.log('README version is already in sync.');
+         }
+     }
+
+    // Sync src-tauri/Cargo.toml
+    const cargoTomlPath = join(rootDir, 'src-tauri', 'Cargo.toml');
+    let cargoTomlContent = readFileSync(cargoTomlPath, 'utf-8');
+    // Match version = "0.1.0" or similar
+    const cargoVersionRegex = /^version\s*=\s*"([\d\.]+)"/m;
+
+    if (cargoVersionRegex.test(cargoTomlContent)) {
+        const match = cargoTomlContent.match(cargoVersionRegex);
+        if (match && match[1] !== version) {
+             console.log(`Syncing version in Cargo from ${match[1]} to ${version}...`);
+             cargoTomlContent = cargoTomlContent.replace(cargoVersionRegex, `version = "${version}"`);
+             writeFileSync(cargoTomlPath, cargoTomlContent);
+             console.log('Cargo synced successfully.');
+        } else {
+             console.log('Cargo version is already in sync.');
         }
     }
-} catch (error) {
+
+ } catch (error) {
     console.error('Error syncing version:', error);
     process.exit(1);
 }

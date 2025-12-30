@@ -1,13 +1,21 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "微信阅读",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.dengcb.reader",
   "build": {
     "beforeDevCommand": "bun run build",
     "devUrl": null,
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/dengcb/weixin-reader-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgODIwMEM2QkM0NkIzQTA3OApSV1NDQU1hOFJyT2dlRHRFS2N6S3RxWk0wcFNoaWpxQ0EyRkE3TWxhVCs5NktZb3ppN0dnV2t2eg=="
+    }
   },
   "app": {
     "withGlobalTauri": true,
@@ -21,13 +29,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
   }
 }

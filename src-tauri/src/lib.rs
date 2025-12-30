@@ -1,10 +1,12 @@
 use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::window::Color;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 mod menu;
 mod settings;
 mod commands;
+mod update;
 
 fn check_network_connection() -> bool {
     let addr_str = "weread.qq.com:443";
@@ -25,10 +27,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&["about", "update", "settings"]).build())
         .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
             // Menu Init
             menu::init(app)?;
+
+            // Update Manager Init
+            update::init(&app.handle());
 
             // Create Main Window
             let mut url = WebviewUrl::App("index.html".into());
@@ -46,6 +52,7 @@ pub fn run() {
                 .title(&app_name)
                 .inner_size(1280.0, 800.0)
                 .center()
+                .background_color(Color::from((26, 26, 26))) // #1a1a1a 深灰色，减少启动时白屏闪烁
                 .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
                 .initialization_script(inject_script)
                 .build()?;
@@ -61,7 +68,10 @@ pub fn run() {
             commands::close_window,
             commands::set_title,
             commands::get_app_name,
-            commands::get_app_version
+            commands::get_app_version,
+            update::check_update_manual,
+            update::install_update_now,
+            update::is_update_downloaded
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

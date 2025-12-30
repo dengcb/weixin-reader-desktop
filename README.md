@@ -7,11 +7,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v0.2.0-orange?style=flat-square" alt="Release">
+  <img src="https://img.shields.io/badge/release-v0.3.0-orange?style=flat-square" alt="Release">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
   <img src="https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Bun-000000?style=flat-square&logo=bun&logoColor=white" alt="Bun">
   <img src="https://img.shields.io/badge/Platform-macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="Platform">
 </p>
 

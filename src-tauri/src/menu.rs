@@ -35,6 +35,11 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         ],
     )?;
     
+    // Manage menu state for updates
+    app.manage(crate::update::MenuState { 
+        check_update_item: std::sync::Mutex::new(Some(check_update.clone())) 
+    });
+    
     // 2. View Menu
     let refresh = MenuItem::with_id(handle, "refresh", "刷新", true, Some("CmdOrCtrl+R"))?;
     let back = MenuItem::with_id(handle, "back", "后退", true, Some("CmdOrCtrl+["))?;
@@ -177,19 +182,32 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 }
             }
             "check_update" => {
-                if let Some(win) = app.get_webview_window("update") {
-                    let _ = win.set_focus();
-                } else {
-                    let win = WebviewWindowBuilder::new(app, "update", WebviewUrl::App("update.html".into()))
-                        .title("检查更新")
-                        .inner_size(400.0, 300.0)
-                        .center()
-                        .resizable(false)
-                        .decorations(false)
-                        .build();
+                // Check if update is downloaded and ready to install
+                let mut is_downloaded = false;
+                if let Some(state) = app.try_state::<crate::update::UpdateState>() {
+                    if let Ok(guard) = state.downloaded.lock() {
+                        is_downloaded = *guard;
+                    }
+                }
 
-                    if let Ok(w) = win {
-                        let _ = w.set_shadow(true);
+                if is_downloaded {
+                     // Restart and install
+                     app.restart();
+                } else {
+                    if let Some(win) = app.get_webview_window("update") {
+                        let _ = win.set_focus();
+                    } else {
+                        let win = WebviewWindowBuilder::new(app, "update", WebviewUrl::App("update.html".into()))
+                            .title("检查更新")
+                            .inner_size(400.0, 300.0)
+                            .center()
+                            .resizable(false)
+                            .decorations(false)
+                            .build();
+
+                        if let Ok(w) = win {
+                            let _ = w.set_shadow(true);
+                        }
                     }
                 }
             }

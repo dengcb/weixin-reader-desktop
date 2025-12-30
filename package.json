@@ -1,25 +1,35 @@
 {
   "name": "weixin-reader",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "start": "bun run sync-version && tauri dev",
-    "dev": "vite",
+    "dev": "bun run sync-version && vite",
     "sync-version": "bun src/scripts/sync_version.ts",
     "build:inject": "bun build src/scripts/inject.ts --outfile=src/scripts/inject.js --target=browser --minify",
     "build": "bun run build:inject && rm -rf dist && mkdir -p dist && cp index.html dist/ && cp src/windows/*.html dist/ && cp icon.png dist/",
     "preview": "vite preview",
     "tauri": "tauri",
-    "release": "bun run sync-version && tauri build && mkdir -p release && cp -r src-tauri/target/release/bundle/dmg/*.dmg release/ 2>/dev/null || true && cp -r src-tauri/target/release/bundle/macos/*.app release/ 2>/dev/null || true && echo '✨ 打包完成！文件已复制到项目根目录的 release/ 文件夹中'"
+    "debug": "bun src/scripts/debug.ts",
+    "debug:arm": "bun src/scripts/debug.ts arm",
+    "debug:intel": "bun src/scripts/debug.ts intel",
+    "release:clear": "bun src/scripts/clear_release.ts",
+    "release:all": "bun src/scripts/release.ts",
+    "release:arm": "bun src/scripts/release.ts arm",
+    "release:intel": "bun src/scripts/release.ts intel",
+    "release:upload": "bun src/scripts/release.ts upload",
+    "release:publish": "bun src/scripts/release.ts publish"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-updater": "^2.9.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "vite": "^6.0.3",
-    "typescript": "~5.6.2"
+    "@types/node": "^25.0.3",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
   }
 }

@@ -16,6 +16,7 @@
     "core:event:default",
     "core:window:default",
     "core:window:allow-set-size",
-    "core:webview:default"
+    "core:webview:default",
+    "updater:default"
   ]
 }

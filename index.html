@@ -6,11 +6,18 @@
     <title>微信读书桌面版</title>
     <style>
         :root {
-            --bg-color: #1a1a1a;
-            --text-color: #a1a1a1;
+            --bg-color: #f5f5f5;
+            --text-color: #333333;
             --accent-color: #4a90e2;
         }
-        
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #1a1a1a;
+                --text-color: #a1a1a1;
+            }
+        }
+
         body {
             background-color: var(--bg-color);
             color: var(--text-color);
@@ -89,12 +96,12 @@
 </head>
 <body>
     <div class="ascii-art">
-      .---.
-     /   /|
-    .---. |
-    |   | '
-    |   |/ 
-    '---'  
+        .----.
+       /    /|
+      .----. |
+      | 读 | '
+      | 书 |/ 
+      '----'  
    WEIXIN READER
     </div>
 

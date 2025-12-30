@@ -41,6 +41,8 @@ dist-ssr
 release
 
 # Editor directories and files
+CLAUDE.md
+.claude
 .trae
 .vscode/*
 !.vscode/extensions.json

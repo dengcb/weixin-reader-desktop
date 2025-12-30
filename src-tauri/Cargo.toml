@@ -1,9 +1,10 @@
 [package]
 name = "weixin-reader"
-version = "0.1.0"
+version = "0.3.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "weixin-reader"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,4 +27,17 @@ tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["time"] }
+
+[[bin]]
+name = "weixin-reader"
+path = "src/main.rs"
+
+[profile.release]
+panic = "abort" # Strip panic unwind tables
+codegen-units = 1 # Compile all in one unit for better optimization
+lto = true # Enable Link Time Optimization
+opt-level = "z" # Optimize for size
+strip = true # Strip symbols from binary
 

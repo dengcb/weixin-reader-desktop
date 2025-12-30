@@ -41,7 +41,7 @@ class SettingsStore {
       this.settings = {
           readerWide: false,
           hideToolbar: false,
-          zoom: 1.0,
+          zoom: 0.8,
           rememberLastPage: true,
           autoUpdate: true,
           ...loaded,
@@ -57,7 +57,7 @@ class SettingsStore {
       this.settings = {
           readerWide: false,
           hideToolbar: false,
-          zoom: 1.0,
+          zoom: 0.8,
           rememberLastPage: true,
           autoUpdate: true,
           autoFlip: { active: false, interval: 30, keepAwake: true }
@@ -72,7 +72,7 @@ class SettingsStore {
       this.updateLocal({
           readerWide: false,
           hideToolbar: false,
-          zoom: 1.0,
+          zoom: 0.8,
           rememberLastPage: true,
           autoUpdate: true,
           ...newSettings,

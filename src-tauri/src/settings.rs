@@ -1,14 +1,14 @@
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 use serde_json::Value;
 use std::fs;
 
-pub fn get_settings_path(app: &AppHandle) -> std::path::PathBuf {
+pub fn get_settings_path<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
     let data_dir = app.path().app_config_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     data_dir.join("settings.json")
 }
 
 #[tauri::command]
-pub fn get_settings(app: AppHandle) -> Value {
+pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Value {
     let settings_path = get_settings_path(&app);
     
     if settings_path.exists() {
@@ -23,7 +23,7 @@ pub fn get_settings(app: AppHandle) -> Value {
 }
 
 #[tauri::command]
-pub fn save_settings(app: AppHandle, settings: Value) {
+pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value) {
     let data_dir = app.path().app_config_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     if !data_dir.exists() {
         let _ = fs::create_dir_all(&data_dir);
