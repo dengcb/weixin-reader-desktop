@@ -29,12 +29,13 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     });
 
     let app_handle = app.clone();
-    
+
     // Spawn background task
     tauri::async_runtime::spawn(async move {
-        // Initial delay
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        
+        // Wait longer for menu to be fully initialized
+        // MenuManager needs ~3 seconds, so we wait 10 seconds to be safe
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
         loop {
             check_silent(&app_handle).await;
             // Check every 24 hours
@@ -53,41 +54,79 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
         return;
     }
 
-    // 2. Check update
+    // 2. Check update with timeout protection
     if let Ok(updater) = app.updater_builder().build() {
-        match updater.check().await {
-            Ok(Some(update)) => {
+        // Add 10 second timeout to prevent hanging on network issues
+        let check_result = tokio::time::timeout(
+            Duration::from_secs(10),
+            updater.check()
+        ).await;
+
+        match check_result {
+            Ok(Ok(Some(update))) => {
                 println!("Found silent update: v{}", update.version);
-                // Found update, download it
-                if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-                    println!("Auto-update failed: {}", e);
-                } else {
-                    println!("Auto-update downloaded and installed (pending restart)");
-                    // Mark as downloaded
-                    if let Some(state) = app.try_state::<UpdateState>() {
-                        *state.downloaded.lock().unwrap() = true;
-                    }
-                    // Update Menu Text
-                    if let Some(menu_state) = app.try_state::<MenuState<R>>() {
-                        if let Ok(guard) = menu_state.check_update_item.lock() {
-                            if let Some(item) = guard.as_ref() {
-                                match item.set_text("重启并安装") {
-                                    Ok(_) => println!("Menu text updated to '重启并安装'"),
-                                    Err(e) => println!("Failed to update menu text: {}", e),
-                                }
-                            } else {
-                                println!("Menu item is None");
-                            }
-                        } else {
-                            println!("Failed to lock menu state");
+                // Disable menu item during download
+                if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                    if let Ok(guard) = menu_state.check_update_item.lock() {
+                        if let Some(item) = guard.as_ref() {
+                            let _ = item.set_enabled(false);
+                            let _ = item.set_text("正在下载更新...");
                         }
-                    } else {
-                        println!("MenuState not found");
+                    }
+                }
+                // Found update, download it with timeout
+                let download_result = tokio::time::timeout(
+                    Duration::from_secs(30), // 30 seconds for 3MB file
+                    update.download_and_install(|_, _| {}, || {})
+                ).await;
+
+                match download_result {
+                    Ok(Ok(())) => {
+                        println!("Auto-update downloaded and installed (pending restart)");
+                        // Mark as downloaded
+                        if let Some(state) = app.try_state::<UpdateState>() {
+                            *state.downloaded.lock().unwrap() = true;
+                        }
+                        // Update Menu Text and re-enable
+                        if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                            if let Ok(guard) = menu_state.check_update_item.lock() {
+                                if let Some(item) = guard.as_ref() {
+                                    let _ = item.set_text("重启并安装");
+                                    let _ = item.set_enabled(true);
+                                    println!("Menu updated to '重启并安装' and enabled");
+                                }
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        println!("Auto-update failed: {}", e);
+                        // Re-enable menu on error
+                        if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                            if let Ok(guard) = menu_state.check_update_item.lock() {
+                                if let Some(item) = guard.as_ref() {
+                                    let _ = item.set_text("检查更新...");
+                                    let _ = item.set_enabled(true);
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        println!("Auto-update download timed out after 30 seconds");
+                        // Re-enable menu on timeout
+                        if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                            if let Ok(guard) = menu_state.check_update_item.lock() {
+                                if let Some(item) = guard.as_ref() {
+                                    let _ = item.set_text("检查更新...");
+                                    let _ = item.set_enabled(true);
+                                }
+                            }
+                        }
                     }
                 }
             }
-            Ok(None) => {}
-            Err(e) => println!("Failed to check update: {}", e),
+            Ok(Ok(None)) => {}
+            Ok(Err(e)) => println!("Failed to check update: {}", e),
+            Err(_) => println!("Update check timed out after 10 seconds (network issue)"),
         }
     }
 }
@@ -95,15 +134,32 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
 // Manual Check (Command)
 #[tauri::command]
 pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<UpdateInfo, String> {
+    // Disable menu during check
+    if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+        if let Ok(guard) = menu_state.check_update_item.lock() {
+            if let Some(item) = guard.as_ref() {
+                let _ = item.set_enabled(false);
+                let _ = item.set_text("正在检测更新...");
+            }
+        }
+    }
+
     let updater = app.updater_builder().build().map_err(|e| e.to_string())?;
-    
-    match updater.check().await {
-        Ok(Some(update)) => {
+
+    // Add 15 second timeout for manual check
+    let check_result = tokio::time::timeout(
+        Duration::from_secs(15),
+        updater.check()
+    ).await;
+
+    match check_result {
+        Ok(Ok(Some(update))) => {
             // Update Menu Text to indicate update is available
             if let Some(menu_state) = app.try_state::<MenuState<R>>() {
                 if let Ok(guard) = menu_state.check_update_item.lock() {
                     if let Some(item) = guard.as_ref() {
                         let _ = item.set_text("发现新版本");
+                        let _ = item.set_enabled(true);
                     }
                 }
             }
@@ -114,7 +170,16 @@ pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<Update
                 body: update.body.unwrap_or_default(),
             })
         }
-        Ok(None) => {
+        Ok(Ok(None)) => {
+            // Re-enable menu when no update
+            if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                if let Ok(guard) = menu_state.check_update_item.lock() {
+                    if let Some(item) = guard.as_ref() {
+                        let _ = item.set_text("检查更新...");
+                        let _ = item.set_enabled(true);
+                    }
+                }
+            }
             // Get current version
             let version = app.package_info().version.to_string();
             Ok(UpdateInfo {
@@ -123,7 +188,30 @@ pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<Update
                 body: String::new(),
             })
         }
-        Err(e) => Err(e.to_string()),
+        Ok(Err(e)) => {
+            // Re-enable menu on error
+            if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                if let Ok(guard) = menu_state.check_update_item.lock() {
+                    if let Some(item) = guard.as_ref() {
+                        let _ = item.set_text("检查更新...");
+                        let _ = item.set_enabled(true);
+                    }
+                }
+            }
+            Err(e.to_string())
+        }
+        Err(_) => {
+            // Re-enable menu on timeout
+            if let Some(menu_state) = app.try_state::<MenuState<R>>() {
+                if let Ok(guard) = menu_state.check_update_item.lock() {
+                    if let Some(item) = guard.as_ref() {
+                        let _ = item.set_text("检查更新...");
+                        let _ = item.set_enabled(true);
+                    }
+                }
+            }
+            Err("连接超时，请检查网络连接".to_string())
+        }
     }
 }
 

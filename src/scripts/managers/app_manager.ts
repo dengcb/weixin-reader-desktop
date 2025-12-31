@@ -1,8 +1,24 @@
-import { invoke, waitForTauri } from '../core/tauri';
+/**
+ * App Manager - Application initialization and startup logic
+ *
+ * Responsibilities:
+ * - Get app name from Tauri
+ * - Restore last reader page on startup (if enabled)
+ * - Clear autoFlip.active on app exit
+ *
+ * Note: Route monitoring is now handled by IPCManager
+ */
+
+import { invoke, waitForTauri, logToFile } from '../core/tauri';
 import { settingsStore } from '../core/settings_store';
+import { getSiteRegistry } from '../core/site_registry';
+
+// Session storage key to track if we've already restored in this session
+const RESTORE_FLAG_KEY = 'wxrd_has_restored';
 
 export class AppManager {
   private appName: string = "微信阅读";
+  private siteRegistry = getSiteRegistry();
 
   constructor() {
     this.init();
@@ -12,105 +28,92 @@ export class AppManager {
     await waitForTauri();
 
     try {
-        this.appName = await invoke<string>('get_app_name') || "微信阅读";
+      this.appName = await invoke<string>('get_app_name') || "微信阅读";
     } catch (e) {
-        console.error("Failed to get app name:", e);
+      console.error("Failed to get app name:", e);
     }
 
     // Initialize Settings Store (if not already)
     await settingsStore.init();
-    
-    // Subscribe to settings for "Restore Last Page" logic on startup?
-    // Actually, restore logic usually happens once on startup.
-    this.restoreLastPage();
 
-    // Start Monitoring
-    this.monitorRoute();
-    this.monitorTitle();
-  }
+    // Set up pagehide handler to clear autoFlip on exit
+    // pagehide is more reliable than beforeunload for app exit
+    window.addEventListener('pagehide', () => {
+      this.clearAutoFlipOnExit();
+    });
 
-  private restoreLastPage() {
-    const settings = settingsStore.get();
-    const isReader = window.location.href.includes('/web/reader/');
-    
-    if (!isReader && settings.rememberLastPage && settings.lastReaderUrl) {
-        console.log("Restoring last page:", settings.lastReaderUrl);
-        window.location.href = settings.lastReaderUrl;
-    }
-  }
-
-  private monitorRoute() {
-    const checkRoute = () => {
-        const isReader = window.location.href.includes('/web/reader/');
-        
-        // Update Title
-        this.updateTitle();
-
-        // Save Last Page Logic
-        const settings = settingsStore.get();
-        if (settings.rememberLastPage) {
-            if (isReader) {
-                const currentUrl = window.location.href;
-                if (settings.lastReaderUrl !== currentUrl) {
-                    settingsStore.update({ lastReaderUrl: currentUrl });
-                }
-            } else {
-                if (settings.lastReaderUrl) {
-                    settingsStore.update({ lastReaderUrl: null });
-                }
-            }
-        } else {
-            if (settings.lastReaderUrl) {
-                 settingsStore.update({ lastReaderUrl: null });
-            }
-        }
-        
-        // Notify Store about route context if needed?
-        // Actually, Menu Controller needs to know if we are in Reader to enable/disable menu items.
-        // We can dispatch a global event or have MenuController listen to route changes too.
-        // Or better: AppManager updates a "Context" in SettingsStore? No, settings are for persistence.
-        // Let's dispatch a lightweight event for Route Change that MenuManager can listen to.
-        window.dispatchEvent(new CustomEvent('wxrd:route-changed', { detail: { isReader } }));
-    };
-
-    window.addEventListener('popstate', checkRoute);
-    
-    const originalPushState = history.pushState;
-    history.pushState = function(...args) {
-        const result = originalPushState.apply(this, args);
-        checkRoute();
-        return result;
-    };
-    
-    const originalReplaceState = history.replaceState;
-    history.replaceState = function(...args) {
-        const result = originalReplaceState.apply(this, args);
-        checkRoute();
-        return result;
-    };
-
-    // Initial check
-    checkRoute();
-  }
-
-  private monitorTitle() {
-    const target = document.querySelector('title');
-    if (target) {
-        const observer = new MutationObserver(() => {
-            this.updateTitle();
-        });
-        observer.observe(target, { childList: true, characterData: true, subtree: true });
-    }
-  }
-
-  private updateTitle() {
-      const currentPath = window.location.pathname;
-      if (currentPath === '/') {
-          invoke('set_title', { title: this.appName });
-      } else {
-          if (document.title && document.title.trim() !== "") {
-              invoke('set_title', { title: document.title });
-          }
+    // Also listen for visibility change as backup
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this.clearAutoFlipOnExit();
       }
+    });
+
+    // DEBUG: Verify settings loaded from backend
+    try {
+      const backendSettings = await invoke<any>('get_settings');
+      console.log('[AppManager] Backend settings:', JSON.stringify(backendSettings));
+    } catch (e) {
+      console.error('[AppManager] Failed to get backend settings:', e);
+    }
+
+    // Restore last page only on app startup (first time init)
+    await this.restoreLastPage();
+  }
+
+  private clearAutoFlipOnExit() {
+    const settings = settingsStore.get();
+    if (settings.autoFlip?.active) {
+      console.log('[AppManager] Clearing autoFlip.active on exit');
+      logToFile('[AppManager] Clearing autoFlip.active on exit');
+      // Sync save to backend immediately
+      invoke('save_settings', {
+        settings: {
+          autoFlip: {
+            active: false,
+            interval: settings.autoFlip.interval || 15,
+            keepAwake: settings.autoFlip.keepAwake !== false
+          }
+        }
+      });
+    }
+  }
+
+  private async restoreLastPage() {
+    // Check if we've already restored in this session
+    const sessionFlag = sessionStorage.getItem(RESTORE_FLAG_KEY);
+    logToFile(`[AppManager] Session flag: ${sessionFlag}`);
+
+    if (sessionFlag === 'true') {
+      logToFile('[AppManager] Already restored in this session, skipping');
+      console.log('[AppManager] Already restored in this session, skipping');
+      return;
+    }
+
+    const settings = settingsStore.get();
+    const isReader = this.siteRegistry.isReaderPage();
+
+    const logMsg = `[AppManager] restoreLastPage check: isReader=${isReader}, lastPage=${settings.lastPage}, lastReaderUrl=${settings.lastReaderUrl}`;
+    logToFile(logMsg);
+    console.log('[AppManager] restoreLastPage check:', {
+      isReader,
+      lastPage: settings.lastPage,
+      lastReaderUrl: settings.lastReaderUrl
+    });
+
+    if (!isReader && settings.lastPage && settings.lastReaderUrl) {
+      const navMsg = `[AppManager] Restoring last page: ${settings.lastReaderUrl}`;
+      logToFile(navMsg);
+      console.log('[AppManager] Restoring last page:', settings.lastReaderUrl);
+      sessionStorage.setItem(RESTORE_FLAG_KEY, 'true');
+      // Direct navigation (most reliable)
+      window.location.href = settings.lastReaderUrl;
+    } else {
+      // Mark as restored even if we didn't navigate
+      const skipMsg = `[AppManager] Marking as restored (no navigation needed): isReader=${isReader}, lastPage=${settings.lastPage}, hasUrl=${!!settings.lastReaderUrl}`;
+      logToFile(skipMsg);
+      console.log('[AppManager] Marking as restored (no navigation needed)');
+      sessionStorage.setItem(RESTORE_FLAG_KEY, 'true');
+    }
   }
 }

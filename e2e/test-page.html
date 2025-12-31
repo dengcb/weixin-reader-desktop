@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微信阅读 - E2E 测试页面</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #f5f5f5;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #e5e5e5;
+        }
+        button.active {
+            background: #4CAF50;
+            color: white;
+            border-color: #45a049;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #f9f9f9;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        /* Reader page styles */
+        .reader-content {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            background: #fff;
+            min-height: 100vh;
+        }
+        .reader-content.wide {
+            max-width: 1200px;
+        }
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            padding: 10px 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .toolbar.hidden {
+            display: none;
+        }
+        .chapter-content {
+            line-height: 1.8;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>微信阅读 - E2E 测试页面</h1>
+    <p>此页面模拟微信读书的阅读界面，用于测试前端管理器功能。</p>
+
+    <div class="test-section">
+        <h2>1. 设置控制</h2>
+        <button id="toggle-wide">阅读变宽</button>
+        <button id="toggle-toolbar">隐藏工具栏</button>
+        <button id="toggle-autoflip">自动翻页</button>
+        <div class="status" id="settings-status">当前设置: readerWide=false, hideToolbar=false, autoFlip.active=false</div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. 页面导航</h2>
+        <button id="go-reader">进入阅读页</button>
+        <button id="go-home">返回首页</button>
+        <div class="status" id="page-status">当前页面: 首页</div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. 测试日志</h2>
+        <div class="log" id="log"></div>
+        <button onclick="document.getElementById('log').innerHTML = ''">清空日志</button>
+    </div>
+
+    <div id="reader-page" style="display: none;">
+        <div class="toolbar" id="toolbar">
+            <button>返回</button>
+            <button>目录</button>
+            <button>设置</button>
+        </div>
+        <div class="reader-content" id="reader-content">
+            <h1>第一章 测试章节</h1>
+            <div class="chapter-content">
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+                <p>这是一段测试文本。这是一段测试文本。这是一段测试文本。这是一段测试文本。</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Mock Tauri API
+        window.__TAURI__ = {
+            core: {
+                invoke: async (cmd, args) => {
+                    console.log('[Mock Tauri] invoke:', cmd, args);
+                    return Promise.resolve();
+                },
+                listen: (event, handler) => {
+                    console.log('[Mock Tauri] listen:', event);
+                    return Promise.resolve(() => {});
+                }
+            },
+            invoke: async (cmd, args) => {
+                console.log('[Mock Tauri] invoke:', cmd, args);
+                return Promise.resolve();
+            },
+            listen: (event, handler) => {
+                console.log('[Mock Tauri] listen:', event);
+                return Promise.resolve(() => {});
+            }
+        };
+
+        // Mock Settings Store
+        class MockSettingsStore {
+            constructor() {
+                this.settings = {
+                    readerWide: false,
+                    hideToolbar: false,
+                    autoFlip: { active: false, interval: 15, keepAwake: true },
+                    zoom: 1.0
+                };
+                this.listeners = [];
+            }
+
+            get() {
+                return this.settings;
+            }
+
+            update(updates) {
+                this.settings = { ...this.settings, ...updates };
+                this.notify();
+                this.log('Settings updated:', JSON.stringify(updates));
+            }
+
+            subscribe(listener) {
+                this.listeners.push(listener);
+                listener(this.settings);
+                return () => {
+                    this.listeners = this.listeners.filter(l => l !== listener);
+                };
+            }
+
+            notify() {
+                this.listeners.forEach(l => l(this.settings));
+            }
+
+            log(...args) {
+                const log = document.getElementById('log');
+                const time = new Date().toLocaleTimeString();
+                log.innerHTML += `[${time}] ${args.join(' ')}<br>`;
+                log.scrollTop = log.scrollHeight;
+            }
+        }
+
+        const settingsStore = new MockSettingsStore();
+
+        // Test Functions
+        function updateSettingsStatus() {
+            const s = settingsStore.get();
+            const status = document.getElementById('settings-status');
+            status.textContent = `当前设置: readerWide=${s.readerWide}, hideToolbar=${s.hideToolbar}, autoFlip.active=${s.autoFlip?.active || false}`;
+
+            // Update button states
+            document.getElementById('toggle-wide').classList.toggle('active', s.readerWide);
+            document.getElementById('toggle-toolbar').classList.toggle('active', s.hideToolbar);
+            document.getElementById('toggle-autoflip').classList.toggle('active', s.autoFlip?.active || false);
+        }
+
+        function applyStyles() {
+            const s = settingsStore.get();
+            const content = document.getElementById('reader-content');
+            const toolbar = document.getElementById('toolbar');
+
+            if (content) {
+                content.classList.toggle('wide', s.readerWide);
+            }
+            if (toolbar) {
+                toolbar.classList.toggle('hidden', s.hideToolbar);
+            }
+
+            settingsStore.log('Styles applied: wide=' + s.readerWide + ', hideToolbar=' + s.hideToolbar);
+        }
+
+        // Event Listeners
+        document.getElementById('toggle-wide').addEventListener('click', () => {
+            const current = settingsStore.get().readerWide;
+            settingsStore.update({ readerWide: !current });
+        });
+
+        document.getElementById('toggle-toolbar').addEventListener('click', () => {
+            const current = settingsStore.get().hideToolbar;
+            settingsStore.update({ hideToolbar: !current });
+        });
+
+        document.getElementById('toggle-autoflip').addEventListener('click', () => {
+            const current = settingsStore.get().autoFlip || { active: false };
+            settingsStore.update({
+                autoFlip: { ...current, active: !current.active }
+            });
+        });
+
+        document.getElementById('go-reader').addEventListener('click', () => {
+            document.getElementById('reader-page').style.display = 'block';
+            document.getElementById('page-status').textContent = '当前页面: 阅读页';
+            settingsStore.log('Navigated to reader page');
+            applyStyles();
+            window.dispatchEvent(new CustomEvent('wxrd:route-changed', {
+                detail: { isReader: true }
+            }));
+        });
+
+        document.getElementById('go-home').addEventListener('click', () => {
+            document.getElementById('reader-page').style.display = 'none';
+            document.getElementById('page-status').textContent = '当前页面: 首页';
+            settingsStore.log('Navigated to home page');
+            window.dispatchEvent(new CustomEvent('wxrd:route-changed', {
+                detail: { isReader: false }
+            }));
+        });
+
+        // Subscribe to settings changes
+        settingsStore.subscribe(() => {
+            updateSettingsStatus();
+            applyStyles();
+        });
+
+        // Initial setup
+        updateSettingsStatus();
+
+        // Expose for Playwright
+        window.e2eTest = {
+            settingsStore,
+            updateSettingsStatus,
+            applyStyles
+        };
+
+        settingsStore.log('E2E Test page initialized');
+    </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
   "name": "weixin-reader",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "start": "bun run sync-version && tauri dev",
@@ -11,6 +11,7 @@
     "build": "bun run build:inject && rm -rf dist && mkdir -p dist && cp index.html dist/ && cp src/windows/*.html dist/ && cp icon.png dist/",
     "preview": "vite preview",
     "tauri": "tauri",
+    "test:e2e": "python3 e2e/tests/test_reader_features.py",
     "debug": "bun src/scripts/debug.ts",
     "debug:arm": "bun src/scripts/debug.ts arm",
     "debug:intel": "bun src/scripts/debug.ts intel",

@@ -301,7 +301,7 @@ async function runBuildAndNotarize(targets: string[]) {
                 await runCommandWithFilteredOutput('xcrun', ['notarytool', 'submit', dmgPath, '--apple-id', APPLE_ID, '--password', password, '--team-id', APPLE_TEAM_ID, '--wait'], process.env);
                 // Staple
                 await runCommandWithFilteredOutput('xcrun', ['stapler', 'staple', dmgPath], process.env);
-                console.log(`   ✅ Notarized & Stapled: ${dmg}`);
+                console.log(`   🍏 Notarized & Stapled: ${dmg}`);
             } catch (e) {
                 console.error(`   ❌ Failed to notarize ${dmg}`);
                 throw e;
@@ -573,7 +573,7 @@ function generateLatestJson() {
         pub_date: new Date().toISOString(),
         platforms
     };
-    
+
     writeFileSync(join(releaseDir, 'latest.json'), JSON.stringify(latestJson, null, 2));
-    console.log('   ✅ Generated latest.json');
+    console.log('   ⬆️ Generated latest.json');
 }

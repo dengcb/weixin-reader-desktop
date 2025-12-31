@@ -1,9 +1,12 @@
+import { getSiteRegistry } from './core/site_registry';
+import { WeReadAdapter } from './adapters/weread_adapter';
+import { IPCManager } from './managers/ipc_manager';
+import { AppManager } from './managers/app_manager';
+import { TurnerManager } from './managers/turner_manager';
 import { MenuManager } from './managers/menu_manager';
 import { ThemeManager } from './managers/theme_manager';
 import { StyleManager } from './managers/style_manager';
-import { TurnerManager } from './managers/turner_manager';
 import { SettingManager } from './managers/setting_manager';
-import { AppManager } from './managers/app_manager';
 
 // Main Entry Point
 (function () {
@@ -15,28 +18,48 @@ import { AppManager } from './managers/app_manager';
 
   console.log('Weixin Reader Inject Script Initializing...');
 
-  const isReader = window.location.href.includes('/web/reader/');
+  // ============================================
+  // Step 1: Register Site Adapters
+  // ============================================
+  const siteRegistry = getSiteRegistry();
 
-  // 0. App Manager (Route, Title, Restore Last Page)
-  // Should be first to handle route/title monitoring and context
-  new AppManager();
+  // Register WeRead (微信读书)
+  siteRegistry.register(new WeReadAdapter());
 
-  // 1. Menu Manager (Menu Actions -> Settings Store)
+  const currentAdapter = siteRegistry.getCurrentAdapter();
+  if (currentAdapter) {
+    console.log(`[Inject] Detected site: ${currentAdapter.name}`);
+  } else {
+    console.warn('[Inject] No matching adapter found for current site');
+  }
+
+  const isReader = siteRegistry.isReaderPage();
+
+  // ============================================
+  // Step 2: Initialize Managers
+  // ============================================
+  // All managers initialize independently and handle their own timing
+
+  // 0. IPC Manager (Central Event Bus - Route & Title Monitoring)
+  new IPCManager();
+
+  // 1. Menu Manager (Menu State Sync) - Highest priority
   new MenuManager();
 
-  // 2. Theme Manager (Dark Mode, Links, Zoom)
+  // 2. All other managers - Initialize in sequence
+  new AppManager();
+  new TurnerManager();
+
+  // Theme Manager (Dark Mode, Links, Zoom) - Only on non-reader pages
   if (!isReader) {
     new ThemeManager();
   }
 
-  // 3. Style Manager (Wide Mode, Toolbar)
+  // Style Manager (Wide Mode, Hide Toolbar)
   new StyleManager();
 
-  // 4. Turner Manager (Wheel Turn, Auto Flip)
-  new TurnerManager();
-
-  // 5. Setting Manager (Window Management)
+  // Setting Manager (Settings Window)
   new SettingManager();
 
-  console.log('Weixin Reader Inject Script Loaded (Modular v2)');
+  console.log('Weixin Reader Inject Script Loaded (Modular v4 - IPCManager Architecture)');
 })();

@@ -95,8 +95,8 @@
   </div>
 
   <div class="form-group checkbox-container">
-    <input type="checkbox" id="rememberLastPage">
-    <label for="rememberLastPage">阅读不停，自动记录</label>
+    <input type="checkbox" id="lastPage">
+    <label for="lastPage">阅读不停，自动记录</label>
     <div class="tip">选中后，会记录当前阅读进度，直接退出重进时畅读。</div>
   </div>
 
@@ -112,12 +112,12 @@
 
       const autoFlipStepSelect = document.getElementById('autoFlipStep');
       const keepAwakeCheckbox = document.getElementById('keepAwake');
-      const rememberLastPageCheckbox = document.getElementById('rememberLastPage');
+      const lastPageCheckbox = document.getElementById('lastPage');
 
       // 1. Initial Load
       invoke('get_settings').then((settings) => {
         settings = settings || {};
-        
+
         // Auto Flip Interval
         if (settings.autoFlip && settings.autoFlip.interval) {
           autoFlipStepSelect.value = settings.autoFlip.interval.toString();
@@ -132,24 +132,24 @@
            keepAwakeCheckbox.checked = true;
         }
 
-        // Remember Last Page
-        if (settings.rememberLastPage !== undefined) {
-          rememberLastPageCheckbox.checked = settings.rememberLastPage;
+        // Last Page
+        if (settings.lastPage !== undefined) {
+          lastPageCheckbox.checked = settings.lastPage;
         } else {
-           rememberLastPageCheckbox.checked = true;
+           lastPageCheckbox.checked = true;
         }
       }).catch(e => console.error("Failed to load settings:", e));
 
       // 2. Change Handlers (Fetch fresh settings before saving to avoid overwriting other fields like 'active')
-      
+
       autoFlipStepSelect.addEventListener('change', () => {
         const val = parseInt(autoFlipStepSelect.value, 10);
         invoke('get_settings').then((current) => {
            current = current || {};
            const existingAutoFlip = current.autoFlip || { active: false, interval: 30, keepAwake: true };
-           
+
            const newAutoFlip = { ...existingAutoFlip, interval: val };
-           
+
            invoke('save_settings', { settings: { autoFlip: newAutoFlip } }).then(() => {
              // Notify other windows (like main menu manager)
              emit('settings-updated');
@@ -162,24 +162,22 @@
         invoke('get_settings').then((current) => {
            current = current || {};
            const existingAutoFlip = current.autoFlip || { active: false, interval: 30, keepAwake: true };
-           
+
            const newAutoFlip = { ...existingAutoFlip, keepAwake: val };
-           
+
            invoke('save_settings', { settings: { autoFlip: newAutoFlip } }).then(() => {
              emit('settings-updated');
            });
         });
       });
 
-      rememberLastPageCheckbox.addEventListener('change', () => {
-        const val = rememberLastPageCheckbox.checked;
+      lastPageCheckbox.addEventListener('change', () => {
+        const val = lastPageCheckbox.checked;
         invoke('get_settings').then((current) => {
-           // rememberLastPage is top-level, so we can just send partial update?
-           // No, save_settings does shallow merge. If we send { rememberLastPage: val }, it works fine.
-           // But to be consistent and safe, we can just send the partial object.
-           // Wait, if I send { rememberLastPage: val }, it merges into root. Correct.
-           
-           invoke('save_settings', { settings: { rememberLastPage: val } }).then(() => {
+           // lastPage is top-level, so we can just send partial update
+           // save_settings does shallow merge. If we send { lastPage: val }, it works fine.
+
+           invoke('save_settings', { settings: { lastPage: val } }).then(() => {
              emit('settings-updated');
            });
         });

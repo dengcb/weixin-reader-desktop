@@ -1,55 +1,101 @@
-import { injectCSS } from '../core/utils';
+/**
+ * Style Manager - Manages CSS styles for reader mode
+ *
+ * Responsibilities:
+ * - Apply/remove wide mode CSS
+ * - Apply/remove hide toolbar CSS
+ * - Handle dark/light theme
+ *
+ * Listens to:
+ * - 'ipc:route-changed' - Clear styles when leaving reader page
+ * - Settings store changes - Apply styles when settings change
+ */
+
+import { injectCSS, removeCSS } from '../core/utils';
 import { settingsStore, AppSettings } from '../core/settings_store';
+import { getSiteRegistry } from '../core/site_registry';
+
+type RouteChangedEvent = {
+  isReader: boolean;
+  url: string;
+  pathname: string;
+};
 
 export class StyleManager {
   private isWide = false;
   private isHideToolbar = false;
+  private isReader = false;
+  private siteRegistry = getSiteRegistry();
 
   constructor() {
     this.init();
   }
 
-  private init() {
-    // 1. Theme Handling
+  private async init() {
+    // 1. Check initial route
+    this.isReader = this.siteRegistry.isReaderPage();
+
+    // 2. IMPORTANT: If starting on non-reader page, clear any leftover reader styles
+    // SettingsStore is already initialized by inject.ts
+    if (!this.isReader) {
+      console.log('[StyleManager] Starting on non-reader page, clearing any leftover reader styles');
+      this.clearReaderStyles();
+    }
+
+    // 3. Theme Handling (always active)
     this.handleTheme();
 
-    // 2. Subscribe to settings
+    // 4. Subscribe to settings changes
     settingsStore.subscribe((settings) => {
-        this.updateStyles(settings);
+      this.updateStyles(settings);
     });
+
+    // 5. Listen to route changes from IPCManager
+    window.addEventListener('ipc:route-changed', ((e: CustomEvent<RouteChangedEvent>) => {
+      const wasReader = this.isReader;
+      this.isReader = e.detail.isReader;
+
+      // Clear reader-only styles when leaving reader page
+      if (wasReader && !this.isReader) {
+        console.log('[StyleManager] Leaving reader page, clearing reader styles');
+        this.clearReaderStyles();
+      }
+    }) as EventListener);
+
+    window.addEventListener('wxrd:route-changed', ((e: CustomEvent<{ isReader: boolean }>) => {
+      const wasReader = this.isReader;
+      this.isReader = e.detail.isReader;
+
+      // Clear reader-only styles when leaving reader page
+      if (wasReader && !this.isReader) {
+        console.log('[StyleManager] Leaving reader page, clearing reader styles');
+        this.clearReaderStyles();
+      }
+    }) as EventListener);
   }
 
   private handleTheme() {
-      // Define styles
-      const DARK_BG = `
-          html, body {
-              background-color: #222222 !important;
-          }
-      `;
-      
-      const LIGHT_BG = `
-          html, body {
-              background-color: #ffffff !important;
-          }
-      `;
+    const applyTheme = (e: MediaQueryList | MediaQueryListEvent) => {
+      const adapter = this.siteRegistry.getCurrentAdapter();
 
-      // Function to apply theme
-      const applyTheme = (e: MediaQueryList | MediaQueryListEvent) => {
-          if (e.matches) {
-              // Dark mode
-              injectCSS('wxrd-base-bg', DARK_BG);
-          } else {
-              // Light mode
-              injectCSS('wxrd-base-bg', LIGHT_BG);
-          }
-      };
+      if (adapter && adapter.getDarkThemeCSS && adapter.getLightThemeCSS) {
+        const css = e.matches ? adapter.getDarkThemeCSS() : adapter.getLightThemeCSS();
+        injectCSS('wxrd-base-bg', css);
+      } else {
+        // Fallback to default theme
+        const defaultCSS = e.matches
+          ? 'html, body { background-color: #222222 !important; }'
+          : 'html, body { background-color: #ffffff !important; }';
+        injectCSS('wxrd-base-bg', defaultCSS);
+      }
+    };
 
-      // Initial check
-      const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      applyTheme(darkModeQuery);
+    // Initial check
+    const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    applyTheme(darkModeQuery);
 
-      // Listen for changes
-      darkModeQuery.addEventListener('change', applyTheme);
+    // Listen for changes
+    darkModeQuery.addEventListener('change', applyTheme);
   }
 
   private updateStyles(settings: AppSettings) {
@@ -57,93 +103,42 @@ export class StyleManager {
     const newIsHideToolbar = !!settings.hideToolbar;
 
     if (newIsWide !== this.isWide || newIsHideToolbar !== this.isHideToolbar) {
-        this.isWide = newIsWide;
-        this.isHideToolbar = newIsHideToolbar;
-        this.applyStyles();
+      this.isWide = newIsWide;
+      this.isHideToolbar = newIsHideToolbar;
+      this.applyStyles();
     }
   }
 
   private applyStyles() {
-    const CSS_READER_WIDE = `
-    /* 基础逻辑：宽屏模式 */
-    .readerTopBar,
-    body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
-      width: 96% !important;
-      max-width: calc(100vw - 224px) !important;
-    }
-    .app_content {
-      max-width: calc(100vw - 224px) !important;
-    }
-    body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
-      margin-left: calc(50vw - 80px) !important;
-    }
-  `;
-
-  const CSS_READER_THIN = `
-    /* 基础逻辑：窄屏模式 */
-    .readerTopBar,
-    body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
-      width: 80% !important;
-      max-width: calc(100vw - 424px) !important;
-    }
-    .app_content {
-      max-width: calc(100vw - 424px) !important;
-    }
-    body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
-      margin-left: calc(50vw - 180px) !important;
-    }
-  `;
-
-  const CSS_HIDE_TOOLBAR = `
-    /* 1. 基础逻辑：无论单栏双栏，都隐藏工具栏 */
-    .readerControls {
-      display: none !important;
+    // Only apply reader-specific styles when on reader page
+    if (!this.isReader) {
+      console.log('[StyleManager] Not on reader page, skipping reader styles');
+      return;
     }
 
-    /* 2. 双栏模式特有逻辑，请勿修改！！！ */
-    .readerTopBar,
-    body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
-      max-width: calc(100vw - 124px) !important;
-    }
+    const adapter = this.siteRegistry.getCurrentAdapter();
 
-    /* 3. 单栏模式特有逻辑，请勿删除！！！ */
-    .app_content {
-      max-width: calc(100vw - 124px) !important;
-    }
-  `;
+    if (adapter) {
+      // Use adapter-specific CSS
+      const wideCSS = adapter.getWideModeCSS(this.isWide);
+      const toolbarCSS = adapter.getToolbarCSS(this.isHideToolbar);
 
-  const CSS_SHOW_TOOLBAR = `
-    /* 1. 基础逻辑：显示工具栏 */
-    .readerControls {
-      display: block !important;
-    }
-
-    /* 2. 双栏模式特有逻辑，请勿修改！！！ */
-    .readerTopBar,
-    body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
-      max-width: calc(100vw - 224px) !important;
-    }
-
-    /* 3. 单栏模式特有逻辑，请勿删除！！！ */
-    .app_content {
-      max-width: calc(100vw - 224px) !important;
-    }
-    body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
-      margin-left: calc(50vw - 80px) !important;
-    }
-  `;
-
-    if (this.isWide) {
-      injectCSS('wxrd-wide-mode', CSS_READER_WIDE);
+      injectCSS('wxrd-wide-mode', wideCSS);
+      injectCSS('wxrd-hide-toolbar', toolbarCSS);
     } else {
-      injectCSS('wxrd-wide-mode', CSS_READER_THIN);
+      // Fallback: no styles applied
+      console.warn('[StyleManager] No adapter found, styles not applied');
     }
 
-    if (this.isHideToolbar) {
-      injectCSS('wxrd-hide-toolbar', CSS_HIDE_TOOLBAR);
-    } else {
-      injectCSS('wxrd-hide-toolbar', CSS_SHOW_TOOLBAR);
-    }
     window.dispatchEvent(new Event('resize'));
+  }
+
+  private clearReaderStyles() {
+    // Remove wide mode CSS
+    removeCSS('wxrd-wide-mode');
+    // Remove hide toolbar CSS
+    removeCSS('wxrd-hide-toolbar');
+
+    console.log('[StyleManager] Reader styles cleared');
   }
 }

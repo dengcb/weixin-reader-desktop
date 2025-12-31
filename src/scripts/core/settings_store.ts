@@ -1,6 +1,8 @@
 import { invoke, listen } from './tauri';
+import { OptimisticLock } from './optimistic_lock';
 
 export interface AppSettings {
+  _version?: number;  // Managed by OptimisticLock
   readerWide?: boolean;
   hideToolbar?: boolean;
   zoom?: number;
@@ -9,16 +11,16 @@ export interface AppSettings {
     interval: number;
     keepAwake: boolean;
   };
-  rememberLastPage?: boolean;
+  lastPage?: boolean;
   lastReaderUrl?: string | null;
   autoUpdate?: boolean;
 }
 
 type SettingsListener = (settings: AppSettings) => void;
 
-class SettingsStore {
+export class SettingsStore {
   private static instance: SettingsStore;
-  private settings: AppSettings = {};
+  private lock: OptimisticLock<AppSettings> | null = null;
   private listeners: Set<SettingsListener> = new Set();
   private initialized = false;
 
@@ -37,52 +39,61 @@ class SettingsStore {
     // Load initial settings
     try {
       const loaded = (await invoke<AppSettings>('get_settings')) || {};
+      const loadedVersion = loaded._version || 0;
+
       // Apply defaults
-      this.settings = {
+      const initialSettings: AppSettings = {
+          _version: loadedVersion,
           readerWide: false,
           hideToolbar: false,
           zoom: 0.8,
-          rememberLastPage: true,
+          lastPage: true,
           autoUpdate: true,
           ...loaded,
           autoFlip: {
               active: false,
-              interval: 30,
+              interval: 15,
               keepAwake: true,
               ...(loaded.autoFlip || {})
           }
       };
+
+      // Initialize optimistic lock
+      this.lock = new OptimisticLock<AppSettings>(initialSettings, loadedVersion);
+      console.log('[SettingsStore] Initialized optimistic lock with version:', loadedVersion);
     } catch (e) {
       console.error('SettingsStore: Failed to load settings', e);
-      this.settings = {
+      const fallbackSettings: AppSettings = {
+          _version: 0,
           readerWide: false,
           hideToolbar: false,
           zoom: 0.8,
-          rememberLastPage: true,
+          lastPage: true,
           autoUpdate: true,
-          autoFlip: { active: false, interval: 30, keepAwake: true }
+          autoFlip: { active: false, interval: 15, keepAwake: true }
       };
+      this.lock = new OptimisticLock<AppSettings>(fallbackSettings, 0);
     }
 
     // Listen for updates from other windows (e.g. settings window)
     listen('settings-updated', async () => {
+      if (!this.lock) return;
+
       // Reload fresh settings from backend
       const newSettings = (await invoke<AppSettings>('get_settings')) || {};
-      // Apply defaults again to ensure consistency
-      this.updateLocal({
-          readerWide: false,
-          hideToolbar: false,
-          zoom: 0.8,
-          rememberLastPage: true,
-          autoUpdate: true,
-          ...newSettings,
-          autoFlip: {
-              active: false,
-              interval: 30,
-              keepAwake: true,
-              ...(newSettings.autoFlip || {})
-          }
-      });
+      const backendVersion = newSettings._version || 0;
+
+      console.log('[SettingsStore] Received settings-updated event, backend version:', backendVersion, 'local version:', this.lock.getVersion());
+
+      // Use optimistic lock to load external data
+      const loaded = this.lock.loadFromExternal(newSettings, backendVersion);
+
+      if (loaded) {
+        console.log('[SettingsStore] Loaded newer version from backend:', backendVersion);
+        this.notify();
+      } else {
+        console.log('[SettingsStore] Ignoring older version from backend:', backendVersion, '<', this.lock.getVersion());
+      }
     });
 
     this.initialized = true;
@@ -90,44 +101,52 @@ class SettingsStore {
   }
 
   public get(): AppSettings {
-    return { ...this.settings };
+    return this.lock ? this.lock.getData() : {};
   }
 
   public async update(partial: Partial<AppSettings>) {
-    // 1. Update local
-    this.settings = { ...this.settings, ...partial };
-    
-    // 2. Persist to backend
-    // Note: 'save_settings' in backend does a shallow merge on top-level keys
-    // If we update 'autoFlip' (nested), we must send the whole object or handle deep merge in Rust.
-    // Our Rust implementation does shallow merge. 
-    // So if we update `autoFlip`, we must provide the complete `autoFlip` object.
-    try {
-      await invoke('save_settings', { settings: partial });
-    } catch (e) {
-      console.error('SettingsStore: Failed to save settings', e);
+    if (!this.lock) {
+      console.error('[SettingsStore] Lock not initialized');
+      return;
     }
 
-    // 3. Notify listeners
+    // Remove _version from partial (managed by lock)
+    const { _version, ...partialWithoutVersion } = partial as any;
+
+    // Use optimistic lock to perform update
+    const result = this.lock.tryUpdate(partialWithoutVersion);
+
+    console.log('[SettingsStore] Update: version', result.version - 1, '->', result.version, 'partial:', partialWithoutVersion);
+
+    // Persist to backend with new version
+    try {
+      await invoke('save_settings', {
+        settings: result.data,  // Send full settings with version
+        version: result.version
+      });
+      console.log('[SettingsStore] Saved successfully with version:', result.version);
+    } catch (e) {
+      console.error('[SettingsStore] Failed to save settings', e);
+      // Revert version on error
+      this.lock.forceSet(result.data, result.version - 1);
+    }
+
+    // Notify listeners with updated data
     this.notify();
   }
 
   public subscribe(listener: SettingsListener) {
     this.listeners.add(listener);
     // Notify immediately with current settings
-    if (this.initialized) {
-        listener(this.get());
+    if (this.initialized && this.lock) {
+        listener(this.lock.getData());
     }
     return () => this.listeners.delete(listener);
   }
 
-  private updateLocal(newSettings: AppSettings) {
-    this.settings = newSettings;
-    this.notify();
-  }
-
   private notify() {
-    const current = this.get();
+    if (!this.lock) return;
+    const current = this.lock.getData();
     this.listeners.forEach(l => l(current));
   }
 }

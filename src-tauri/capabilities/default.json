@@ -1,13 +1,18 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
+  "$schema": "../gen/schemas/remote-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window with remote domain access",
   "windows": ["main", "about", "update", "settings"],
   "remote": {
-    "urls": ["https://weread.qq.com/*"]
+    "urls": [
+      "https://weread.qq.com/*",
+      "https://*.weread.qq.com/*",
+      "http://localhost.weixin.qq.com:*"
+    ]
   },
   "permissions": [
     "core:default",
+    "core:webview:default",
     "opener:default",
     "store:default",
     "window-state:default",
@@ -16,7 +21,6 @@
     "core:event:default",
     "core:window:default",
     "core:window:allow-set-size",
-    "core:webview:default",
     "updater:default"
   ]
 }

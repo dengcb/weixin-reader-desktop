@@ -47,18 +47,59 @@ export const waitForTauri = (): Promise<void> => {
             resolve();
             return;
         }
-        
+
         const check = setInterval(() => {
             if (window.__TAURI__) {
                 clearInterval(check);
                 resolve();
             }
         }, 10);
-        
+
         // 超时保底 (例如 2秒)，避免死等
         setTimeout(() => {
             clearInterval(check);
             resolve();
         }, 2000);
     });
+};
+
+// Wait for Tauri to be actually ready to handle IPC calls
+// This tests IPC by calling a simple command
+export const waitForTauriReady = async (): Promise<void> => {
+    // First wait for __TAURI__ object
+    await waitForTauri();
+
+    // Then test if IPC is actually working by trying to get app name
+    // Wait up to 5 seconds for IPC to be ready (increased from 3s)
+    // Homepage needs more time for IPC to switch from custom protocol to postMessage
+    const maxAttempts = 100; // 100 * 50ms = 5 seconds
+    const delay = 50;
+
+    console.log('[Tauri] Waiting for IPC to be ready...');
+
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            await invoke('get_app_name');
+            console.log(`[Tauri] IPC ready after ${i * delay}ms`);
+            return; // Success!
+        } catch (e) {
+            // IPC not ready yet, wait and retry
+            if (i < maxAttempts - 1) {
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+    }
+
+    // If we get here, IPC is still not ready, but we'll continue anyway
+    console.warn(`[Tauri] IPC not ready after ${maxAttempts * delay}ms, continuing anyway`);
+};
+
+// Log to file utility
+export const logToFile = (message: string) => {
+    if (window.__TAURI__) {
+        invoke('log_to_file', { message })
+            .catch(() => {}); // Silently fail if logging fails
+    } else {
+        console.log(message); // Fallback to console if Tauri not ready
+    }
 };

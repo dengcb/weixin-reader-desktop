@@ -45,17 +45,9 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            border-radius: 12px;
-            box-sizing: border-box;
-            border: 1px solid rgba(0, 0, 0, 0.1);
             overflow: hidden;
             position: relative;
-        }
-
-        @media (prefers-color-scheme: dark) {
-            .window-content {
-                border: 1px solid rgba(255, 255, 255, 0.15);
-            }
+            padding-bottom: 16px;
         }
 
         .icon {
@@ -159,7 +151,7 @@
                 } else {
                         // Case: No Update
                         hasUpdate = false;
-                        versionMsg.innerText = `当前已是最新版本 (v${info.version})。`;
+                        versionMsg.innerText = `当前已是最新版本 (v${info.version})`;
                         actionBtn.innerText = "好的";
                         actionBtn.disabled = false;
                         autoUpdateContainer.classList.remove('hidden');

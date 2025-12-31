@@ -4,14 +4,85 @@ use tauri::{
 };
 use tauri_plugin_opener::OpenerExt;
 
-pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
-    let handle = app.handle();
+// Re-export monitor module functions for convenience
+use crate::monitor::{get_current_monitor_index as get_current_screen_index, get_macos_display_names, calculate_center_position, start_position_monitoring};
 
-    // 1. App Menu (macOS only mostly)
+/// Build menu items for available monitors (excluding current)
+/// Returns a vector of menu items that can be added directly to the window menu
+fn build_monitor_menu_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<Vec<MenuItem<R>>> {
+    let mut monitor_items = Vec::new();
+
+    // Get the index of the screen that the main window is on
+    let current_screen_index = get_current_screen_index(handle);
+
+    eprintln!("DEBUG: current_screen_index: {:?}", current_screen_index);
+
+    // On macOS, get all display names
+    #[cfg(target_os = "macos")]
+    let display_names = get_macos_display_names();
+
+    #[cfg(target_os = "macos")]
+    eprintln!("DEBUG: display_names: {:?}", display_names);
+
+    // Use Tauri's available_monitors to get all monitors
+    if let Ok(monitors) = handle.available_monitors() {
+        for (index, _monitor) in monitors.iter().enumerate() {
+            // Skip if this is the monitor where the main window is currently located
+            let should_skip = current_screen_index == Some(index);
+
+            #[cfg(target_os = "macos")]
+            eprintln!("DEBUG: Display[{}] should_skip={} (current_screen_index={:?})",
+                index, should_skip, current_screen_index);
+
+            if should_skip {
+                continue; // Skip current monitor
+            }
+
+            // Try to get the localized display name on macOS using index
+            #[cfg(target_os = "macos")]
+            let display_name = display_names.get(index).cloned();
+
+            #[cfg(not(target_os = "macos"))]
+            let display_name = None;
+
+            // Use macOS localized name, or fall back to generic name
+            let name_str: String = if let Some(mac_name) = display_name {
+                mac_name
+            } else {
+                format!("显示器 {}", index + 1)
+            };
+
+            // Create menu item with ID like "move_to_monitor_0"
+            let item_id = format!("move_to_monitor_{}", index);
+            // Use Chinese double quotes: "..."
+            let left_quote = "\u{201C}";  // "
+            let right_quote = "\u{201D}"; // "
+            let item_text = format!("移到 {}{}{}", left_quote, name_str, right_quote);
+
+            eprintln!("DEBUG: Creating menu item: {} (ID: {})", item_text, item_id);
+
+            if let Ok(item) = MenuItem::with_id(handle, &item_id, &item_text, true, None::<&str>) {
+                monitor_items.push(item);
+            }
+        }
+    }
+
+    Ok(monitor_items)
+}
+
+/// Rebuild the entire menu (called after window moves)
+/// This recreates the menu with updated monitor items based on current window position
+fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    eprintln!("DEBUG: Rebuilding menu after window move...");
+
+    // Load current settings
+    let initial_settings = get_initial_settings(handle);
+
+    // 1. App Menu
     let about = MenuItem::with_id(handle, "about", "关于", true, None::<&str>)?;
     let check_update = MenuItem::with_id(handle, "check_update", "检查更新...", true, None::<&str>)?;
     let settings = MenuItem::with_id(handle, "settings", "设置...", true, Some("CmdOrCtrl+,"))?;
-    
+
     let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
     let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
     let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
@@ -34,31 +105,22 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             &quit,
         ],
     )?;
-    
-    // Manage menu state for updates
-    app.manage(crate::update::MenuState { 
-        check_update_item: std::sync::Mutex::new(Some(check_update.clone())) 
-    });
-    
+
     // 2. View Menu
     let refresh = MenuItem::with_id(handle, "refresh", "刷新", true, Some("CmdOrCtrl+R"))?;
     let back = MenuItem::with_id(handle, "back", "后退", true, Some("CmdOrCtrl+["))?;
     let forward = MenuItem::with_id(handle, "forward", "前进", true, Some("CmdOrCtrl+]"))?;
-    
-    let auto_flip = CheckMenuItem::with_id(handle, "auto_flip", "自动翻页", true, false, Some("CmdOrCtrl+I"))?;
-    
+
+    let auto_flip = CheckMenuItem::with_id(handle, "auto_flip", "自动翻页", true, initial_settings.auto_flip_active, Some("CmdOrCtrl+I"))?;
     let zoom_reset = MenuItem::with_id(handle, "zoom_reset", "实际大小", true, Some("CmdOrCtrl+0"))?;
     let zoom_in = MenuItem::with_id(handle, "zoom_in", "放大", true, Some("CmdOrCtrl+="))?;
     let zoom_out = MenuItem::with_id(handle, "zoom_out", "缩小", true, Some("CmdOrCtrl+-"))?;
-    
-    // Native macOS Fullscreen MenuItem
-    // Using PredefinedMenuItem::fullscreen automatically binds to the system's "Enter Full Screen" action.
-    // This allows macOS to handle the shortcuts (Fn+F, Ctrl+Cmd+F) natively and show the correct icon/text in the menu.
+
     let toggle_fullscreen = PredefinedMenuItem::fullscreen(handle, Some("切换全屏"))?;
-    
-    let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, false, Some("CmdOrCtrl+9"))?;
-    let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, false, Some("CmdOrCtrl+O"))?;
-    
+
+    let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, initial_settings.reader_wide, Some("CmdOrCtrl+9"))?;
+    let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, initial_settings.hide_toolbar, Some("CmdOrCtrl+O"))?;
+
     let view_menu = Submenu::with_items(
         handle,
         "视图",
@@ -81,18 +143,263 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         ],
     )?;
 
-    // 3. Window Menu
+    // 3. Window Menu - Rebuild monitor items (THIS IS THE KEY PART)
+    let monitor_items = build_monitor_menu_items(handle)?;
     let minimize = PredefinedMenuItem::minimize(handle, Some("最小化"))?;
-    let window_menu = Submenu::with_items(
+    let close_window = PredefinedMenuItem::close_window(handle, Some("关闭"))?;
+
+    let window_menu = if monitor_items.is_empty() {
+        Submenu::with_items(
+            handle,
+            "窗口",
+            true,
+            &[
+                &minimize,
+                &PredefinedMenuItem::separator(handle)?,
+                &close_window,
+            ]
+        )?
+    } else {
+        let leaked_items: Vec<&'static dyn tauri::menu::IsMenuItem<R>> = monitor_items.into_iter().map(|item| {
+            Box::leak(Box::new(item)) as &dyn tauri::menu::IsMenuItem<R>
+        }).collect();
+
+        match leaked_items.len() {
+            1 => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    &close_window,
+                ]
+            )?,
+            2 => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    leaked_items[1],
+                    &close_window,
+                ]
+            )?,
+            _ => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    leaked_items[1],
+                    &close_window,
+                ]
+            )?,
+        }
+    };
+
+    // 4. Help Menu
+    let official_site = MenuItem::with_id(handle, "official_site", "微信读书官网", true, None::<&str>)?;
+    let help_menu = Submenu::with_items(
         handle,
-        "窗口",
+        "帮助",
         true,
         &[
-            &minimize,
-            &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::close_window(handle, Some("关闭"))?,
+            &official_site
         ]
     )?;
+
+    let menu = Menu::with_items(
+        handle,
+        &[
+            &app_menu,
+            &view_menu,
+            &window_menu,
+            &help_menu
+        ],
+    )?;
+
+    // Set the new menu
+    handle.set_menu(menu)?;
+
+    eprintln!("DEBUG: Menu rebuilt successfully");
+    Ok(())
+}
+
+pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
+    let handle = app.handle();
+
+    // Start window position monitoring
+    #[cfg(target_os = "macos")]
+    {
+        let handle_clone = handle.clone();
+        start_position_monitoring(handle_clone.clone(), move |h| rebuild_full_menu(h));
+    }
+
+    // Load initial settings to set menu states correctly
+    let initial_settings = get_initial_settings(handle);
+
+    // 1. App Menu (macOS only mostly)
+    let about = MenuItem::with_id(handle, "about", "关于", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(handle, "check_update", "检查更新...", true, None::<&str>)?;
+    let settings = MenuItem::with_id(handle, "settings", "设置...", true, Some("CmdOrCtrl+,"))?;
+    // Use PredefinedMenuItem for quit - macOS handles it specially
+    let quit = PredefinedMenuItem::quit(handle, Some("退出"))?;
+
+    let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
+    let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
+    let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
+
+    let app_menu = Submenu::with_items(
+        handle,
+        "App",
+        true,
+        &[
+            &about,
+            &check_update,
+            &PredefinedMenuItem::separator(handle)?,
+            &settings,
+            &PredefinedMenuItem::separator(handle)?,
+            &hide,
+            &hide_others,
+            &show_all,
+            &PredefinedMenuItem::separator(handle)?,
+            &quit,
+        ],
+    )?;
+
+    // Manage menu state for updates
+    app.manage(crate::update::MenuState {
+        check_update_item: std::sync::Mutex::new(Some(check_update.clone()))
+    });
+
+    // 2. View Menu
+    let refresh = MenuItem::with_id(handle, "refresh", "刷新", true, Some("CmdOrCtrl+R"))?;
+    let back = MenuItem::with_id(handle, "back", "后退", true, Some("CmdOrCtrl+["))?;
+    let forward = MenuItem::with_id(handle, "forward", "前进", true, Some("CmdOrCtrl+]"))?;
+
+    // Use initial settings value for auto_flip
+    let auto_flip_initial = initial_settings.auto_flip_active;
+    let auto_flip = CheckMenuItem::with_id(handle, "auto_flip", "自动翻页", true, auto_flip_initial, Some("CmdOrCtrl+I"))?;
+
+    let zoom_reset = MenuItem::with_id(handle, "zoom_reset", "实际大小", true, Some("CmdOrCtrl+0"))?;
+    let zoom_in = MenuItem::with_id(handle, "zoom_in", "放大", true, Some("CmdOrCtrl+="))?;
+    let zoom_out = MenuItem::with_id(handle, "zoom_out", "缩小", true, Some("CmdOrCtrl+-"))?;
+
+    // Native macOS Fullscreen MenuItem
+    let toggle_fullscreen = PredefinedMenuItem::fullscreen(handle, Some("切换全屏"))?;
+
+    // Use initial settings values for reader_wide and hide_toolbar
+    let reader_wide_initial = initial_settings.reader_wide;
+    let hide_toolbar_initial = initial_settings.hide_toolbar;
+    let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, reader_wide_initial, Some("CmdOrCtrl+9"))?;
+    let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, hide_toolbar_initial, Some("CmdOrCtrl+O"))?;
+
+    let view_menu = Submenu::with_items(
+        handle,
+        "视图",
+        true,
+        &[
+            &refresh,
+            &back,
+            &forward,
+            &PredefinedMenuItem::separator(handle)?,
+            &auto_flip,
+            &PredefinedMenuItem::separator(handle)?,
+            &zoom_reset,
+            &zoom_in,
+            &zoom_out,
+            &PredefinedMenuItem::separator(handle)?,
+            &toggle_fullscreen,
+            &PredefinedMenuItem::separator(handle)?,
+            &reader_wide,
+            &hide_toolbar,
+        ],
+    )?;
+
+    // 3. Window Menu - Build monitor items (excluding current)
+    let monitor_items = build_monitor_menu_items(handle)?;
+    let minimize = PredefinedMenuItem::minimize(handle, Some("最小化"))?;
+    let close_window = PredefinedMenuItem::close_window(handle, Some("关闭"))?;
+
+    // Build window menu based on available monitors
+    let window_menu = if monitor_items.is_empty() {
+        // No other monitors - basic window menu
+        Submenu::with_items(
+            handle,
+            "窗口",
+            true,
+            &[
+                &minimize,
+                &PredefinedMenuItem::separator(handle)?,
+                &close_window,
+            ]
+        )?
+    } else {
+        // Has other monitors - leak them to make them live for 'static
+        let leaked_items: Vec<&'static dyn tauri::menu::IsMenuItem<R>> = monitor_items.into_iter().map(|item| {
+            Box::leak(Box::new(item)) as &dyn tauri::menu::IsMenuItem<R>
+        }).collect();
+
+        // Match on number of monitors and create appropriate menu
+        match leaked_items.len() {
+            1 => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    &close_window,
+                ]
+            )?,
+            2 => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    leaked_items[1],
+                    &close_window,
+                ]
+            )?,
+            3 => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    leaked_items[1],
+                    leaked_items[2],
+                    &close_window,
+                ]
+            )?,
+            _ => Submenu::with_items(
+                handle,
+                "窗口",
+                true,
+                &[
+                    &minimize,
+                    &PredefinedMenuItem::separator(handle)?,
+                    leaked_items[0],
+                    leaked_items[1],
+                    leaked_items[2],
+                    if leaked_items.len() > 3 { leaked_items[3] } else { leaked_items[0] },
+                    &close_window,
+                ]
+            )?,
+        }
+    };
 
     // 4. Help Menu
     let official_site = MenuItem::with_id(handle, "official_site", "微信读书官网", true, None::<&str>)?;
@@ -117,7 +424,8 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
 
-    // Event Handling
+    // Event Handling - use handle for move closure
+    let handle_for_events = handle.clone();
     app.on_menu_event(move |app, event| {
         let id = event.id.as_ref();
         match id {
@@ -197,17 +505,13 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                     if let Some(win) = app.get_webview_window("update") {
                         let _ = win.set_focus();
                     } else {
-                        let win = WebviewWindowBuilder::new(app, "update", WebviewUrl::App("update.html".into()))
+                        let _ = WebviewWindowBuilder::new(app, "update", WebviewUrl::App("update.html".into()))
                             .title("检查更新")
                             .inner_size(400.0, 300.0)
                             .center()
                             .resizable(false)
-                            .decorations(false)
+                            .hidden_title(true)  // Hide title but keep native macOS decorations (corners, shadow)
                             .build();
-
-                        if let Ok(w) = win {
-                            let _ = w.set_shadow(true);
-                        }
                     }
                 }
             }
@@ -223,10 +527,117 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                         .build();
                 }
             }
-            // "toggle_fullscreen" event is handled natively by PredefinedMenuItem
-            _ => {}
+            "quit" => {
+                // Clear autoFlip.active before quitting
+                println!("[Menu Quit] Quit requested, clearing autoFlip.active");
+                let settings = crate::settings::get_settings(handle_for_events.clone());
+                if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
+                    if auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false) {
+                        let update = serde_json::json!({
+                            "autoFlip": {
+                                "active": false,
+                                "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
+                                "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
+                            }
+                        });
+                        println!("[Menu Quit] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
+                        crate::settings::save_settings(handle_for_events.clone(), update, None);
+                        println!("[Menu Quit] Settings saved, now exiting");
+                    }
+                }
+                // Exit the app
+                std::process::exit(0);
+            }
+            _ => {
+                // Check if this is a "move_to_monitor_*" event
+                if id.starts_with("move_to_monitor_") {
+                    if let Some(index_str) = id.strip_prefix("move_to_monitor_") {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            // First, check if window is already on the target monitor
+                            let current_screen_index = get_current_screen_index(app);
+                            eprintln!("DEBUG: Move request: current={:?}, target={}", current_screen_index, index);
+
+                            // If already on target monitor, do nothing
+                            if current_screen_index == Some(index) {
+                                eprintln!("DEBUG: Window is already on target monitor, skipping");
+                                return;
+                            }
+
+                            // Get window size and calculate center position
+                            if let Some(win) = app.get_webview_window("main") {
+                                if let Ok(current_size) = win.outer_size() {
+                                    if let Some((x, y)) = calculate_center_position(
+                                        index,
+                                        (current_size.width, current_size.height),
+                                        app,
+                                    ) {
+                                        eprintln!("DEBUG: Moving window to ({}, {}) on monitor[{}]", x, y, index);
+                                        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x as f64, y as f64)));
+
+                                        // Rebuild menu after window move
+                                        // Wait a bit for the window to actually move
+                                        let app_clone = app.clone();
+                                        std::thread::spawn(move || {
+                                            std::thread::sleep(std::time::Duration::from_millis(200));
+                                            if let Err(e) = rebuild_full_menu(&app_clone) {
+                                                eprintln!("DEBUG: Failed to rebuild menu: {:?}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     });
 
     Ok(())
+}
+
+// Helper struct to hold initial settings values
+struct InitialSettings {
+    reader_wide: bool,
+    hide_toolbar: bool,
+    auto_flip_active: bool,
+}
+
+// Load initial settings from the settings file (same path as settings.rs)
+fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSettings {
+    // Use the same path as settings.rs: app_config_dir() + "settings.json"
+    let settings_path = handle.path().app_config_dir()
+        .ok()
+        .and_then(|dir| {
+            std::fs::read_to_string(dir.join("settings.json")).ok()
+        });
+
+    if let Some(settings_str) = settings_path {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&settings_str) {
+            let reader_wide = json.get("readerWide")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let hide_toolbar = json.get("hideToolbar")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let auto_flip_active = json.get("autoFlip")
+                .and_then(|v| v.as_object())
+                .and_then(|obj| obj.get("active"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            return InitialSettings {
+                reader_wide,
+                hide_toolbar,
+                auto_flip_active,
+            };
+        }
+    }
+
+    // Default values if settings file doesn't exist or can't be read
+    InitialSettings {
+        reader_wide: false,
+        hide_toolbar: false,
+        auto_flip_active: false,
+    }
 }
