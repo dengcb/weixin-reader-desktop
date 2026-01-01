@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.4.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.5.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -36,6 +36,7 @@
         <li>macOS 原生菜单栏</li>
         <li>窗口位置/大小持久化</li>
         <li>完整的键盘快捷键支持</li>
+        <li>记忆最后阅读页面</li>
       </ul>
     </td>
     <td width="50%">
@@ -55,6 +56,8 @@
         <li>深色模式 - 保护夜间阅读</li>
         <li>自动翻页 - 解放双手</li>
         <li>隐藏工具栏 - 纯净阅读</li>
+        <li>触摸板双指滑动翻页</li>
+        <li>鼠标自动隐藏</li>
       </ul>
     </td>
     <td width="50%">
@@ -181,16 +184,23 @@ bun run test:e2e
                                     └───────────────────────────┘
 ```
 
-### 前端模块 (`src/scripts/`)
+### 前端模块 (`src/scripts/managers/`)
 
 | 管理器 | 职责 |
 |--------|------|
-| `IPCManager` | 路由/标题监控，派发事件 |
+| `IPCManager` | 中央事件总线，路由/标题监控 |
 | `AppManager` | 应用初始化，恢复阅读进度 |
 | `MenuManager` | 菜单状态同步，处理菜单动作 |
 | `StyleManager` | 宽屏模式，隐藏工具栏，样式注入 |
 | `ThemeManager` | 深色模式，链接处理 |
-| `TurnerManager` | 自动翻页，滚轮翻页 |
+| `TurnerManager` | 翻页控制器（含子模块） |
+
+**TurnerManager 子模块** (`turner/`):
+| 模块 | 职责 |
+|------|------|
+| `AutoFlipper` | 自动翻页，支持双栏/单栏模式 |
+| `SwipeHandler` | 触摸板双指滑动翻页 |
+| `CursorHider` | 阅读时鼠标自动隐藏 |
 
 ### Rust 后端 (`src-tauri/src/`)
 
@@ -199,9 +209,9 @@ bun run test:e2e
 | `lib.rs` | 应用入口，插件初始化，脚本注入 |
 | `commands.rs` | IPC 命令定义 |
 | `menu.rs` | 原生菜单构建，事件处理 |
-| `monitor.rs` | 多显示器支持 |
+| `monitor.rs` | 多显示器支持，事件驱动检测 |
 | `settings.rs` | 设置文件读写 |
-| `update.rs` | 自动更新管理 |
+| `update.rs` | 自动更新检查与安装 |
 
 ### Tauri 插件
 
