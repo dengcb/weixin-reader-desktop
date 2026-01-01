@@ -18,16 +18,18 @@ export class PageScroller {
 
   /**
    * 恢复锚点位置
+   * @returns 是否恢复成功
    */
-  static restoreAnchorPosition(anchor: { element: Element, top: number }) {
+  static restoreAnchorPosition(anchor: { element: Element, top: number }): boolean {
     if (!anchor.element.isConnected) {
       console.warn('[PageScroller] Anchor element is detached, cannot restore position');
-      return;
+      return false;
     }
 
     // Use instant behavior to prevent drift from smooth scrolling
     anchor.element.scrollIntoView({ behavior: 'instant', block: 'start' });
     window.scrollBy({ top: -anchor.top, behavior: 'instant' });
+    return true;
   }
 
   /**
@@ -39,8 +41,8 @@ export class PageScroller {
     console.log('[PageScroller] Starting preload chase');
 
     const anchor = this.findAnchorElement();
-    const CHASE_STEP = 20000;
-    const MAX_ATTEMPTS = 10;
+    const CHASE_STEP = 30000;
+    const MAX_ATTEMPTS = 15;
     let attempts = 0;
     let lastHeight = 0;
 
@@ -60,9 +62,13 @@ export class PageScroller {
 
     console.log('[PageScroller] Preload done, bouncing back');
 
+    let restored = false;
     if (anchor) {
-      this.restoreAnchorPosition(anchor);
-    } else {
+      restored = this.restoreAnchorPosition(anchor);
+    }
+
+    if (!restored) {
+      console.log('[PageScroller] Anchor restore failed or no anchor, falling back to startY');
       window.scrollTo({ top: startY, behavior: 'instant' });
     }
   }

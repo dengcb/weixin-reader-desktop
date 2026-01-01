@@ -14,6 +14,7 @@
 import { getSiteRegistry } from '../core/site_registry';
 import { settingsStore } from '../core/settings_store';
 import { invoke } from '../core/tauri';
+import { ScrollState } from '../core/scroll_state';
 
 type RouteChangedEvent = {
   isReader: boolean;
@@ -39,6 +40,15 @@ export class IPCManager {
   private async init() {
     // Wait for settings to be ready
     await settingsStore.init();
+
+    // Safety fallback: Ensure scroll saving is enabled after 10 seconds
+    // This prevents a bug in AppManager.restoreScrollPosition from permanently disabling save
+    setTimeout(() => {
+      if (!ScrollState.isRestorationComplete()) {
+        console.warn('[IPCManager] Force enabling scroll save after timeout');
+        ScrollState.markRestorationComplete();
+      }
+    }, 10000);
 
     // Start monitoring
     this.monitorRoute();
@@ -161,6 +171,12 @@ export class IPCManager {
       // Check if in single-column mode (not double-column)
       const adapter = this.siteRegistry.getCurrentAdapter();
       if (!adapter || adapter.isDoubleColumn()) return;
+
+      // Check if restore is complete (prevent overwriting during restore chase)
+      if (!ScrollState.isRestorationComplete()) {
+        // console.log('[IPCManager] Scroll restore in progress, skipping save');
+        return;
+      }
 
       const scrollY = window.scrollY;
 

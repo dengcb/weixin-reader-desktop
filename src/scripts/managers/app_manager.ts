@@ -12,6 +12,7 @@
 import { invoke, waitForTauri, logToFile } from '../core/tauri';
 import { settingsStore } from '../core/settings_store';
 import { getSiteRegistry } from '../core/site_registry';
+import { ScrollState } from '../core/scroll_state';
 
 // Session storage key to track if we've already restored in this session
 const RESTORE_FLAG_KEY = 'wxrd_has_restored';
@@ -122,9 +123,8 @@ export class AppManager {
   }
 
   private restoreScrollPosition() {
-    // Check if we've already restored scroll in this session
-    const scrollRestored = sessionStorage.getItem(SCROLL_RESTORED_KEY);
-    if (scrollRestored === 'true') {
+    // Check if we've already restored scroll in this session (memory only)
+    if (ScrollState.isRestorationComplete()) {
       console.log('[AppManager] Scroll already restored in this session, skipping');
       return;
     }
@@ -134,14 +134,14 @@ export class AppManager {
 
     // Only restore if on reader page and has saved scroll position
     if (!isReader || !settings.lastPage || !settings.scrollPosition) {
-      sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
+      ScrollState.markRestorationComplete();
       return;
     }
 
     // Check if in single-column mode
     const adapter = this.siteRegistry.getCurrentAdapter();
     if (!adapter || adapter.isDoubleColumn()) {
-      sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
+      ScrollState.markRestorationComplete();
       return;
     }
 
@@ -157,13 +157,16 @@ export class AppManager {
     const chaseScroll = () => {
       attempts++;
       const currentHeight = document.documentElement.scrollHeight;
+      const viewportHeight = window.innerHeight;
+      // 需要的最小高度：目标位置 + 视口高度（这样滚动后目标位置才能在屏幕顶部）
+      const requiredHeight = targetScroll + viewportHeight;
 
       // Case 1: Page is long enough, just go to target
-      if (currentHeight >= targetScroll) {
-        console.log(`[AppManager] Height sufficient (${currentHeight} >= ${targetScroll}), restoring directly.`);
-        window.scrollTo(0, targetScroll);
-        // Clean up
-        settingsStore.update({ scrollPosition: 0 });
+      if (currentHeight >= requiredHeight) {
+        console.log(`[AppManager] Height sufficient (${currentHeight} >= ${requiredHeight}), restoring to ${targetScroll}`);
+        window.scrollTo({ top: targetScroll, behavior: 'instant' });
+        // Mark restore as complete so IPCManager can start saving
+        ScrollState.markRestorationComplete();
         return;
       }
 
@@ -171,7 +174,7 @@ export class AppManager {
       if (attempts < maxAttempts) {
         console.log(`[AppManager] Chasing scroll: height ${currentHeight} < target ${targetScroll}, scrolling to bottom.`);
         // Scroll to bottom
-        window.scrollTo(0, currentHeight);
+        window.scrollTo({ top: currentHeight, behavior: 'instant' });
 
         // Dispatch fake user events to trigger lazy loading
         document.dispatchEvent(new Event('scroll'));
@@ -183,14 +186,12 @@ export class AppManager {
         setTimeout(chaseScroll, 100);
       } else {
         console.log('[AppManager] Max restore attempts reached, giving up.');
-        window.scrollTo(0, targetScroll); // Try one last time
-        settingsStore.update({ scrollPosition: 0 });
+        window.scrollTo({ top: targetScroll, behavior: 'instant' }); // Try one last time
+        ScrollState.markRestorationComplete();
       }
     };
 
     // Start the chase after initial load
     setTimeout(chaseScroll, 500);
-
-    sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
   }
 }

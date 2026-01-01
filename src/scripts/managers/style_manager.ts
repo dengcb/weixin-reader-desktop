@@ -98,6 +98,63 @@ export class StyleManager {
     darkModeQuery.addEventListener('change', applyTheme);
   }
 
+  // ==================== Mouse Auto-Hide ====================
+
+  private mouseHideTimer: number | null = null;
+  private isMouseHidden = false;
+
+  private initMouseAutoHide() {
+    const resetTimer = () => {
+      // 1. Show cursor immediately
+      if (this.isMouseHidden) {
+        this.showCursor();
+      }
+
+      // 2. Clear existing timer
+      if (this.mouseHideTimer) {
+        window.clearTimeout(this.mouseHideTimer);
+        this.mouseHideTimer = null;
+      }
+
+      // 3. Only start timer if in Reader Mode AND Fullscreen (optional, mimicking old behavior)
+      // For now, let's just check if we are in reader mode to be safe, or always active.
+      // The old version checked: isInReader() && window.isFullScreen()
+      // Let's stick to reader mode for now to avoid side effects on home page.
+      if (this.isReader) {
+        this.mouseHideTimer = window.setTimeout(() => {
+          this.hideCursor();
+        }, 3000);
+      }
+    };
+
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('mousedown', resetTimer);
+    window.addEventListener('keydown', resetTimer); // Also show on key press
+    window.addEventListener('wheel', resetTimer);
+  }
+
+  private hideCursor() {
+    if (this.isMouseHidden) return;
+    
+    // Check conditions again just in case
+    if (!this.isReader) return;
+
+    // Inject CSS class to hide cursor
+    injectCSS('wxrd-cursor-hide', `
+      body, body * {
+        cursor: none !important;
+      }
+    `);
+    this.isMouseHidden = true;
+  }
+
+  private showCursor() {
+    if (!this.isMouseHidden) return;
+
+    removeCSS('wxrd-cursor-hide');
+    this.isMouseHidden = false;
+  }
+
   private updateStyles(settings: AppSettings) {
     const newIsWide = !!settings.readerWide;
     const newIsHideToolbar = !!settings.hideToolbar;

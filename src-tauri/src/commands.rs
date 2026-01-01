@@ -219,3 +219,9 @@ pub fn navigate_to_url(window: WebviewWindow, url: String) {
     println!("[Navigate] Navigating to: {}", url);
     let _ = window.eval(&format!("window.location.href = {}", serde_json::to_string(&url).unwrap()));
 }
+
+/// Set cursor visibility
+#[tauri::command]
+pub fn set_cursor_visible(window: WebviewWindow, visible: bool) {
+    let _ = window.set_cursor_visible(visible);
+}

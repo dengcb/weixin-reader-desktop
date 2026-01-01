@@ -7,7 +7,7 @@ use std::time::Duration;
 use std::path::PathBuf;
 
 mod menu;
-mod monitor;
+pub mod monitor;
 mod settings;
 mod commands;
 mod update;
@@ -244,6 +244,7 @@ pub fn run() {
             commands::move_window_to_monitor,
             commands::get_current_monitor,
             commands::navigate_to_url,
+            commands::set_cursor_visible,
             update::check_update_manual,
             update::install_update_now,
             update::is_update_downloaded
