@@ -4,12 +4,12 @@
 //! - Detecting the current monitor (display) where the window is located
 //! - Getting macOS system display names
 //! - Building menu items for moving window between monitors
-//! - Monitoring window position changes and updating menu dynamically
+//! - Event-driven window position monitoring (no polling)
 
 #![allow(deprecated)]
 
 use tauri::{AppHandle, Manager, Runtime};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
@@ -136,10 +136,24 @@ pub fn get_macos_display_names() -> Vec<String> {
     display_names
 }
 
-/// Get display names for non-macOS platforms (placeholder).
+/// Get display names for non-macOS platforms.
+/// Uses Tauri's monitor API to get names, falling back to generic names.
 #[cfg(not(target_os = "macos"))]
-pub fn get_display_names() -> Vec<String> {
-    vec!["Monitor 1".to_string()]
+pub fn get_display_names<R: Runtime>(handle: &AppHandle<R>) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(monitors) = handle.available_monitors() {
+        for (i, monitor) in monitors.iter().enumerate() {
+            if let Some(name) = monitor.name() {
+                names.push(name);
+            } else {
+                names.push(format!("Monitor {}", i + 1));
+            }
+        }
+    }
+    if names.is_empty() {
+        names.push("Monitor 1".to_string());
+    }
+    names
 }
 
 /// Calculate the center position for moving a window to a target monitor.
@@ -190,10 +204,11 @@ pub fn calculate_center_position<R: Runtime>(
     None
 }
 
-/// Start monitoring window position changes.
+/// Start event-driven window position monitoring.
 ///
-/// This spawns a background thread that periodically checks the window position
-/// and triggers menu rebuild when the window moves to a different monitor.
+/// This uses Tauri's window move event instead of polling, which is more
+/// efficient and responsive. The menu is only rebuilt when the window
+/// actually moves to a different monitor.
 ///
 /// # Arguments
 /// * `handle` - The app handle
@@ -202,72 +217,45 @@ pub fn start_position_monitoring<R: Runtime, F>(
     handle: AppHandle<R>,
     menu_rebuild_callback: F,
 ) where
-    F: Fn(&AppHandle<R>) -> tauri::Result<()> + Send + Clone + 'static,
+    F: Fn(&AppHandle<R>) -> tauri::Result<()> + Send + Sync + Clone + 'static,
 {
-    let running = Arc::new(AtomicBool::new(true));
-    let handle_clone = handle.clone();
-    let mut last_monitor_index: Option<usize> = None;
+    // Track last known monitor index to detect actual monitor changes
+    let last_monitor_index: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(usize::MAX));
 
-    std::thread::spawn(move || {
-        let mut last_position = None;
+    // Get initial monitor index
+    if let Some(idx) = get_current_monitor_index(&handle) {
+        last_monitor_index.store(idx, Ordering::Relaxed);
+    }
 
-        while running.load(Ordering::Relaxed) {
-            if let Some(win) = handle_clone.get_webview_window("main") {
-                if let Ok(win_pos) = win.outer_position() {
-                    // Only process if position changed
-                    if last_position != Some((win_pos.x, win_pos.y)) {
-                        eprintln!("DEBUG MONITOR: Window position ({}, {})", win_pos.x, win_pos.y);
+    // Use window move event instead of polling
+    if let Some(win) = handle.get_webview_window("main") {
+        let handle_clone = handle.clone();
+        let callback_clone = menu_rebuild_callback.clone();
+        let last_idx = last_monitor_index.clone();
 
-                        // Get current monitor
-                        if let Ok(monitors) = handle_clone.available_monitors() {
-                            for (i, monitor) in monitors.iter().enumerate() {
-                                let scale = monitor.scale_factor();
-                                let monitor_pos = monitor.position();
-                                let monitor_size = monitor.size();
+        win.on_window_event(move |event| {
+            if let tauri::WindowEvent::Moved(_) = event {
+                // Check if monitor actually changed
+                if let Some(new_idx) = get_current_monitor_index(&handle_clone) {
+                    let prev_idx = last_idx.load(Ordering::Relaxed);
+                    if prev_idx != new_idx {
+                        eprintln!("DEBUG MONITOR: Window moved from monitor {} to {}, rebuilding menu", prev_idx, new_idx);
+                        last_idx.store(new_idx, Ordering::Relaxed);
 
-                                // Convert monitor to logical bounds
-                                let logical_mx = monitor_pos.x as f64 / scale;
-                                let logical_my = monitor_pos.y as f64 / scale;
-                                let logical_mw = monitor_size.width as f64 / scale;
-                                let logical_mh = monitor_size.height as f64 / scale;
-
-                                // Convert window position to logical
-                                let logical_wx = win_pos.x as f64 / scale;
-                                let logical_wy = win_pos.y as f64 / scale;
-
-                                let within = logical_wx >= logical_mx && logical_wx < logical_mx + logical_mw
-                                    && logical_wy >= logical_my && logical_wy < logical_my + logical_mh;
-
-                                if within {
-                                    // Check if monitor changed
-                                    if last_monitor_index != Some(i) {
-                                        eprintln!("DEBUG MONITOR: Window moved from monitor {:?} to {}, rebuilding menu",
-                                            last_monitor_index, i);
-                                        last_monitor_index = Some(i);
-
-                                        // Rebuild menu after a short delay
-                                        let handle = handle_clone.clone();
-                                        let callback = menu_rebuild_callback.clone();
-                                        std::thread::spawn(move || {
-                                            std::thread::sleep(std::time::Duration::from_millis(100));
-                                            if let Err(e) = callback(&handle) {
-                                                eprintln!("DEBUG MONITOR: Failed to rebuild menu: {:?}", e);
-                                            }
-                                        });
-                                    }
-                                    break;
-                                }
+                        // Rebuild menu after a short delay to let the move complete
+                        let handle = handle_clone.clone();
+                        let callback = callback_clone.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if let Err(e) = callback(&handle) {
+                                eprintln!("DEBUG MONITOR: Failed to rebuild menu: {:?}", e);
                             }
-                        }
-
-                        last_position = Some((win_pos.x, win_pos.y));
+                        });
                     }
                 }
             }
-
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-    });
+        });
+    }
 }
 
 #[cfg(test)]
@@ -275,13 +263,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_display_names_not_empty() {
-        #[cfg(target_os = "macos")]
+    #[cfg(target_os = "macos")]
+    fn test_get_macos_display_names_not_empty() {
         let names = get_macos_display_names();
-        #[cfg(not(target_os = "macos"))]
-        let names = get_display_names();
-
-        assert!(!names.is_empty(), "Display names should not be empty");
+        assert!(!names.is_empty(), "macOS display names should not be empty");
     }
 
     #[test]

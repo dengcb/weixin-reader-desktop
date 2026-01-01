@@ -5,7 +5,11 @@ use tauri::{
 use tauri_plugin_opener::OpenerExt;
 
 // Re-export monitor module functions for convenience
+#[cfg(target_os = "macos")]
 use crate::monitor::{get_current_monitor_index as get_current_screen_index, get_macos_display_names, calculate_center_position, start_position_monitoring};
+
+#[cfg(not(target_os = "macos"))]
+use crate::monitor::{get_current_monitor_index as get_current_screen_index, get_display_names, calculate_center_position, start_position_monitoring};
 
 /// Build menu items for available monitors (excluding current)
 /// Returns a vector of menu items that can be added directly to the window menu
@@ -17,11 +21,13 @@ fn build_monitor_menu_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::
 
     eprintln!("DEBUG: current_screen_index: {:?}", current_screen_index);
 
-    // On macOS, get all display names
+    // Get display names based on platform
     #[cfg(target_os = "macos")]
     let display_names = get_macos_display_names();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "macos"))]
+    let display_names = get_display_names(handle);
+
     eprintln!("DEBUG: display_names: {:?}", display_names);
 
     // Use Tauri's available_monitors to get all monitors
@@ -30,7 +36,6 @@ fn build_monitor_menu_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::
             // Skip if this is the monitor where the main window is currently located
             let should_skip = current_screen_index == Some(index);
 
-            #[cfg(target_os = "macos")]
             eprintln!("DEBUG: Display[{}] should_skip={} (current_screen_index={:?})",
                 index, should_skip, current_screen_index);
 
@@ -38,19 +43,10 @@ fn build_monitor_menu_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::
                 continue; // Skip current monitor
             }
 
-            // Try to get the localized display name on macOS using index
-            #[cfg(target_os = "macos")]
-            let display_name = display_names.get(index).cloned();
-
-            #[cfg(not(target_os = "macos"))]
-            let display_name = None;
-
-            // Use macOS localized name, or fall back to generic name
-            let name_str: String = if let Some(mac_name) = display_name {
-                mac_name
-            } else {
-                format!("显示器 {}", index + 1)
-            };
+            // Get display name or fall back to generic name
+            let name_str: String = display_names.get(index)
+                .cloned()
+                .unwrap_or_else(|| format!("显示器 {}", index + 1));
 
             // Create menu item with ID like "move_to_monitor_0"
             let item_id = format!("move_to_monitor_{}", index);

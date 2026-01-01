@@ -1,5 +1,3 @@
-import { listen, createWebviewWindow } from '../core/tauri';
-
 export class SettingManager {
     constructor() {
         this.init();

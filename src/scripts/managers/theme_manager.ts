@@ -1,6 +1,4 @@
 import { injectCSS, removeCSS } from '../core/utils';
-import type { AppSettings } from './menu_manager';
-import { invoke } from '../core/tauri';
 
 export class ThemeManager {
   constructor() {
