@@ -13,6 +13,7 @@ export interface AppSettings {
   };
   lastPage?: boolean;
   lastReaderUrl?: string | null;
+  scrollPosition?: number;  // Y scroll position for single-column mode
   autoUpdate?: boolean;
 }
 

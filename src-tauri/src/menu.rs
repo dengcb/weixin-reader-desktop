@@ -148,60 +148,25 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
     let minimize = PredefinedMenuItem::minimize(handle, Some("最小化"))?;
     let close_window = PredefinedMenuItem::close_window(handle, Some("关闭"))?;
 
-    let window_menu = if monitor_items.is_empty() {
-        Submenu::with_items(
-            handle,
-            "窗口",
-            true,
-            &[
-                &minimize,
-                &PredefinedMenuItem::separator(handle)?,
-                &close_window,
-            ]
-        )?
-    } else {
-        let leaked_items: Vec<&'static dyn tauri::menu::IsMenuItem<R>> = monitor_items.into_iter().map(|item| {
-            Box::leak(Box::new(item)) as &dyn tauri::menu::IsMenuItem<R>
-        }).collect();
+    // Build window menu - use append() to dynamically add monitor items
+    // This avoids Box::leak memory leak
+    let window_menu = Submenu::with_items(
+        handle,
+        "窗口",
+        true,
+        &[
+            &minimize,
+            &PredefinedMenuItem::separator(handle)?,
+        ]
+    )?;
 
-        match leaked_items.len() {
-            1 => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    &close_window,
-                ]
-            )?,
-            2 => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    leaked_items[1],
-                    &close_window,
-                ]
-            )?,
-            _ => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    leaked_items[1],
-                    &close_window,
-                ]
-            )?,
-        }
-    };
+    // Dynamically append monitor items (no Box::leak needed!)
+    for item in &monitor_items {
+        window_menu.append(item)?;
+    }
+
+    // Append close at the end
+    window_menu.append(&close_window)?;
 
     // 4. Help Menu
     let official_site = MenuItem::with_id(handle, "official_site", "微信读书官网", true, None::<&str>)?;
@@ -327,79 +292,25 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let minimize = PredefinedMenuItem::minimize(handle, Some("最小化"))?;
     let close_window = PredefinedMenuItem::close_window(handle, Some("关闭"))?;
 
-    // Build window menu based on available monitors
-    let window_menu = if monitor_items.is_empty() {
-        // No other monitors - basic window menu
-        Submenu::with_items(
-            handle,
-            "窗口",
-            true,
-            &[
-                &minimize,
-                &PredefinedMenuItem::separator(handle)?,
-                &close_window,
-            ]
-        )?
-    } else {
-        // Has other monitors - leak them to make them live for 'static
-        let leaked_items: Vec<&'static dyn tauri::menu::IsMenuItem<R>> = monitor_items.into_iter().map(|item| {
-            Box::leak(Box::new(item)) as &dyn tauri::menu::IsMenuItem<R>
-        }).collect();
+    // Build window menu - use append() to dynamically add monitor items
+    // This avoids Box::leak memory leak
+    let window_menu = Submenu::with_items(
+        handle,
+        "窗口",
+        true,
+        &[
+            &minimize,
+            &PredefinedMenuItem::separator(handle)?,
+        ]
+    )?;
 
-        // Match on number of monitors and create appropriate menu
-        match leaked_items.len() {
-            1 => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    &close_window,
-                ]
-            )?,
-            2 => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    leaked_items[1],
-                    &close_window,
-                ]
-            )?,
-            3 => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    leaked_items[1],
-                    leaked_items[2],
-                    &close_window,
-                ]
-            )?,
-            _ => Submenu::with_items(
-                handle,
-                "窗口",
-                true,
-                &[
-                    &minimize,
-                    &PredefinedMenuItem::separator(handle)?,
-                    leaked_items[0],
-                    leaked_items[1],
-                    leaked_items[2],
-                    if leaked_items.len() > 3 { leaked_items[3] } else { leaked_items[0] },
-                    &close_window,
-                ]
-            )?,
-        }
-    };
+    // Dynamically append monitor items (no Box::leak needed!)
+    for item in &monitor_items {
+        window_menu.append(item)?;
+    }
+
+    // Append close at the end
+    window_menu.append(&close_window)?;
 
     // 4. Help Menu
     let official_site = MenuItem::with_id(handle, "official_site", "微信读书官网", true, None::<&str>)?;

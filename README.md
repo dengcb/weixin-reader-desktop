@@ -3,49 +3,98 @@
 </p>
 
 <p align="center">
-  <b>基于 Tauri v2 + Rust 的高性能微信阅读桌面客户端</b>
+  <b>基于 Tauri v2 + Rust 的高性能微信读书桌面客户端</b>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v0.4.0-orange?style=flat-square" alt="Release">
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total" alt="Downloads">
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.4.0-orange?style=flat-square" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
-  <img src="https://img.shields.io/badge/Rust-1.92.0-1a1a1a?style=flat-square&logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Bun-1.3.5-1a1a1a?style=flat-square&logo=bun&logoColor=white" alt="Bun">
-  <img src="https://img.shields.io/badge/Platform-macOS-1a1a1a?style=flat-square&logo=apple&logoColor=white" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="Platform">
 </p>
+
+<p align="center">
+  <a href="#-特性">特性</a> •
+  <a href="#-安装">安装</a> •
+  <a href="#-开发">开发</a> •
+  <a href="#-架构">架构</a> •
+  <a href="#-免责声明">免责声明</a>
+</p>
+
+---
 
 非官方的微信读书桌面客户端，通过脚本注入方式增强官方 Web 端体验。相比原 Electron 版本，**安装包仅 ~5MB，运行时内存占用极低**。
 
-## 特性
+## ✨ 特性
 
-- **原生体验**：macOS 原生菜单、窗口状态持久化、原生快捷键支持
-- **多显示器**：菜单动态显示其他显示器名称，一键移动窗口
-- **阅读增强**：宽屏模式、深色模式、自动翻页、纯净阅读环境
-- **自动更新**：静默检测、一键更新，始终保持最新版本
-- **网络检测**：启动时自动检测连接状态，智能回退
+<table>
+  <tr>
+    <td width="50%">
+      <h4>🖥️ 原生体验</h4>
+      <ul>
+        <li>macOS 原生菜单栏</li>
+        <li>窗口位置/大小持久化</li>
+        <li>完整的键盘快捷键支持</li>
+      </ul>
+    </td>
+    <td width="50%">
+      <h4>🖱️ 多显示器支持</h4>
+      <ul>
+        <li>动态检测已连接的显示器</li>
+        <li>菜单显示显示器本地化名称</li>
+        <li>一键移动窗口到指定显示器</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h4>📖 阅读增强</h4>
+      <ul>
+        <li>宽屏模式 - 更舒适的阅读体验</li>
+        <li>深色模式 - 保护夜间阅读</li>
+        <li>自动翻页 - 解放双手</li>
+        <li>隐藏工具栏 - 纯净阅读</li>
+      </ul>
+    </td>
+    <td width="50%">
+      <h4>🔄 自动更新</h4>
+      <ul>
+        <li>启动后静默检测更新</li>
+        <li>支持手动检查更新</li>
+        <li>一键下载安装</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-## 技术栈
+## 📦 安装
 
-| 层级 | 技术 |
+### 下载安装
+
+前往 [Releases](https://github.com/dengcb/weixin-reader-desktop/releases) 页面下载最新版本：
+
+| 芯片 | 文件 |
 |------|------|
-| 前端 | TypeScript + Vite |
-| 后端 | Rust + Tauri v2 |
-| 构建 | Bun |
-| 存储 | 单例模式 + 文件系统 |
+| Apple Silicon (M1/M2/M3/M4) | `weixin-reader_x.x.x_aarch64.dmg` |
+| Intel | `weixin-reader_x.x.x_x64.dmg` |
 
-### Tauri 插件
+### 从源码构建
 
-- `opener` - 外部链接处理
-- `store` - 前端数据存储
-- `window-state` - 窗口状态持久化
-- `log` - 日志记录
-- `updater` - 自动更新
-- `shell` - Shell 命令执行
+```bash
+# 克隆仓库
+git clone https://github.com/dengcb/weixin-reader-desktop.git
+cd weixin-reader-desktop
 
-## 快速开始
+# 安装依赖
+bun install
+
+# 构建发布版本
+bun run release:arm    # Apple Silicon
+bun run release:intel  # Intel
+```
+
+## 🛠️ 开发
 
 ### 环境准备
 
@@ -57,7 +106,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 curl -fsSL https://bun.sh/install | bash
 ```
 
-### 开发
+### 开发命令
 
 ```bash
 # 安装依赖
@@ -76,10 +125,7 @@ bun run build
 ### 调试构建
 
 ```bash
-# 快速调试（ARM）
-bun run debug
-
-# 指定架构
+bun run debug        # 快速调试（ARM）
 bun run debug:arm    # Apple Silicon
 bun run debug:intel  # Intel
 ```
@@ -87,100 +133,96 @@ bun run debug:intel  # Intel
 ### 发布打包
 
 ```bash
-# 构建所有架构
-bun run release:all
-
-# 构建指定架构
+bun run release:all    # 构建所有架构
 bun run release:arm    # Apple Silicon
 bun run release:intel  # Intel
-
-# 清理发布文件
-bun run release:clear
+bun run release:clear  # 清理发布文件
 ```
 
-## 架构设计
-
-### 核心架构：脚本注入模式
-
-通过在微信读书官方页面注入脚本实现功能增强，保持与官方网站完全兼容。
-
-### 前端模块化
-
-**六大管理器**（`src/scripts/managers/`）：
-
-- `AppManager` - 路由监听、标题更新、恢复阅读进度
-- `MenuManager` - 菜单状态同步、Rust 通信
-- `ThemeManager` - 深色模式、链接处理、缩放控制
-- `StyleManager` - 宽屏模式、工具栏隐藏、样式注入
-- `TurnerManager` - 鼠标滚轮翻页、自动翻页、防休眠
-- `SettingManager` - 设置窗口生命周期管理
-
-### Rust 后端
-
-- `lib.rs` - 应用入口、插件初始化、网络检测、脚本注入
-- `commands.rs` - IPC 命令定义
-- `menu.rs` - 原生菜单构建、事件处理
-- `monitor.rs` - 多显示器支持（窗口定位、显示器名称获取）
-- `settings.rs` - 设置文件读写（浅合并策略）
-- `update.rs` - 自动更新管理
-
-### 独立窗口
-
-- `settings.html` - 设置页面
-- `about.html` - 关于页面
-- `update.html` - 检查更新页面
-
-## 版本管理
-
-项目使用 `package.json` 作为单一版本源。修改版本后运行：
+### 测试
 
 ```bash
-bun run sync-version
-```
+# Rust 单元测试
+cd src-tauri && cargo test
 
-## 测试
-
-### Rust 单元测试
-
-```bash
-# 运行所有测试
-cd src-tauri
-cargo test
-
-# 运行特定测试
-cargo test --test monitor_test
-cargo test --test core_test
-```
-
-**测试覆盖**：
-- `monitor_test.rs` - 多显示器功能（坐标转换、居中计算、边界检测）
-- `core_test.rs` - 核心功能（设置序列化、版本格式、窗口计算）
-
-### E2E 测试
-
-使用 Playwright 测试前端功能：
-
-```bash
-# 安装依赖
-pip3 install playwright
-python3 -m playwright install chromium --with-deps
-
-# 运行测试
+# E2E 测试（需要先安装 Playwright）
 bun run test:e2e
 ```
 
-**测试覆盖**：
-- 阅读变宽切换
-- 隐藏工具栏切换
-- 自动翻页切换
-- 菜单状态同步
-- 页面导航处理
+## 🏗️ 架构
 
-## 免责声明
+### 技术栈
+
+| 层级 | 技术 | 说明 |
+|------|------|------|
+| 前端 | TypeScript + Vite | 注入脚本开发 |
+| 后端 | Rust + Tauri v2 | 原生桌面能力 |
+| 构建 | Bun | 极速包管理 |
+
+### 核心架构：脚本注入模式
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Tauri 应用                           │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────┐     IPC      ┌───────────────────┐    │
+│  │   Rust 后端  │◄────────────►│  WebView (前端)   │    │
+│  │             │              │                   │    │
+│  │  • 菜单管理  │              │  • inject.js 注入 │    │
+│  │  • 设置持久化│              │  • 六大管理器     │    │
+│  │  • 多显示器  │              │  • 设置同步       │    │
+│  │  • 自动更新  │              │                   │    │
+│  └─────────────┘              └─────────────────┬─┘    │
+│                                                 │      │
+└─────────────────────────────────────────────────│──────┘
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │   weread.qq.com (官方)    │
+                                    └───────────────────────────┘
+```
+
+### 前端模块 (`src/scripts/`)
+
+| 管理器 | 职责 |
+|--------|------|
+| `IPCManager` | 路由/标题监控，派发事件 |
+| `AppManager` | 应用初始化，恢复阅读进度 |
+| `MenuManager` | 菜单状态同步，处理菜单动作 |
+| `StyleManager` | 宽屏模式，隐藏工具栏，样式注入 |
+| `ThemeManager` | 深色模式，链接处理 |
+| `TurnerManager` | 自动翻页，滚轮翻页 |
+
+### Rust 后端 (`src-tauri/src/`)
+
+| 模块 | 职责 |
+|------|------|
+| `lib.rs` | 应用入口，插件初始化，脚本注入 |
+| `commands.rs` | IPC 命令定义 |
+| `menu.rs` | 原生菜单构建，事件处理 |
+| `monitor.rs` | 多显示器支持 |
+| `settings.rs` | 设置文件读写 |
+| `update.rs` | 自动更新管理 |
+
+### Tauri 插件
+
+- `opener` - 外部链接处理
+- `store` - 前端数据存储
+- `window-state` - 窗口状态持久化
+- `log` - 日志记录
+- `updater` - 自动更新
+- `shell` - Shell 命令执行
+
+## ⚠️ 免责声明
 
 本项目仅为方便个人阅读使用的第三方客户端，与腾讯公司或微信读书团队无关。所有数据均通过官方 Web 端加载 (`weread.qq.com`)。
 
-本项目**从未获取**任何用户隐私数据，**未进行**任何去广告或添加广告的操作，也**未从中获取**任何形式的收益。
+- **未获取** 任何用户隐私数据
+- **未进行** 任何去广告或添加广告的操作
+- **未从中** 获取任何形式的收益
+
+## 📄 License
+
+[MIT](LICENSE)
 
 ---
 

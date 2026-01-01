@@ -29,6 +29,8 @@ export class IPCManager {
   private siteRegistry = getSiteRegistry();
   private currentIsReader = false;
   private initialized = false;  // Track if this is the initial check
+  private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSavedScrollY = 0;
 
   constructor() {
     this.init();
@@ -41,6 +43,7 @@ export class IPCManager {
     // Start monitoring
     this.monitorRoute();
     this.monitorTitle();
+    this.monitorScroll();
   }
 
   private monitorRoute() {
@@ -142,5 +145,38 @@ export class IPCManager {
       console.log('[IPCManager] Dispatching ipc:title-changed', detail);
       window.dispatchEvent(new CustomEvent('ipc:title-changed', { detail }));
     }
+  }
+
+  // ==================== Scroll Position Saving (Single-column mode) ====================
+
+  private monitorScroll() {
+    // Debounced scroll position saving for single-column reading mode
+    window.addEventListener('scroll', () => {
+      // Only save in reader page and when lastPage is enabled
+      if (!this.currentIsReader) return;
+
+      const settings = settingsStore.get();
+      if (!settings.lastPage) return;
+
+      // Check if in single-column mode (not double-column)
+      const adapter = this.siteRegistry.getCurrentAdapter();
+      if (!adapter || adapter.isDoubleColumn()) return;
+
+      const scrollY = window.scrollY;
+
+      // Only save if scroll position changed significantly (>50px)
+      if (Math.abs(scrollY - this.lastSavedScrollY) < 50) return;
+
+      // Debounce: save after 500ms of no scrolling
+      if (this.scrollSaveTimer) {
+        clearTimeout(this.scrollSaveTimer);
+      }
+
+      this.scrollSaveTimer = setTimeout(() => {
+        this.lastSavedScrollY = scrollY;
+        console.log('[IPCManager] Saving scroll position:', scrollY);
+        settingsStore.update({ scrollPosition: scrollY });
+      }, 500);
+    }, { passive: true });
   }
 }

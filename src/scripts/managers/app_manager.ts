@@ -15,6 +15,7 @@ import { getSiteRegistry } from '../core/site_registry';
 
 // Session storage key to track if we've already restored in this session
 const RESTORE_FLAG_KEY = 'wxrd_has_restored';
+const SCROLL_RESTORED_KEY = 'wxrd_scroll_restored';
 
 export class AppManager {
   private appName: string = "微信阅读";
@@ -59,6 +60,9 @@ export class AppManager {
 
     // Restore last page only on app startup (first time init)
     await this.restoreLastPage();
+
+    // Restore scroll position if on reader page
+    this.restoreScrollPosition();
   }
 
   private clearAutoFlipOnExit() {
@@ -115,5 +119,78 @@ export class AppManager {
       console.log('[AppManager] Marking as restored (no navigation needed)');
       sessionStorage.setItem(RESTORE_FLAG_KEY, 'true');
     }
+  }
+
+  private restoreScrollPosition() {
+    // Check if we've already restored scroll in this session
+    const scrollRestored = sessionStorage.getItem(SCROLL_RESTORED_KEY);
+    if (scrollRestored === 'true') {
+      console.log('[AppManager] Scroll already restored in this session, skipping');
+      return;
+    }
+
+    const settings = settingsStore.get();
+    const isReader = this.siteRegistry.isReaderPage();
+
+    // Only restore if on reader page and has saved scroll position
+    if (!isReader || !settings.lastPage || !settings.scrollPosition) {
+      sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
+      return;
+    }
+
+    // Check if in single-column mode
+    const adapter = this.siteRegistry.getCurrentAdapter();
+    if (!adapter || adapter.isDoubleColumn()) {
+      sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
+      return;
+    }
+
+    // Wait a bit for page to fully load before scrolling
+    const targetScroll = settings.scrollPosition!;
+    console.log('[AppManager] Planning to restore scroll position:', targetScroll);
+    logToFile(`[AppManager] Planning to restore scroll position: ${targetScroll}`);
+
+    // Chase Mode: Aggressively scroll to bottom to trigger lazy loading until we reach target
+    let attempts = 0;
+    const maxAttempts = 50; // Prevent infinite loops (e.g. 5 seconds at 100ms)
+
+    const chaseScroll = () => {
+      attempts++;
+      const currentHeight = document.documentElement.scrollHeight;
+
+      // Case 1: Page is long enough, just go to target
+      if (currentHeight >= targetScroll) {
+        console.log(`[AppManager] Height sufficient (${currentHeight} >= ${targetScroll}), restoring directly.`);
+        window.scrollTo(0, targetScroll);
+        // Clean up
+        settingsStore.update({ scrollPosition: 0 });
+        return;
+      }
+
+      // Case 2: Page is too short, scroll to bottom to trigger load
+      if (attempts < maxAttempts) {
+        console.log(`[AppManager] Chasing scroll: height ${currentHeight} < target ${targetScroll}, scrolling to bottom.`);
+        // Scroll to bottom
+        window.scrollTo(0, currentHeight);
+
+        // Dispatch fake user events to trigger lazy loading
+        document.dispatchEvent(new Event('scroll'));
+        try {
+            document.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }));
+        } catch(e) {}
+
+        // Check again quickly
+        setTimeout(chaseScroll, 100);
+      } else {
+        console.log('[AppManager] Max restore attempts reached, giving up.');
+        window.scrollTo(0, targetScroll); // Try one last time
+        settingsStore.update({ scrollPosition: 0 });
+      }
+    };
+
+    // Start the chase after initial load
+    setTimeout(chaseScroll, 500);
+
+    sessionStorage.setItem(SCROLL_RESTORED_KEY, 'true');
   }
 }

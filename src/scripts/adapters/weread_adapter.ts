@@ -116,7 +116,8 @@ export class WeReadAdapter extends BaseSiteAdapter {
   isAtBottom(): boolean {
     const totalHeight = document.documentElement.scrollHeight;
     const currentPos = window.innerHeight + window.scrollY;
-    return currentPos >= totalHeight - 5;
+    // Increase threshold to 300px to trigger next page earlier and more reliably
+    return currentPos >= totalHeight - 300;
   }
 
   // ==================== 章节导航 ====================
