@@ -12,33 +12,36 @@
  */
 
 import { injectCSS, removeCSS } from '../core/utils';
-import { settingsStore, AppSettings } from '../core/settings_store';
-import { getSiteRegistry } from '../core/site_registry';
-
-type RouteChangedEvent = {
-  isReader: boolean;
-  url: string;
-  pathname: string;
-};
+import { settingsStore, AppSettings, SiteSettings, MergedSettings } from '../core/settings_store';
+import { createSiteContext, SiteContext } from '../core/site_context';
+import { log } from '../core/logger';
+import { RouteChangedEvent } from './ipc_manager';
 
 export class StyleManager {
   private isWide = false;
   private isHideToolbar = false;
   private isReader = false;
-  private siteRegistry = getSiteRegistry();
+  private siteContext: SiteContext;
+
+  // Store references for cleanup
+  private routeChangedHandler: ((e: Event) => void) | null = null;
+  private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
+  private darkModeQuery: MediaQueryList | null = null;
+  private darkModeHandler: ((e: MediaQueryListEvent | MediaQueryList) => void) | null = null;
 
   constructor() {
+    this.siteContext = createSiteContext();
     this.init();
   }
 
   private async init() {
     // 1. Check initial route
-    this.isReader = this.siteRegistry.isReaderPage();
+    this.isReader = this.siteContext.isReaderPage;
 
     // 2. IMPORTANT: If starting on non-reader page, clear any leftover reader styles
     // SettingsStore is already initialized by inject.ts
     if (!this.isReader) {
-      console.log('[StyleManager] Starting on non-reader page, clearing any leftover reader styles');
+      log.debug('[StyleManager] Starting on non-reader page, clearing any leftover reader styles');
       this.clearReaderStyles();
     }
 
@@ -46,37 +49,51 @@ export class StyleManager {
     this.handleTheme();
 
     // 4. Subscribe to settings changes
-    settingsStore.subscribe((settings) => {
-      this.updateStyles(settings);
+    settingsStore.subscribe(() => {
+      // Always get the full merged settings (including current site settings)
+      this.updateStyles(settingsStore.get());
     });
 
+    // Initialize styles with current settings immediately
+    // Wait for settings to be loaded if not initialized
+    this.updateStyles(settingsStore.get());
+
     // 5. Listen to route changes from IPCManager
-    window.addEventListener('ipc:route-changed', ((e: CustomEvent<RouteChangedEvent>) => {
+    this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
       const wasReader = this.isReader;
       this.isReader = e.detail.isReader;
 
       // Clear reader-only styles when leaving reader page
       if (wasReader && !this.isReader) {
-        console.log('[StyleManager] Leaving reader page, clearing reader styles');
+        log.debug('[StyleManager] Leaving reader page, clearing reader styles');
         this.clearReaderStyles();
       }
-    }) as EventListener);
 
-    window.addEventListener('wxrd:route-changed', ((e: CustomEvent<{ isReader: boolean }>) => {
+      // Apply reader-only styles when entering reader page
+      if (!wasReader && this.isReader) {
+        log.debug('[StyleManager] Entering reader page, applying styles');
+        this.applyStyles();
+      }
+    }) as EventListener;
+
+    this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
       const wasReader = this.isReader;
       this.isReader = e.detail.isReader;
 
       // Clear reader-only styles when leaving reader page
       if (wasReader && !this.isReader) {
-        console.log('[StyleManager] Leaving reader page, clearing reader styles');
+        log.debug('[StyleManager] Leaving reader page, clearing reader styles');
         this.clearReaderStyles();
       }
-    }) as EventListener);
+    }) as EventListener;
+
+    window.addEventListener('ipc:route-changed', this.routeChangedHandler);
+    window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
   }
 
   private handleTheme() {
-    const applyTheme = (e: MediaQueryList | MediaQueryListEvent) => {
-      const adapter = this.siteRegistry.getCurrentAdapter();
+    this.darkModeHandler = (e: MediaQueryList | MediaQueryListEvent) => {
+      const adapter = this.siteContext.currentAdapter;
 
       if (adapter && adapter.getDarkThemeCSS && adapter.getLightThemeCSS) {
         const css = e.matches ? adapter.getDarkThemeCSS() : adapter.getLightThemeCSS();
@@ -91,14 +108,14 @@ export class StyleManager {
     };
 
     // Initial check
-    const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    applyTheme(darkModeQuery);
+    this.darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    this.darkModeHandler(this.darkModeQuery);
 
     // Listen for changes
-    darkModeQuery.addEventListener('change', applyTheme);
+    this.darkModeQuery.addEventListener('change', this.darkModeHandler);
   }
 
-  private updateStyles(settings: AppSettings) {
+  private updateStyles(settings: MergedSettings) {
     const newIsWide = !!settings.readerWide;
     const newIsHideToolbar = !!settings.hideToolbar;
 
@@ -112,11 +129,10 @@ export class StyleManager {
   private applyStyles() {
     // Only apply reader-specific styles when on reader page
     if (!this.isReader) {
-      console.log('[StyleManager] Not on reader page, skipping reader styles');
       return;
     }
 
-    const adapter = this.siteRegistry.getCurrentAdapter();
+    const adapter = this.siteContext.currentAdapter;
 
     if (adapter) {
       // Use adapter-specific CSS
@@ -127,7 +143,7 @@ export class StyleManager {
       injectCSS('wxrd-hide-toolbar', toolbarCSS);
     } else {
       // Fallback: no styles applied
-      console.warn('[StyleManager] No adapter found, styles not applied');
+      log.warn('[StyleManager] No adapter found, styles not applied');
     }
 
     window.dispatchEvent(new Event('resize'));
@@ -138,7 +154,28 @@ export class StyleManager {
     removeCSS('wxrd-wide-mode');
     // Remove hide toolbar CSS
     removeCSS('wxrd-hide-toolbar');
+  }
 
-    console.log('[StyleManager] Reader styles cleared');
+  public destroy() {
+    // Remove event listeners
+    if (this.routeChangedHandler) {
+      window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
+      this.routeChangedHandler = null;
+    }
+    if (this.legacyRouteChangedHandler) {
+      window.removeEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
+      this.legacyRouteChangedHandler = null;
+    }
+
+    // Remove media query listener
+    if (this.darkModeQuery && this.darkModeHandler) {
+      this.darkModeQuery.removeEventListener('change', this.darkModeHandler);
+      this.darkModeQuery = null;
+      this.darkModeHandler = null;
+    }
+
+    // Clean up injected styles
+    this.clearReaderStyles();
+    removeCSS('wxrd-base-bg');
   }
 }

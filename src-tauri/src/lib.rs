@@ -11,15 +11,45 @@ pub mod monitor;
 mod settings;
 mod commands;
 mod update;
+mod sites;
 
 fn check_network_connection() -> bool {
-    let addr_str = "weread.qq.com:443";
+    let addr_str = sites::DEFAULT_SITE.network_check_addr();
     if let Ok(mut addrs) = addr_str.to_socket_addrs() {
         if let Some(addr) = addrs.next() {
             return TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok();
         }
     }
     false
+}
+
+/// 清理 autoFlip.active 状态
+/// 当窗口关闭或应用退出时，确保自动翻页状态被正确保存为 false
+fn clear_auto_flip_active(app_handle: tauri::AppHandle, event_name: &str) {
+    println!("[{}] Checking autoFlip status...", event_name);
+    let settings = settings::get_settings(app_handle.clone());
+
+    if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
+        let is_active = auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+        println!("[{}] autoFlip.active = {}", event_name, is_active);
+
+        if is_active {
+            let update = serde_json::json!({
+                "autoFlip": {
+                    "active": false,
+                    "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
+                    "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
+                }
+            });
+            println!("[{}] Saving updated settings: {}", event_name, serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
+            settings::save_settings(app_handle.clone(), update, None);
+            println!("[{}] Settings saved", event_name);
+        } else {
+            println!("[{}] autoFlip not active, nothing to do", event_name);
+        }
+    } else {
+        println!("[{}] No autoFlip settings found", event_name);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,6 +73,8 @@ pub fn run() {
 
             // Create Main Window - determine initial URL
             // Check if we should restore the last reader page directly (to avoid flash of homepage)
+            println!("[Init] App starting... Inject script size: {} bytes", inject_script.len());
+
             let url = if check_network_connection() {
                 let settings_opt: Option<String> = app.handle().path().app_config_dir()
                     .ok()
@@ -62,13 +94,13 @@ pub fn run() {
                             WebviewUrl::External(url_str.parse().unwrap())
                         } else {
                             println!("[Init] lastPage disabled or no URL, loading homepage");
-                            WebviewUrl::External("https://weread.qq.com/".parse().unwrap())
+                            WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                         }
                     } else {
-                        WebviewUrl::External("https://weread.qq.com/".parse().unwrap())
+                        WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                     }
                 } else {
-                    WebviewUrl::External("https://weread.qq.com/".parse().unwrap())
+                    WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                 }
             } else {
                 println!("[Init] No network connection, using local error page");
@@ -79,6 +111,8 @@ pub fn run() {
 
             // Console filter and HTTPS to HTTP conversion script
             // Must be injected BEFORE the main inject script
+            // DISABLED: Temporarily disabled for debugging
+            #[allow(unused_variables)]
             let console_filter_script = r#"
               (function() {
                 // Console filtering
@@ -179,47 +213,38 @@ pub fn run() {
               })();
             "#;
 
-            let app_handle = app.handle().clone();
+            // Debug: Temporarily disable console filter script to ensure logs are visible
+            // let app_handle = app.handle().clone();
+
+            // IMPORTANT: Single Window Architecture
+            // This application uses a single main window (label = "main") for all navigation.
+            // DO NOT create additional windows for the same site - this would cause:
+            // 1. Settings conflicts (multiple windows modifying the same site settings)
+            // 2. Lost updates (last window to save overwrites others)
+            // 3. User confusion (multiple instances of the same site)
+            //
+            // If multi-window support is needed in the future:
+            // - Use unique labels per site (e.g., "main-weread", "main-other")
+            // - Implement window focus instead of creating duplicates
+            // - Add site-specific locking in settings manager
+
             let win = WebviewWindowBuilder::new(app, "main", url)
                 .title(&app_name)
                 .inner_size(1280.0, 800.0)
                 .center()
                 .background_color(Color::from((26, 26, 26))) // #1a1a1a 深灰色，减少启动时白屏闪烁
                 .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
-                .initialization_script(console_filter_script)
+                // .initialization_script(console_filter_script)  <-- DISABLED
                 .initialization_script(inject_script)
                 .build()?;
+
+            let app_handle = app.handle().clone(); // Re-declare app_handle since we commented out the previous one
 
             // Handle window close event to clear autoFlip.active
             let app_handle_clone = app_handle.clone();
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    println!("[Window Close] Window close requested, checking autoFlip...");
-                    // Clear autoFlip.active when window is closing
-                    let settings = settings::get_settings(app_handle_clone.clone());
-                    println!("[Window Close] Current settings: {}", serde_json::to_string(&settings).unwrap_or_else(|_| "Error".to_string()));
-
-                    if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
-                        let is_active = auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
-                        println!("[Window Close] autoFlip.active = {}", is_active);
-
-                        if is_active {
-                            let update = serde_json::json!({
-                                "autoFlip": {
-                                    "active": false,
-                                    "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                                    "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                                }
-                            });
-                            println!("[Window Close] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-                            settings::save_settings(app_handle_clone.clone(), update, None);
-                            println!("[Window Close] Settings saved");
-                        } else {
-                            println!("[Window Close] autoFlip not active, nothing to do");
-                        }
-                    } else {
-                        println!("[Window Close] No autoFlip settings found");
-                    }
+                    clear_auto_flip_active(app_handle_clone.clone(), "Window Close");
                 }
             });
 
@@ -255,61 +280,17 @@ pub fn run() {
             match event {
                 // ExitRequested - triggered in some cases but NOT macOS Command+Q (known bug)
                 tauri::RunEvent::ExitRequested { api: _, .. } => {
-                    println!("[ExitRequested] Application exit requested, clearing autoFlip.active");
-                    let settings = settings::get_settings(app_handle.clone());
-                    if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
-                        if auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false) {
-                            let update = serde_json::json!({
-                                "autoFlip": {
-                                    "active": false,
-                                    "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                                    "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                                }
-                            });
-                            println!("[ExitRequested] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-                            settings::save_settings(app_handle.clone(), update, None);
-                            println!("[ExitRequested] Settings saved");
-                        }
-                    }
+                    clear_auto_flip_active(app_handle.clone(), "ExitRequested");
                 }
                 // Exit - triggered when event loop is exiting (including macOS Command+Q)
                 tauri::RunEvent::Exit => {
-                    println!("[Exit] Event loop exiting, clearing autoFlip.active");
-                    let settings = settings::get_settings(app_handle.clone());
-                    if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
-                        if auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false) {
-                            let update = serde_json::json!({
-                                "autoFlip": {
-                                    "active": false,
-                                    "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                                    "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                                }
-                            });
-                            println!("[Exit] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-                            settings::save_settings(app_handle.clone(), update, None);
-                            println!("[Exit] Settings saved");
-                        }
-                    }
+                    clear_auto_flip_active(app_handle.clone(), "Exit");
                 }
                 // WindowEvent - monitor for destroyed/close events
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     if matches!(event, tauri::WindowEvent::Destroyed) {
-                        println!("[WindowEvent] Window '{}' destroyed, clearing autoFlip.active", label);
-                        let settings = settings::get_settings(app_handle.clone());
-                        if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
-                            if auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false) {
-                                let update = serde_json::json!({
-                                    "autoFlip": {
-                                        "active": false,
-                                        "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                                        "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                                    }
-                                });
-                                println!("[WindowEvent] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-                                settings::save_settings(app_handle.clone(), update, None);
-                                println!("[WindowEvent] Settings saved");
-                            }
-                        }
+                        println!("[WindowEvent] Window '{}' destroyed", label);
+                        clear_auto_flip_active(app_handle.clone(), "WindowEvent");
                     }
                 }
                 _ => {}

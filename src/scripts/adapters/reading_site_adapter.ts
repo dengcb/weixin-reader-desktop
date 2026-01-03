@@ -89,6 +89,14 @@ export interface ReadingSiteAdapter {
    * 返回菜单项 ID 数组，这些菜单项仅在阅读页面时启用
    */
   getReaderMenuItems?(): string[];
+
+  // ==================== 域名匹配 ====================
+
+  /**
+   * 检查适配器是否匹配当前域名（可选）
+   * 用于动态检测当前页面应该使用哪个适配器
+   */
+  matchesCurrentDomain?(): boolean;
 }
 
 /**

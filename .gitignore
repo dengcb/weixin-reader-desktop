@@ -21,6 +21,7 @@ src-tauri/target/
 WXRD-archive/
 Plan.md
 Task.md
+MultiSites.md
 
 # Logs
 logs
@@ -41,6 +42,7 @@ dist-ssr
 release
 
 # Editor directories and files
+contexts
 CLAUDE.md
 .claude
 .trae

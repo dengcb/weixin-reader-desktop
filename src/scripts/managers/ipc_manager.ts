@@ -11,29 +11,41 @@
  * - 'ipc:title-changed' -> { title: string }
  */
 
-import { getSiteRegistry } from '../core/site_registry';
+import { createSiteContext, SiteContext } from '../core/site_context';
 import { settingsStore } from '../core/settings_store';
 import { invoke } from '../core/tauri';
 import { ScrollState } from '../core/scroll_state';
+import { log } from '../core/logger';
 
-type RouteChangedEvent = {
+export type RouteChangedEvent = {
   isReader: boolean;
   url: string;
   pathname: string;
 };
 
-type TitleChangedEvent = {
+export type TitleChangedEvent = {
   title: string;
 };
 
 export class IPCManager {
-  private siteRegistry = getSiteRegistry();
+  private siteContext: SiteContext;
   private currentIsReader = false;
   private initialized = false;  // Track if this is the initial check
   private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSavedScrollY = 0;
 
+  // Store references for cleanup
+  private checkRouteHandler: (() => void) | null = null;
+  private titleObserver: MutationObserver | null = null;
+  private scrollHandler: (() => void) | null = null;
+  private safetyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // Store original History API methods for restoration
+  private originalPushState: typeof history.pushState | null = null;
+  private originalReplaceState: typeof history.replaceState | null = null;
+
   constructor() {
+    this.siteContext = createSiteContext();
     this.init();
   }
 
@@ -43,9 +55,9 @@ export class IPCManager {
 
     // Safety fallback: Ensure scroll saving is enabled after 10 seconds
     // This prevents a bug in AppManager.restoreScrollPosition from permanently disabling save
-    setTimeout(() => {
+    this.safetyTimeout = setTimeout(() => {
       if (!ScrollState.isRestorationComplete()) {
-        console.warn('[IPCManager] Force enabling scroll save after timeout');
+        log.warn('[IPCManager] Force enabling scroll save after timeout');
         ScrollState.markRestorationComplete();
       }
     }, 10000);
@@ -57,21 +69,12 @@ export class IPCManager {
   }
 
   private monitorRoute() {
-    const checkRoute = () => {
+    this.checkRouteHandler = () => {
       const currentUrl = window.location.href;
       const pathname = window.location.pathname;
 
-      // Use SiteRegistry to detect if we're on a reader page
-      const isReader = this.siteRegistry.isReaderPage();
-      const currentAdapter = this.siteRegistry.getCurrentAdapter();
-
-      console.log('[IPCManager] Route check:', {
-        url: currentUrl,
-        pathname,
-        isReader,
-        adapter: currentAdapter?.name || 'none',
-        initialized: this.initialized
-      });
+      // Use SiteContext to detect if we're on a reader page
+      const isReader = this.siteContext.isReaderPage;
 
       // Detect route change
       const routeChanged = this.currentIsReader !== isReader;
@@ -88,25 +91,31 @@ export class IPCManager {
     };
 
     // Listen to navigation events
-    window.addEventListener('popstate', checkRoute);
+    window.addEventListener('popstate', this.checkRouteHandler);
 
     // Override history methods to detect SPA navigation
-    const originalPushState = history.pushState;
-    history.pushState = function(...args) {
-      const result = originalPushState.apply(this, args);
-      checkRoute();
+    // Store original methods for cleanup
+    this.originalPushState = history.pushState;
+    history.pushState = (...args) => {
+      const result = this.originalPushState!.apply(history, args);
+      if (this.checkRouteHandler) this.checkRouteHandler();
       return result;
     };
 
-    const originalReplaceState = history.replaceState;
-    history.replaceState = function(...args) {
-      const result = originalReplaceState.apply(this, args);
-      checkRoute();
+    this.originalReplaceState = history.replaceState;
+    history.replaceState = (...args) => {
+      const result = this.originalReplaceState!.apply(history, args);
+      if (this.checkRouteHandler) this.checkRouteHandler();
       return result;
     };
 
     // Initial check
-    checkRoute();
+    this.checkRouteHandler();
+    // Dispatch initial route event to ensure listeners like StyleManager get the current state
+    const currentUrl = window.location.href;
+    const pathname = window.location.pathname;
+    const isReader = this.siteContext.isReaderPage;
+    this.dispatchRouteChanged(isReader, currentUrl, pathname);
   }
 
   private handleLastPageSaving(isReader: boolean, currentUrl: string) {
@@ -117,7 +126,6 @@ export class IPCManager {
     // It's only cleared when app closes (handled by Rust backend)
     if (settings.lastPage && isReader) {
       if (settings.lastReaderUrl !== currentUrl) {
-        console.log('[IPCManager] Saving reader URL:', currentUrl);
         settingsStore.update({ lastReaderUrl: currentUrl });
       }
     }
@@ -130,17 +138,16 @@ export class IPCManager {
     window.dispatchEvent(new CustomEvent('wxrd:route-changed', { detail }));
 
     // Dispatch new IPC event
-    console.log('[IPCManager] Dispatching ipc:route-changed', detail);
     window.dispatchEvent(new CustomEvent('ipc:route-changed', { detail }));
   }
 
   private monitorTitle() {
     const target = document.querySelector('title');
     if (target) {
-      const observer = new MutationObserver(() => {
+      this.titleObserver = new MutationObserver(() => {
         this.dispatchTitleChanged();
       });
-      observer.observe(target, { childList: true, characterData: true, subtree: true });
+      this.titleObserver.observe(target, { childList: true, characterData: true, subtree: true });
 
       // Initial dispatch
       this.dispatchTitleChanged();
@@ -152,7 +159,6 @@ export class IPCManager {
       const detail: TitleChangedEvent = { title: document.title };
 
       // Dispatch new IPC event
-      console.log('[IPCManager] Dispatching ipc:title-changed', detail);
       window.dispatchEvent(new CustomEvent('ipc:title-changed', { detail }));
     }
   }
@@ -161,7 +167,7 @@ export class IPCManager {
 
   private monitorScroll() {
     // Debounced scroll position saving for single-column reading mode
-    window.addEventListener('scroll', () => {
+    this.scrollHandler = () => {
       // Only save in reader page and when lastPage is enabled
       if (!this.currentIsReader) return;
 
@@ -169,12 +175,11 @@ export class IPCManager {
       if (!settings.lastPage) return;
 
       // Check if in single-column mode (not double-column)
-      const adapter = this.siteRegistry.getCurrentAdapter();
+      const adapter = this.siteContext.currentAdapter;
       if (!adapter || adapter.isDoubleColumn()) return;
 
       // Check if restore is complete (prevent overwriting during restore chase)
       if (!ScrollState.isRestorationComplete()) {
-        // console.log('[IPCManager] Scroll restore in progress, skipping save');
         return;
       }
 
@@ -190,9 +195,62 @@ export class IPCManager {
 
       this.scrollSaveTimer = setTimeout(() => {
         this.lastSavedScrollY = scrollY;
-        console.log('[IPCManager] Saving scroll position:', scrollY);
-        settingsStore.update({ scrollPosition: scrollY });
+        const currentUrl = window.location.href;
+
+        // Get current progress map or create new one
+        const currentProgress = settingsStore.get().readingProgress || {};
+
+        // Update progress for current URL
+        const newProgress = {
+          ...currentProgress,
+          [currentUrl]: scrollY
+        };
+
+        settingsStore.update({
+          scrollPosition: scrollY, // Keep legacy field for backward compat
+          readingProgress: newProgress
+        });
       }, 500);
-    }, { passive: true });
+    };
+
+    window.addEventListener('scroll', this.scrollHandler, { passive: true });
+  }
+
+  public destroy() {
+    // Clear timers
+    if (this.scrollSaveTimer) {
+      clearTimeout(this.scrollSaveTimer);
+      this.scrollSaveTimer = null;
+    }
+    if (this.safetyTimeout) {
+      clearTimeout(this.safetyTimeout);
+      this.safetyTimeout = null;
+    }
+
+    // Remove event listeners
+    if (this.checkRouteHandler) {
+      window.removeEventListener('popstate', this.checkRouteHandler);
+      this.checkRouteHandler = null;
+    }
+    if (this.scrollHandler) {
+      window.removeEventListener('scroll', this.scrollHandler);
+      this.scrollHandler = null;
+    }
+
+    // Restore original History API methods
+    if (this.originalPushState) {
+      history.pushState = this.originalPushState;
+      this.originalPushState = null;
+    }
+    if (this.originalReplaceState) {
+      history.replaceState = this.originalReplaceState;
+      this.originalReplaceState = null;
+    }
+
+    // Disconnect observer
+    if (this.titleObserver) {
+      this.titleObserver.disconnect();
+      this.titleObserver = null;
+    }
   }
 }

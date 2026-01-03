@@ -1,9 +1,10 @@
 
-import { settingsStore, AppSettings } from '../core/settings_store';
-import { getSiteRegistry } from '../core/site_registry';
+import { settingsStore, AppSettings, MergedSettings } from '../core/settings_store';
+import { createSiteContext, SiteContext } from '../core/site_context';
 import { CursorHider } from './turner/cursor_hider';
 import { SwipeHandler } from './turner/swipe_handler';
 import { AutoFlipper } from './turner/auto_flipper';
+import { log } from '../core/logger';
 
 type RouteChangedEvent = {
   isReader: boolean;
@@ -23,18 +24,21 @@ export class TurnerManager {
   private cursorHider: CursorHider;
   private swipeHandler: SwipeHandler;
   private autoFlipper: AutoFlipper;
-  private siteRegistry = getSiteRegistry();
-  private isProcessingUpdate = false;
+  private siteContext: SiteContext;
+
+  // Store references for cleanup
+  private routeChangedHandler: ((e: Event) => void) | null = null;
 
   constructor() {
-    this.cursorHider = new CursorHider();
+    this.siteContext = createSiteContext();
+    this.cursorHider = new CursorHider(this.siteContext);
 
     const onScrollLock = (duration?: number) => {
       this.cursorHider.setScrollLock(duration);
     };
 
-    this.swipeHandler = new SwipeHandler(onScrollLock);
-    this.autoFlipper = new AutoFlipper(onScrollLock);
+    this.swipeHandler = new SwipeHandler(this.siteContext, onScrollLock);
+    this.autoFlipper = new AutoFlipper(this.siteContext, onScrollLock);
 
     this.init();
   }
@@ -44,9 +48,8 @@ export class TurnerManager {
       this.updateState(settings);
     });
 
-    window.addEventListener('ipc:route-changed', ((e: CustomEvent<RouteChangedEvent>) => {
+    this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
       const isReader = e.detail.isReader;
-      console.log('[TurnerManager] Route changed:', { isReader });
 
       // Update components if needed
       if (!isReader) {
@@ -59,17 +62,25 @@ export class TurnerManager {
             });
         }
       }
-    }) as EventListener);
+    }) as EventListener;
+
+    window.addEventListener('ipc:route-changed', this.routeChangedHandler);
   }
 
-  private updateState(settings: AppSettings) {
-    if (this.isProcessingUpdate) return;
-    this.isProcessingUpdate = true;
+  private updateState(settings: MergedSettings) {
+    this.autoFlipper.updateState(settings);
+  }
 
-    try {
-        this.autoFlipper.updateState(settings);
-    } finally {
-        setTimeout(() => { this.isProcessingUpdate = false; }, 100);
+  public destroy() {
+    // Remove event listener
+    if (this.routeChangedHandler) {
+      window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
+      this.routeChangedHandler = null;
     }
+
+    // Destroy child components
+    this.cursorHider.destroy();
+    this.swipeHandler.destroy();
+    this.autoFlipper.stopAll();
   }
 }

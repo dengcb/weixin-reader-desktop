@@ -117,24 +117,29 @@
       // 1. Initial Load
       invoke('get_settings').then((settings) => {
         settings = settings || {};
+        const global = settings.global || {};
+        // Default to 'weread' site settings for now, or the first available site
+        const siteId = 'weread';
+        const sites = settings.sites || {};
+        const siteSettings = sites[siteId] || {};
 
         // Auto Flip Interval
-        if (settings.autoFlip && settings.autoFlip.interval) {
-          autoFlipStepSelect.value = settings.autoFlip.interval.toString();
+        if (siteSettings.autoFlip && siteSettings.autoFlip.interval) {
+          autoFlipStepSelect.value = siteSettings.autoFlip.interval.toString();
         } else {
            autoFlipStepSelect.value = "30";
         }
 
         // Keep Awake
-        if (settings.autoFlip && settings.autoFlip.keepAwake !== undefined) {
-          keepAwakeCheckbox.checked = settings.autoFlip.keepAwake;
+        if (siteSettings.autoFlip && siteSettings.autoFlip.keepAwake !== undefined) {
+          keepAwakeCheckbox.checked = siteSettings.autoFlip.keepAwake;
         } else {
            keepAwakeCheckbox.checked = true;
         }
 
-        // Last Page
-        if (settings.lastPage !== undefined) {
-          lastPageCheckbox.checked = settings.lastPage;
+        // Last Page (Global setting)
+        if (global.lastPage !== undefined) {
+          lastPageCheckbox.checked = global.lastPage;
         } else {
            lastPageCheckbox.checked = true;
         }
@@ -146,11 +151,25 @@
         const val = parseInt(autoFlipStepSelect.value, 10);
         invoke('get_settings').then((current) => {
            current = current || {};
-           const existingAutoFlip = current.autoFlip || { active: false, interval: 30, keepAwake: true };
+           const siteId = 'weread';
+           const sites = current.sites || {};
+           const existingSite = sites[siteId] || {};
+           const existingAutoFlip = existingSite.autoFlip || { active: false, interval: 30, keepAwake: true };
 
            const newAutoFlip = { ...existingAutoFlip, interval: val };
 
-           invoke('save_settings', { settings: { autoFlip: newAutoFlip } }).then(() => {
+           // Construct deep update for backend shallow merge
+           const update = {
+             sites: {
+               ...sites,
+               [siteId]: {
+                 ...existingSite,
+                 autoFlip: newAutoFlip
+               }
+             }
+           };
+
+           invoke('save_settings', { settings: update }).then(() => {
              // Notify other windows (like main menu manager)
              emit('settings-updated');
            });
@@ -161,11 +180,24 @@
         const val = keepAwakeCheckbox.checked;
         invoke('get_settings').then((current) => {
            current = current || {};
-           const existingAutoFlip = current.autoFlip || { active: false, interval: 30, keepAwake: true };
+           const siteId = 'weread';
+           const sites = current.sites || {};
+           const existingSite = sites[siteId] || {};
+           const existingAutoFlip = existingSite.autoFlip || { active: false, interval: 30, keepAwake: true };
 
            const newAutoFlip = { ...existingAutoFlip, keepAwake: val };
 
-           invoke('save_settings', { settings: { autoFlip: newAutoFlip } }).then(() => {
+           const update = {
+             sites: {
+               ...sites,
+               [siteId]: {
+                 ...existingSite,
+                 autoFlip: newAutoFlip
+               }
+             }
+           };
+
+           invoke('save_settings', { settings: update }).then(() => {
              emit('settings-updated');
            });
         });
@@ -174,10 +206,17 @@
       lastPageCheckbox.addEventListener('change', () => {
         const val = lastPageCheckbox.checked;
         invoke('get_settings').then((current) => {
-           // lastPage is top-level, so we can just send partial update
-           // save_settings does shallow merge. If we send { lastPage: val }, it works fine.
+           current = current || {};
+           const global = current.global || {};
+           
+           const update = {
+             global: {
+               ...global,
+               lastPage: val
+             }
+           };
 
-           invoke('save_settings', { settings: { lastPage: val } }).then(() => {
+           invoke('save_settings', { settings: update }).then(() => {
              emit('settings-updated');
            });
         });

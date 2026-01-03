@@ -1,3 +1,5 @@
+import { log } from '../core/logger';
+
 /**
  * 页面滚动工具类
  * 负责页面内容的滚动、预加载、锚点定位等底层操作
@@ -22,7 +24,7 @@ export class PageScroller {
    */
   static restoreAnchorPosition(anchor: { element: Element, top: number }): boolean {
     if (!anchor.element.isConnected) {
-      console.warn('[PageScroller] Anchor element is detached, cannot restore position');
+      log.warn('[PageScroller] Anchor element is detached, cannot restore position');
       return false;
     }
 
@@ -38,7 +40,6 @@ export class PageScroller {
    */
   static async preloadChapter() {
     const startY = window.scrollY;
-    console.log('[PageScroller] Starting preload chase');
 
     const anchor = this.findAnchorElement();
     const CHASE_STEP = 30000;
@@ -60,15 +61,13 @@ export class PageScroller {
       window.scrollTo(0, currentHeight + CHASE_STEP);
     }
 
-    console.log('[PageScroller] Preload done, bouncing back');
-
     let restored = false;
     if (anchor) {
       restored = this.restoreAnchorPosition(anchor);
     }
 
     if (!restored) {
-      console.log('[PageScroller] Anchor restore failed or no anchor, falling back to startY');
+      log.debug('[PageScroller] Anchor restore failed or no anchor, falling back to startY');
       window.scrollTo({ top: startY, behavior: 'instant' });
     }
   }
@@ -88,11 +87,11 @@ export class PageScroller {
 
       if (newHeight !== startHeight) {
         clearInterval(timer);
-        console.log('[PageScroller] New content detected');
+        log.debug('[PageScroller] New content detected');
         onContentFound();
       } else if (checks >= MAX_CHECKS) {
         clearInterval(timer);
-        console.log('[PageScroller] Timeout waiting for content (no change)');
+        log.debug('[PageScroller] Timeout waiting for content (no change)');
         // 超时不执行任何操作，直接结束
       }
     }, 100);

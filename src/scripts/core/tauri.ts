@@ -1,4 +1,6 @@
 
+import { log } from './logger';
+
 declare global {
   interface Window {
     __TAURI__: {
@@ -21,7 +23,7 @@ export const invoke = <T = any>(cmd: string, args?: Record<string, any>): Promis
     if (window.__TAURI__) {
         return window.__TAURI__.core.invoke(cmd, args);
     }
-    console.warn(`[Tauri] Invoke '${cmd}' failed: API not found`);
+    log.warn(`[Tauri] Invoke '${cmd}' failed: API not found`);
     return Promise.resolve({} as T);
 };
 
@@ -29,7 +31,7 @@ export const listen = <T>(event: string, handler: (event: { payload: T }) => voi
     if (window.__TAURI__) {
         return window.__TAURI__.event.listen(event, handler);
     }
-    console.warn(`[Tauri] Listen '${event}' failed: API not found`);
+    log.warn(`[Tauri] Listen '${event}' failed: API not found`);
     return Promise.resolve(() => {});
 };
 
@@ -37,7 +39,7 @@ export const createWebviewWindow = (label: string, options: any) => {
     if (window.__TAURI__) {
         return new window.__TAURI__.webviewWindow.WebviewWindow(label, options);
     }
-    console.warn(`[Tauri] createWebviewWindow failed: API not found`);
+    log.warn(`[Tauri] createWebviewWindow failed: API not found`);
     return null;
 };
 
@@ -75,12 +77,10 @@ export const waitForTauriReady = async (): Promise<void> => {
     const maxAttempts = 100; // 100 * 50ms = 5 seconds
     const delay = 50;
 
-    console.log('[Tauri] Waiting for IPC to be ready...');
-
     for (let i = 0; i < maxAttempts; i++) {
         try {
             await invoke('get_app_name');
-            console.log(`[Tauri] IPC ready after ${i * delay}ms`);
+            log.debug(`[Tauri] IPC ready after ${i * delay}ms`);
             return; // Success!
         } catch (e) {
             // IPC not ready yet, wait and retry
@@ -91,7 +91,7 @@ export const waitForTauriReady = async (): Promise<void> => {
     }
 
     // If we get here, IPC is still not ready, but we'll continue anyway
-    console.warn(`[Tauri] IPC not ready after ${maxAttempts * delay}ms, continuing anyway`);
+    log.warn(`[Tauri] IPC not ready after ${maxAttempts * delay}ms, continuing anyway`);
 };
 
 // Log to file utility
@@ -100,6 +100,6 @@ export const logToFile = (message: string) => {
         invoke('log_to_file', { message })
             .catch(() => {}); // Silently fail if logging fails
     } else {
-        console.log(message); // Fallback to console if Tauri not ready
+        log.debug(message); // Fallback to console if Tauri not ready
     }
 };

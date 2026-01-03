@@ -1,30 +1,35 @@
 
-import { getSiteRegistry } from '../../core/site_registry';
+import { SiteContext } from '../../core/site_context';
+import { log } from '../../core/logger';
 
 export class SwipeHandler {
   private swipeAccumulator = 0;
   private swipeResetTimer: ReturnType<typeof setTimeout> | null = null;
   private swipeCooldown = false;
-  private siteRegistry = getSiteRegistry();
+  private siteContext: SiteContext;
   private onScrollLock: (duration?: number) => void;
 
-  constructor(onScrollLock: (duration?: number) => void) {
+  private handler: (e: WheelEvent) => void;
+
+  constructor(siteContext: SiteContext, onScrollLock: (duration?: number) => void) {
+    this.siteContext = siteContext;
     this.onScrollLock = onScrollLock;
+    this.handler = (e: WheelEvent) => {
+        // Set lock to prevent synthetic mousemove from waking up cursor
+        this.onScrollLock();
+        this.handleWheel(e);
+    };
     this.init();
   }
 
   private init() {
-    window.addEventListener('wheel', (e) => {
-        // Set lock to prevent synthetic mousemove from waking up cursor
-        this.onScrollLock();
-        this.handleWheel(e);
-    }, { passive: false, capture: true });
+    window.addEventListener('wheel', this.handler, { passive: false, capture: true });
   }
 
   private handleWheel(e: WheelEvent) {
-    if (!this.siteRegistry.isReaderPage()) return;
+    if (!this.siteContext.isReaderPage) return;
 
-    const adapter = this.siteRegistry.getCurrentAdapter();
+    const adapter = this.siteContext.currentAdapter;
     if (!adapter || !adapter.isDoubleColumn()) return;
 
     const deltaX = e.deltaX;
@@ -51,12 +56,12 @@ export class SwipeHandler {
 
     const THRESHOLD = 50;
     if (this.swipeAccumulator >= THRESHOLD) {
-      console.log('[SwipeHandler] Swipe left detected, next page');
+      log.debug('[SwipeHandler] Swipe left detected, next page');
       adapter.nextPage();
       this.swipeAccumulator = 0;
       this.startCooldown();
     } else if (this.swipeAccumulator <= -THRESHOLD) {
-      console.log('[SwipeHandler] Swipe right detected, prev page');
+      log.debug('[SwipeHandler] Swipe right detected, prev page');
       adapter.prevPage();
       this.swipeAccumulator = 0;
       this.startCooldown();
@@ -69,5 +74,15 @@ export class SwipeHandler {
       this.swipeCooldown = false;
       this.swipeAccumulator = 0;
     }, 800);
+  }
+
+  public destroy() {
+    if (this.swipeResetTimer) {
+      clearTimeout(this.swipeResetTimer);
+      this.swipeResetTimer = null;
+    }
+
+    // Remove the wheel event listener
+    window.removeEventListener('wheel', this.handler, { capture: true });
   }
 }

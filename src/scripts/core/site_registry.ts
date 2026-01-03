@@ -1,4 +1,5 @@
 import { ReadingSiteAdapter } from '../adapters/reading_site_adapter';
+import { log } from './logger';
 
 /**
  * 单例网站注册器
@@ -24,7 +25,6 @@ export class SiteRegistry {
    */
   register(adapter: ReadingSiteAdapter): void {
     this.adapters.set(adapter.id, adapter);
-    console.log(`[SiteRegistry] Registered adapter: ${adapter.name} (${adapter.id})`);
   }
 
   /**
@@ -42,26 +42,21 @@ export class SiteRegistry {
     // 如果已经有缓存的适配器，先检查是否还匹配
     if (this.currentAdapter) {
       const adapter = this.currentAdapter;
-      if ('matchesCurrentDomain' in adapter && typeof adapter.matchesCurrentDomain === 'function') {
-        if ((adapter as any).matchesCurrentDomain()) {
-          return adapter;
-        }
+      if (adapter.matchesCurrentDomain && adapter.matchesCurrentDomain()) {
+        return adapter;
       }
     }
 
     // 遍历所有适配器查找匹配的
     for (const adapter of this.adapters.values()) {
-      if ('matchesCurrentDomain' in adapter && typeof adapter.matchesCurrentDomain === 'function') {
-        if ((adapter as any).matchesCurrentDomain()) {
-          this.currentAdapter = adapter;
-          console.log(`[SiteRegistry] Detected site: ${adapter.name}`);
-          return adapter;
-        }
+      if (adapter.matchesCurrentDomain && adapter.matchesCurrentDomain()) {
+        this.currentAdapter = adapter;
+        return adapter;
       }
     }
 
     this.currentAdapter = null;
-    console.warn('[SiteRegistry] No matching adapter found for current site');
+    log.warn('[SiteRegistry] No matching adapter found for current site');
     return null;
   }
 

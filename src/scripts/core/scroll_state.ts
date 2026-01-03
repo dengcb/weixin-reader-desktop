@@ -1,3 +1,5 @@
+import { log } from './logger';
+
 /**
  * Scroll State Manager
  *
@@ -28,7 +30,7 @@ export class ScrollState {
    */
   static markRestorationComplete() {
     if (!this.isRestorationComplete()) {
-      console.log('[ScrollState] Restoration marked as complete - unlocking save/auto-scroll');
+      log.debug('[ScrollState] Restoration marked as complete - unlocking save/auto-scroll');
       (window as any)[RESTORED_KEY] = true;
     }
   }
@@ -50,7 +52,7 @@ export class ScrollState {
         }
         
         if (Date.now() - start > timeoutMs) {
-          console.warn(`[ScrollState] Timeout waiting for restoration (${timeoutMs}ms)`);
+          log.warn(`[ScrollState] Timeout waiting for restoration (${timeoutMs}ms)`);
           resolve(); 
           return;
         }

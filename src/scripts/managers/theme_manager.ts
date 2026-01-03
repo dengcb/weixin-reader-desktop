@@ -1,6 +1,11 @@
 import { injectCSS, removeCSS } from '../core/utils';
 
 export class ThemeManager {
+  // Store references for cleanup
+  private clickHandler: ((e: Event) => void) | null = null;
+  private darkModeQuery: MediaQueryList | null = null;
+  private darkModeChangeHandler: ((e: MediaQueryListEvent) => void) | null = null;
+
   constructor() {
     this.init();
   }
@@ -16,13 +21,14 @@ export class ThemeManager {
     };
 
     // 监听所有点击事件
-    document.addEventListener('click', (e) => {
+    this.clickHandler = (e) => {
       const target = e.target as HTMLElement;
       const link = target.closest('a');
       if (link && link.target === '_blank') {
           link.target = '_self';
       }
-    }, true);
+    };
+    document.addEventListener('click', this.clickHandler, true);
   }
 
   // --- Dark Mode Logic ---
@@ -75,15 +81,35 @@ export class ThemeManager {
   private initDarkMode() {
     // 立即执行一次
     this.applyTheme(this.shouldEnableDarkMode());
-    
+
     // 监听系统主题变化
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    this.darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    this.darkModeChangeHandler = (e) => {
       this.applyTheme(e.matches);
-    });
+    };
+    this.darkModeQuery.addEventListener('change', this.darkModeChangeHandler);
   }
 
   private init() {
       this.initLinks();
       this.initDarkMode();
+  }
+
+  public destroy() {
+    // Remove click handler
+    if (this.clickHandler) {
+      document.removeEventListener('click', this.clickHandler, true);
+      this.clickHandler = null;
+    }
+
+    // Remove dark mode change listener
+    if (this.darkModeQuery && this.darkModeChangeHandler) {
+      this.darkModeQuery.removeEventListener('change', this.darkModeChangeHandler);
+      this.darkModeQuery = null;
+      this.darkModeChangeHandler = null;
+    }
+
+    // Clean up injected CSS
+    removeCSS('wxrd-dark-mode-filter');
   }
 }

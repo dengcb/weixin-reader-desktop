@@ -13,7 +13,9 @@
  */
 
 import { invoke, listen, waitForTauriReady } from '../core/tauri';
-import { settingsStore, AppSettings } from '../core/settings_store';
+import { settingsStore, AppSettings, MergedSettings, SiteSettings } from '../core/settings_store';
+import { createSiteContext, SiteContext } from '../core/site_context';
+import { log } from '../core/logger';
 
 type RouteChangedEvent = {
   isReader: boolean;
@@ -28,38 +30,48 @@ type TitleChangedEvent = {
 export class MenuManager {
   private isReader = false;
   private initialized = false;
+  private siteContext: SiteContext;
+
+  // Store references for cleanup
+  private routeChangedHandler: ((e: Event) => void) | null = null;
+  private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
+  private titleChangedHandler: ((e: Event) => void) | null = null;
+  private unlistenMenuAction: (() => void) | null = null;
 
   constructor() {
+    this.siteContext = createSiteContext();
     this.init();
   }
 
   private async init() {
     // 1. Set up all event listeners FIRST
-    listen<string>('menu-action', (event) => {
+    this.unlistenMenuAction = await listen<string>('menu-action', (event) => {
       this.handleMenuAction(event.payload);
     });
 
-    window.addEventListener('ipc:route-changed', ((e: CustomEvent<RouteChangedEvent>) => {
+    this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
       this.isReader = e.detail.isReader;
       this.updateMenuEnabledStatus();
-    }) as EventListener);
+    }) as EventListener;
 
-    window.addEventListener('wxrd:route-changed', ((e: CustomEvent<{ isReader: boolean }>) => {
+    this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
       this.isReader = e.detail.isReader;
       this.updateMenuEnabledStatus();
-    }) as EventListener);
+    }) as EventListener;
 
-    // Listen for title changes and sync to window title
-    window.addEventListener('ipc:title-changed', ((e: CustomEvent<TitleChangedEvent>) => {
-      console.log('[MenuManager] Title changed:', e.detail.title);
+    this.titleChangedHandler = ((e: CustomEvent<TitleChangedEvent>) => {
       this.updateWindowTitle(e.detail.title);
-    }) as EventListener);
+    }) as EventListener;
+
+    window.addEventListener('ipc:route-changed', this.routeChangedHandler);
+    window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
+    window.addEventListener('ipc:title-changed', this.titleChangedHandler);
 
     // 2. Wait for Tauri IPC to be ready
     await waitForTauriReady();
 
-    // 3. Initialize isReader from current URL
-    this.isReader = this.checkIsReader();
+    // 3. Initialize isReader from SiteContext
+    this.isReader = this.siteContext.isReaderPage;
 
     // 4. Mark as initialized BEFORE subscribing
     // This prevents the initial subscription callback from being blocked
@@ -72,7 +84,7 @@ export class MenuManager {
         try {
           await invoke('set_zoom', { value: settings.zoom });
         } catch (e) {
-          console.error('[MenuManager] set_zoom failed:', e);
+          log.error('[MenuManager] set_zoom failed:', e);
         }
       }
 
@@ -83,32 +95,35 @@ export class MenuManager {
     await this.syncMenuState();
   }
 
-  // Helper to check if currently on reader page
+
+  /**
+   * 检测当前是否在阅读器页面
+   * 使用 SiteContext 动态检测,避免硬编码路径判断
+   */
   private checkIsReader(): boolean {
-    const currentUrl = window.location.href;
-    const pathname = window.location.pathname;
-    return pathname.includes('/web/reader/') ||
-           currentUrl.includes('/web/reader/') ||
-           pathname.startsWith('/reader') ||
-           currentUrl.includes('reader');
+    return this.siteContext.isReaderPage;
   }
 
   // Only update enabled status based on reader mode
   private async updateMenuEnabledStatus() {
     if (!window.__TAURI__) return;
 
+    const isReader = this.checkIsReader();
+    const siteId = this.siteContext.siteId;
+    log.debug('[MenuManager] Updating menu enabled status. isReader:', isReader, 'siteId:', siteId, 'URL:', window.location.href);
+
     try {
       // Reader-specific items
-      await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: this.isReader });
-      await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: this.isReader });
-      await invoke('set_menu_item_enabled', { id: 'auto_flip', enabled: this.isReader });
+      await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: isReader });
+      await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: isReader });
+      await invoke('set_menu_item_enabled', { id: 'auto_flip', enabled: isReader });
 
       // Zoom items - always enabled
       await invoke('set_menu_item_enabled', { id: 'zoom_in', enabled: true });
       await invoke('set_menu_item_enabled', { id: 'zoom_out', enabled: true });
       await invoke('set_menu_item_enabled', { id: 'zoom_reset', enabled: true });
     } catch (e) {
-      console.error('[MenuManager] Error updating menu enabled status:', e);
+      log.error('[MenuManager] Error updating menu enabled status:', e);
     }
   }
 
@@ -119,11 +134,11 @@ export class MenuManager {
     try {
       await invoke('set_title', { title });
     } catch (e) {
-      console.error('[MenuManager] Error setting window title:', e);
+      log.error('[MenuManager] Error setting window title:', e);
     }
   }
 
-  private async syncMenuState(settings: AppSettings = settingsStore.get()) {
+  private async syncMenuState(settings: MergedSettings = settingsStore.get()) {
     if (!this.initialized) return;
 
     const wideState = !!settings.readerWide;
@@ -139,36 +154,59 @@ export class MenuManager {
       await invoke('update_menu_state', { id: 'hide_toolbar', state: toolbarState });
       await invoke('update_menu_state', { id: 'auto_flip', state: autoFlipState });
     } catch (e) {
-      console.error('[MenuManager] Error updating menu state:', e);
+      log.error('[MenuManager] Error updating menu state:', e);
     }
   }
 
   private handleMenuAction(action: string) {
     const settings = settingsStore.get();
+    const siteId = this.siteContext.siteId;
+
+    log.debug('[MenuManager] Handling action:', action, 'siteId:', siteId);
 
     switch (action) {
       case 'reader_wide':
         {
           const newValue = !settings.readerWide;
-          let updates: Partial<AppSettings> = { readerWide: newValue };
+          const updates: Partial<SiteSettings> = { readerWide: newValue };
+          
+          // Auto-show toolbar if disabling wide mode (UX preference)
           if (!newValue && settings.hideToolbar) {
             updates.hideToolbar = false;
           }
-          settingsStore.update(updates);
+          
+          if (siteId !== 'unknown') {
+            settingsStore.updateSite(siteId, updates);
+          } else {
+            // Fallback for unknown sites (shouldn't happen on reader page)
+            settingsStore.update(updates);
+          }
         }
         break;
 
       case 'hide_toolbar':
-        settingsStore.update({ hideToolbar: !settings.hideToolbar });
+        {
+          if (siteId !== 'unknown') {
+            settingsStore.updateSite(siteId, { hideToolbar: !settings.hideToolbar });
+          } else {
+            settingsStore.update({ hideToolbar: !settings.hideToolbar });
+          }
+        }
         break;
 
       case 'auto_flip':
         {
           const currentAutoFlip = settings.autoFlip || { active: false, interval: 15, keepAwake: true };
           const newActive = !currentAutoFlip.active;
-          settingsStore.update({
+          const updates = {
             autoFlip: { ...currentAutoFlip, active: newActive }
-          });
+          };
+
+          if (siteId !== 'unknown') {
+            settingsStore.updateSite(siteId, updates);
+          } else {
+            settingsStore.update(updates);
+          }
         }
         break;
 
@@ -176,7 +214,7 @@ export class MenuManager {
         {
           let current = settings.zoom || 1.0;
           current = Math.round((current + 0.1) * 10) / 10;
-          settingsStore.update({ zoom: current });
+          settingsStore.updateGlobal({ zoom: current });
         }
         break;
 
@@ -185,13 +223,35 @@ export class MenuManager {
           let current = settings.zoom || 1.0;
           current = Math.round((current - 0.1) * 10) / 10;
           if (current < 0.1) current = 0.1;
-          settingsStore.update({ zoom: current });
+          settingsStore.updateGlobal({ zoom: current });
         }
         break;
 
       case 'zoom_reset':
-        settingsStore.update({ zoom: 1.0 });
+        settingsStore.updateGlobal({ zoom: 1.0 });
         break;
+    }
+  }
+
+  public destroy() {
+    // Remove window event listeners
+    if (this.routeChangedHandler) {
+      window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
+      this.routeChangedHandler = null;
+    }
+    if (this.legacyRouteChangedHandler) {
+      window.removeEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
+      this.legacyRouteChangedHandler = null;
+    }
+    if (this.titleChangedHandler) {
+      window.removeEventListener('ipc:title-changed', this.titleChangedHandler);
+      this.titleChangedHandler = null;
+    }
+
+    // Unlisten Tauri event
+    if (this.unlistenMenuAction) {
+      this.unlistenMenuAction();
+      this.unlistenMenuAction = null;
     }
   }
 }

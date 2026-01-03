@@ -1,9 +1,10 @@
 
 import { invoke } from '../../core/tauri';
-import { AppSettings } from '../../core/settings_store';
-import { getSiteRegistry } from '../../core/site_registry';
+import { AppSettings, MergedSettings } from '../../core/settings_store';
+import { SiteContext } from '../../core/site_context';
 import { ScrollState } from '../../core/scroll_state';
 import { ReadingSiteAdapter } from '../../adapters/reading_site_adapter';
+import { log } from '../../core/logger';
 
 export class AutoFlipper {
   private isActive = false;
@@ -18,11 +19,13 @@ export class AutoFlipper {
   private originalTitle: string | null = null;
   private appName: string = "微信阅读";
   private elapsedTime = 0;
-  private siteRegistry = getSiteRegistry();
+  private siteContext: SiteContext;
   private bottomTriggered = false;
   private onScrollLock: (duration?: number) => void;
+  private generation = 0; // Prevent zombie loops from resurrected RAFs
 
-  constructor(onScrollLock: (duration?: number) => void) {
+  constructor(siteContext: SiteContext, onScrollLock: (duration?: number) => void) {
+    this.siteContext = siteContext;
     this.onScrollLock = onScrollLock;
     this.initAppName();
   }
@@ -31,22 +34,24 @@ export class AutoFlipper {
     try {
       this.appName = await invoke<string>('get_app_name') || "微信阅读";
     } catch (e) {
-      console.error("AutoFlipper: Failed to get app name", e);
+      log.error("AutoFlipper: Failed to get app name", e);
     }
   }
 
-  public updateState(settings: AppSettings) {
+  public updateState(settings: MergedSettings) {
     const autoFlip = settings.autoFlip || { active: false, interval: 15, keepAwake: true };
     const newActive = !!autoFlip.active;
     const newInterval = autoFlip.interval > 0 ? autoFlip.interval : 15;
     const newKeepAwake = !!autoFlip.keepAwake;
 
+    // Remove isProcessingUpdate check, handled by generation counter
     if (!newActive) {
       if (this.isActive) {
         this.stopAll();
         this.isActive = false;
       }
     } else {
+      // Logic for changing state
       if (!this.isActive || this.intervalSeconds !== newInterval || this.keepAwake !== newKeepAwake) {
         if (this.isActive) this.stopAll();
         this.isActive = true;
@@ -59,6 +64,7 @@ export class AutoFlipper {
 
   public stopAll() {
     this.isActive = false;
+    this.generation++; // Invalidate all pending loops
     if (this.doubleTimer) { clearInterval(this.doubleTimer); this.doubleTimer = null; }
     if (this.singleRafId) { cancelAnimationFrame(this.singleRafId); this.singleRafId = null; }
     if (this.originalTitle) { document.title = this.originalTitle; this.originalTitle = null; }
@@ -66,9 +72,9 @@ export class AutoFlipper {
   }
 
   private start() {
-    const adapter = this.siteRegistry.getCurrentAdapter();
+    const adapter = this.siteContext.currentAdapter;
     if (!adapter) {
-      console.warn('[AutoFlipper] No adapter found');
+      log.warn('[AutoFlipper] No adapter found');
       return;
     }
 
@@ -110,8 +116,11 @@ export class AutoFlipper {
     if (this.doubleTimer) { clearInterval(this.doubleTimer); this.doubleTimer = null; }
 
     if (!ScrollState.isRestorationComplete()) {
-      console.log('[AutoFlipper] Waiting for scroll restore...');
-      setTimeout(() => this.startSingleColumnLogic(adapter), 200);
+      setTimeout(() => {
+        if (this.isActive) {
+          this.startSingleColumnLogic(adapter);
+        }
+      }, 200);
       return;
     }
 
@@ -122,10 +131,16 @@ export class AutoFlipper {
     this.lastFrameTime = performance.now();
     this.lastScrollTime = performance.now();
 
-    this.singleRafId = requestAnimationFrame((time) => this.singleColumnLoop(time, adapter));
+    const currentGen = this.generation;
+    this.singleRafId = requestAnimationFrame((time) => this.singleColumnLoop(time, adapter, currentGen));
   }
 
-  private singleColumnLoop(time: number, adapter: ReadingSiteAdapter) {
+  private singleColumnLoop(time: number, adapter: ReadingSiteAdapter, gen: number) {
+    // 1. Check generation first - if generation changed, this loop is a zombie
+    if (gen !== this.generation) {
+      return;
+    }
+
     if (!this.isActive) {
         this.singleRafId = null;
         return;
@@ -160,13 +175,13 @@ export class AutoFlipper {
     }
 
     if (document.hidden && !this.keepAwake) {
-      this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter));
+      this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter, gen));
       return;
     }
 
     const timeSinceLastScroll = time - this.lastScrollTime;
     if (timeSinceLastScroll < 30) {
-      this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter));
+      this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter, gen));
       return;
     }
     this.lastScrollTime = time;
@@ -185,12 +200,12 @@ export class AutoFlipper {
 
       const isAtBottom = adapter.isAtBottom();
       if (isAtBottom && !this.bottomTriggered) {
-        console.log('[AutoFlipper] Reached bottom, triggering next page');
+        log.debug('[AutoFlipper] Reached bottom, triggering next page');
         this.bottomTriggered = true;
 
         adapter.nextPage();
-        if (typeof (adapter as any).clickNextChapter === 'function') {
-           (adapter as any).clickNextChapter();
+        if (adapter.clickNextChapter) {
+          adapter.clickNextChapter();
         }
 
         if (this.singleRafId) {
@@ -198,10 +213,10 @@ export class AutoFlipper {
             this.singleRafId = null;
         }
 
-        console.log('[AutoFlipper] Waiting 10s before resuming...');
         setTimeout(() => {
             this.bottomTriggered = false;
-            if (this.isActive) {
+            // Only resume if still active and generation matches
+            if (this.isActive && this.generation === gen) {
                 this.startSingleColumnLogic(adapter);
             }
         }, 10000);
@@ -211,6 +226,6 @@ export class AutoFlipper {
       }
     }
 
-    this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter));
+    this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter, gen));
   }
 }
