@@ -34,7 +34,7 @@ export class AutoFlipper {
     try {
       this.appName = await invoke<string>('get_app_name') || "微信阅读";
     } catch (e) {
-      log.error("AutoFlipper: Failed to get app name", e);
+      this.appName = "微信阅读";
     }
   }
 
@@ -78,7 +78,7 @@ export class AutoFlipper {
       return;
     }
 
-    if (adapter.isDoubleColumn()) {
+    if (this.siteContext.isDoubleColumn) {
       this.startDoubleColumnLogic(adapter);
     } else {
       this.startSingleColumnLogic(adapter);
@@ -93,7 +93,8 @@ export class AutoFlipper {
     if (!this.originalTitle) this.originalTitle = document.title;
 
     this.doubleTimer = setInterval(() => {
-      if (!adapter.isDoubleColumn()) {
+      // 检测是否切换到单栏模式
+      if (!this.siteContext.isDoubleColumn) {
         this.stopAll();
         this.startSingleColumnLogic(adapter);
         return;
@@ -146,7 +147,8 @@ export class AutoFlipper {
         return;
     }
 
-    if (adapter.isDoubleColumn()) {
+    // 检测是否切换到双栏模式
+    if (this.siteContext.isDoubleColumn) {
       this.stopAll();
       this.startDoubleColumnLogic(adapter);
       return;

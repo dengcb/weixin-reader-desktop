@@ -22,9 +22,10 @@ declare global {
 export const invoke = <T = any>(cmd: string, args?: Record<string, any>): Promise<T> => {
     if (window.__TAURI__) {
         return window.__TAURI__.core.invoke(cmd, args);
+    } else {
+        log.warn(`[Tauri] Invoke '${cmd}' failed: API not found`);
+        return Promise.resolve({} as T);
     }
-    log.warn(`[Tauri] Invoke '${cmd}' failed: API not found`);
-    return Promise.resolve({} as T);
 };
 
 export const listen = <T>(event: string, handler: (event: { payload: T }) => void): Promise<() => void> => {

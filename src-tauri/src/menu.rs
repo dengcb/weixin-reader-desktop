@@ -116,6 +116,8 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
 
     let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, initial_settings.reader_wide, Some("CmdOrCtrl+9"))?;
     let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, initial_settings.hide_toolbar, Some("CmdOrCtrl+O"))?;
+    // hide_navbar 始终启用，让用户可以随时点击（前端会判断是否在双栏模式）
+    let hide_navbar = CheckMenuItem::with_id(handle, "hide_navbar", "隐藏导航栏", true, initial_settings.hide_navbar, Some("CmdOrCtrl+P"))?;
 
     let view_menu = Submenu::with_items(
         handle,
@@ -136,6 +138,7 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
             &PredefinedMenuItem::separator(handle)?,
             &reader_wide,
             &hide_toolbar,
+            &hide_navbar,
         ],
     )?;
 
@@ -189,6 +192,13 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
     handle.set_menu(menu)?;
 
     eprintln!("DEBUG: Menu rebuilt successfully");
+
+    // Notify frontend to resync menu state
+    if let Some(main_window) = handle.get_webview_window("main") {
+        let _ = main_window.emit("menu-rebuilt", ());
+        eprintln!("DEBUG: Emitted menu-rebuilt event to frontend");
+    }
+
     Ok(())
 }
 
@@ -258,8 +268,11 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     // Use initial settings values for reader_wide and hide_toolbar
     let reader_wide_initial = initial_settings.reader_wide;
     let hide_toolbar_initial = initial_settings.hide_toolbar;
+    let hide_navbar_initial = initial_settings.hide_navbar;
     let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, reader_wide_initial, Some("CmdOrCtrl+9"))?;
     let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, hide_toolbar_initial, Some("CmdOrCtrl+O"))?;
+    // hide_navbar 始终启用，让用户可以随时点击（前端会判断是否在双栏模式）
+    let hide_navbar = CheckMenuItem::with_id(handle, "hide_navbar", "隐藏导航栏", true, hide_navbar_initial, Some("CmdOrCtrl+P"))?;
 
     let view_menu = Submenu::with_items(
         handle,
@@ -280,6 +293,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             &PredefinedMenuItem::separator(handle)?,
             &reader_wide,
             &hide_toolbar,
+            &hide_navbar,
         ],
     )?;
 
@@ -362,6 +376,11 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             "hide_toolbar" => {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.emit("menu-action", "hide_toolbar");
+                }
+            }
+            "hide_navbar" => {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.emit("menu-action", "hide_navbar");
                 }
             }
             "auto_flip" => {
@@ -507,6 +526,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 struct InitialSettings {
     reader_wide: bool,
     hide_toolbar: bool,
+    hide_navbar: bool,
     auto_flip_active: bool,
 }
 
@@ -527,6 +547,9 @@ fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSett
             let hide_toolbar = json.get("hideToolbar")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let hide_navbar = json.get("hideNavbar")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let auto_flip_active = json.get("autoFlip")
                 .and_then(|v| v.as_object())
                 .and_then(|obj| obj.get("active"))
@@ -536,6 +559,7 @@ fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSett
             return InitialSettings {
                 reader_wide,
                 hide_toolbar,
+                hide_navbar,
                 auto_flip_active,
             };
         }
@@ -545,6 +569,7 @@ fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSett
     InitialSettings {
         reader_wide: false,
         hide_toolbar: false,
+        hide_navbar: false,
         auto_flip_active: false,
     }
 }

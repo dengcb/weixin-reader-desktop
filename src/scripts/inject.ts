@@ -10,10 +10,6 @@ import { StyleManager } from './managers/style_manager';
 
 // Main Entry Point
 (function () {
-  // CRITICAL: Raw log FIRST - before any other code
-  console.log('[Inject] Script loaded. Timestamp:', new Date().toISOString());
-  console.log('[Inject] Window Location:', window.location.href);
-
   if ((window as any).wxrd_injected) {
     return;
   }
@@ -81,54 +77,29 @@ import { StyleManager } from './managers/style_manager';
     // ============================================
     // Step 2: Initialize Managers
     // ============================================
-    // All managers initialize independently and handle their own timing
+    // 简化初始化: 所有管理器按顺序初始化，各自处理时序问题
 
     const safeInit = (name: string, fn: () => void) => {
       try {
-        log.info(`[Inject] Initializing ${name}...`);
         fn();
-        log.info(`[Inject] Initialized ${name}`);
       } catch (e) {
         log.error(`[Inject] Failed to initialize ${name}`, e);
       }
     };
 
-    // 0. IPC Manager (Central Event Bus - Route & Title Monitoring)
+    // 按依赖顺序初始化管理器
     safeInit('IPCManager', () => new IPCManager());
-
-    // 1. Menu Manager (Menu State Sync) - Highest priority
     safeInit('MenuManager', () => new MenuManager());
-
-    // 2. All other managers - Initialize in sequence
     safeInit('AppManager', () => new AppManager());
     safeInit('TurnerManager', () => new TurnerManager());
 
-    // Theme Manager (Dark Mode, Links, Zoom)
-    // Always initialize managers, let them handle internal checks if possible,
-    // OR keep the conditional logic but log it.
+    // ThemeManager 仅在非阅读器页面初始化
     if (!isReader) {
       safeInit('ThemeManager', () => new ThemeManager());
-    } else {
-      log.debug('[Inject] Skipping ThemeManager (Reader mode active)');
     }
 
-    // Style Manager (Wide Mode, Hide Toolbar)
-    // Always initialize StyleManager, it handles its own isReader check
+    // StyleManager 始终初始化
     safeInit('StyleManager', () => new StyleManager());
-
-
-    // Check SettingsStore status
-    setTimeout(async () => {
-      try {
-        const { settingsStore } = await import('./core/settings_store');
-        const settings = settingsStore.get();
-        log.info('[Inject] Post-init settings check:', JSON.stringify(settings));
-        log.info('[Inject] Current adapter:', siteRegistry.getCurrentAdapter()?.id);
-        log.info('[Inject] Is Reader Page:', siteRegistry.isReaderPage());
-      } catch (e) {
-        log.error('[Inject] Failed to perform post-init check', e);
-      }
-    }, 2000);
 
   } catch (e) {
     console.error('[Inject] Critical error during initialization:', e);

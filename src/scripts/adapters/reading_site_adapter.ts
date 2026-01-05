@@ -39,6 +39,12 @@ export interface ReadingSiteAdapter {
   getToolbarCSS(hide: boolean): string;
 
   /**
+   * 获取导航栏显示/隐藏 CSS（可选）
+   * @param hide true=隐藏, false=显示
+   */
+  getNavbarCSS?(hide: boolean): string;
+
+  /**
    * 获取深色主题 CSS（可选）
    */
   getDarkThemeCSS?(): string;
@@ -69,6 +75,13 @@ export interface ReadingSiteAdapter {
    * 检测是否滚动到页面底部
    */
   isAtBottom(): boolean;
+
+  /**
+   * 获取当前章节的阅读进度（百分比 0-100）（可选）
+   * 双栏模式：根据当前页码/总页数计算
+   * 单栏模式：根据滚动位置计算
+   */
+  getChapterProgress?(): number;
 
   // ==================== 章节导航 ====================
 

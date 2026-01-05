@@ -12,6 +12,7 @@ export class CursorHider {
   private lastScreenX = 0;
   private lastScreenY = 0;
   private siteContext: SiteContext;
+  private timerStarted = false; // 跟踪定时器是否已启动
 
   // Store bound handlers for cleanup
   private onMouseMove: ((e: MouseEvent) => void) | null = null;
@@ -40,6 +41,7 @@ export class CursorHider {
         this.mouseHideTimer = window.setTimeout(() => {
           this.hideCursor();
         }, 3000);
+        this.timerStarted = true;
       }
     };
 
@@ -62,6 +64,10 @@ export class CursorHider {
         const now = Date.now();
         if (now - lastMoveTime > 200) {
             lastMoveTime = now;
+            // 首次移动鼠标时才启动定时器
+            if (!this.timerStarted) {
+              this.timerStarted = true;
+            }
             resetTimer();
         }
     };
@@ -70,7 +76,8 @@ export class CursorHider {
 
     document.addEventListener('mousemove', this.onMouseMove, false);
     document.addEventListener('mousedown', this.onMouseDown, false);
-    resetTimer();
+    // 不再在初始化时立即调用 resetTimer()
+    // 只有在用户移动鼠标后才开始 3 秒倒计时
   }
 
   public setScrollLock(duration = 200) {
@@ -88,7 +95,6 @@ export class CursorHider {
     if (!this.siteContext.isReaderPage) return;
 
     log.debug('[CursorHider] Hiding cursor');
-    invoke('set_cursor_visible', { visible: false }).catch(e => log.error(e));
     document.documentElement.classList.add('wxrd-hide-cursor');
     injectCSS('wxrd-cursor-hide', `
       html.wxrd-hide-cursor,
@@ -102,7 +108,6 @@ export class CursorHider {
   public showCursor() {
     if (!this.isMouseHidden) return;
     log.debug('[CursorHider] Showing cursor');
-    invoke('set_cursor_visible', { visible: true }).catch(e => log.error(e));
     document.documentElement.classList.remove('wxrd-hide-cursor');
     removeCSS('wxrd-cursor-hide');
     this.isMouseHidden = false;

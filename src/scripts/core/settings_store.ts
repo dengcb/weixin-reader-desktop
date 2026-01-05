@@ -10,6 +10,7 @@ import { createSiteContext } from './site_context';
 export interface SiteSettings {
   readerWide?: boolean;
   hideToolbar?: boolean;
+  hideNavbar?: boolean;
   lastReaderUrl?: string | null;
   scrollPosition?: number;  // Y scroll position for single-column mode
   readingProgress?: Record<string, number>; // URL-based scroll position storage

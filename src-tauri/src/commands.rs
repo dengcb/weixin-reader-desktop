@@ -78,29 +78,34 @@ pub fn update_menu_state(app: AppHandle, id: String, state: bool) {
 
 #[tauri::command]
 pub fn set_menu_item_enabled(app: AppHandle, id: String, enabled: bool) {
+    let mut found = false;
     if let Some(menu) = app.menu() {
         if let Ok(items) = menu.items() {
-            // Check all menus (App menu is index 0, View is index 1, etc.)
             for menu_item in items.iter() {
                 if let Some(submenu) = menu_item.as_submenu() {
                     if let Ok(sub_items) = submenu.items() {
                         for sub_item in sub_items.iter() {
                             if *sub_item.id() == tauri::menu::MenuId::from(id.as_str()) {
-                                // Try to set enabled on any menu item type that supports it
                                 if let Some(check_item) = sub_item.as_check_menuitem() {
                                     let _ = check_item.set_enabled(enabled);
-                                } else if let Some(menu_item) = sub_item.as_menuitem() {
-                                    let _ = menu_item.set_enabled(enabled);
+                                } else if let Some(menu_item_inner) = sub_item.as_menuitem() {
+                                    let _ = menu_item_inner.set_enabled(enabled);
                                 } else if let Some(sub) = sub_item.as_submenu() {
                                     let _ = sub.set_enabled(enabled);
                                 }
-                                return;
+                                found = true;
+                                break;
                             }
                         }
                     }
+                    if found { break; }
                 }
             }
         }
+    }
+
+    if !found {
+        eprintln!("[Menu] set_menu_item_enabled: NOT FOUND - id={}, enabled={}", id, enabled);
     }
 }
 

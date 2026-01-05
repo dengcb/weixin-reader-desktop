@@ -126,8 +126,7 @@ export class AppManager {
     }
 
     // Check if in single-column mode
-    const adapter = this.siteContext.currentAdapter;
-    if (!adapter || adapter.isDoubleColumn()) {
+    if (this.siteContext.isDoubleColumn) {
       ScrollState.markRestorationComplete();
       return;
     }

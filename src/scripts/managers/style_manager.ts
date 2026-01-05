@@ -20,6 +20,7 @@ import { RouteChangedEvent } from './ipc_manager';
 export class StyleManager {
   private isWide = false;
   private isHideToolbar = false;
+  private isHideNavbar = false;
   private isReader = false;
   private siteContext: SiteContext;
 
@@ -89,6 +90,12 @@ export class StyleManager {
 
     window.addEventListener('ipc:route-changed', this.routeChangedHandler);
     window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
+
+    // 6. 监听双栏模式变化（集中管理）
+    this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
+      log.debug('[StyleManager] Double column mode changed from SiteContext:', isDoubleColumn);
+      this.applyStyles();
+    });
   }
 
   private handleTheme() {
@@ -118,10 +125,12 @@ export class StyleManager {
   private updateStyles(settings: MergedSettings) {
     const newIsWide = !!settings.readerWide;
     const newIsHideToolbar = !!settings.hideToolbar;
+    const newIsHideNavbar = !!settings.hideNavbar;
 
-    if (newIsWide !== this.isWide || newIsHideToolbar !== this.isHideToolbar) {
+    if (newIsWide !== this.isWide || newIsHideToolbar !== this.isHideToolbar || newIsHideNavbar !== this.isHideNavbar) {
       this.isWide = newIsWide;
       this.isHideToolbar = newIsHideToolbar;
+      this.isHideNavbar = newIsHideNavbar;
       this.applyStyles();
     }
   }
@@ -133,14 +142,20 @@ export class StyleManager {
     }
 
     const adapter = this.siteContext.currentAdapter;
+    const isDoubleColumn = this.siteContext.isDoubleColumn;
+
+    log.debug('[StyleManager] Applying styles. isDoubleColumn:', isDoubleColumn);
 
     if (adapter) {
       // Use adapter-specific CSS
       const wideCSS = adapter.getWideModeCSS(this.isWide);
       const toolbarCSS = adapter.getToolbarCSS(this.isHideToolbar);
+      // 导航栏隐藏样式仅在双栏模式下应用
+      const navbarCSS = (isDoubleColumn && adapter.getNavbarCSS) ? adapter.getNavbarCSS(this.isHideNavbar) : '';
 
       injectCSS('wxrd-wide-mode', wideCSS);
       injectCSS('wxrd-hide-toolbar', toolbarCSS);
+      injectCSS('wxrd-hide-navbar', navbarCSS);
     } else {
       // Fallback: no styles applied
       log.warn('[StyleManager] No adapter found, styles not applied');
@@ -154,6 +169,8 @@ export class StyleManager {
     removeCSS('wxrd-wide-mode');
     // Remove hide toolbar CSS
     removeCSS('wxrd-hide-toolbar');
+    // Remove hide navbar CSS
+    removeCSS('wxrd-hide-navbar');
   }
 
   public destroy() {

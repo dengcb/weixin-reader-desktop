@@ -44,19 +44,19 @@ export class MenuManager {
   }
 
   private async init() {
-    // 1. Set up all event listeners FIRST
+    // 1. 设置事件监听器
     this.unlistenMenuAction = await listen<string>('menu-action', (event) => {
       this.handleMenuAction(event.payload);
     });
 
     this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
       this.isReader = e.detail.isReader;
-      this.updateMenuEnabledStatus();
+      this.updateMenuEnabledStatus('route-changed');
     }) as EventListener;
 
     this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
       this.isReader = e.detail.isReader;
-      this.updateMenuEnabledStatus();
+      this.updateMenuEnabledStatus('route-changed-legacy');
     }) as EventListener;
 
     this.titleChangedHandler = ((e: CustomEvent<TitleChangedEvent>) => {
@@ -67,19 +67,28 @@ export class MenuManager {
     window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
     window.addEventListener('ipc:title-changed', this.titleChangedHandler);
 
-    // 2. Wait for Tauri IPC to be ready
+    // 监听菜单重建事件
+    listen('menu-rebuilt', () => {
+      log.info('[MenuManager] Menu rebuilt, resyncing state');
+      this.syncMenuState();
+    });
+
+    // 监听双栏模式变化
+    this.siteContext.onDoubleColumnChange(async (isDoubleColumn) => {
+      await this.updateMenuEnabledStatus('double-column-change');
+    });
+
+    // 2. 等待 Tauri IPC 就绪
     await waitForTauriReady();
 
-    // 3. Initialize isReader from SiteContext
+    // 3. 初始化 isReader 状态
     this.isReader = this.siteContext.isReaderPage;
 
-    // 4. Mark as initialized BEFORE subscribing
-    // This prevents the initial subscription callback from being blocked
+    // 4. 标记为已初始化
     this.initialized = true;
 
-    // 5. Subscribe to settings changes AFTER initialized is true
+    // 5. 订阅设置变化
     settingsStore.subscribe(async (settings) => {
-      // Handle Zoom first
       if (settings.zoom !== undefined) {
         try {
           await invoke('set_zoom', { value: settings.zoom });
@@ -87,11 +96,10 @@ export class MenuManager {
           log.error('[MenuManager] set_zoom failed:', e);
         }
       }
-
       await this.syncMenuState(settings);
     });
 
-    // 6. Do initial sync manually
+    // 6. 执行初始同步
     await this.syncMenuState();
   }
 
@@ -105,17 +113,17 @@ export class MenuManager {
   }
 
   // Only update enabled status based on reader mode
-  private async updateMenuEnabledStatus() {
+  private async updateMenuEnabledStatus(source: string = 'unknown') {
     if (!window.__TAURI__) return;
 
     const isReader = this.checkIsReader();
-    const siteId = this.siteContext.siteId;
-    log.debug('[MenuManager] Updating menu enabled status. isReader:', isReader, 'siteId:', siteId, 'URL:', window.location.href);
 
     try {
       // Reader-specific items
       await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: isReader });
       await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: isReader });
+      // hide_navbar 和 hide_toolbar 一样，只在阅读器页面启用
+      await invoke('set_menu_item_enabled', { id: 'hide_navbar', enabled: isReader });
       await invoke('set_menu_item_enabled', { id: 'auto_flip', enabled: isReader });
 
       // Zoom items - always enabled
@@ -143,15 +151,17 @@ export class MenuManager {
 
     const wideState = !!settings.readerWide;
     const toolbarState = !!settings.hideToolbar;
+    const navbarState = !!settings.hideNavbar;
     const autoFlipState = !!settings.autoFlip?.active;
 
     // Update enabled status FIRST
-    await this.updateMenuEnabledStatus();
+    await this.updateMenuEnabledStatus('sync-menu-state');
 
     // Then update menu state (checkmark) for all items
     try {
       await invoke('update_menu_state', { id: 'reader_wide', state: wideState });
       await invoke('update_menu_state', { id: 'hide_toolbar', state: toolbarState });
+      await invoke('update_menu_state', { id: 'hide_navbar', state: navbarState });
       await invoke('update_menu_state', { id: 'auto_flip', state: autoFlipState });
     } catch (e) {
       log.error('[MenuManager] Error updating menu state:', e);
@@ -190,6 +200,16 @@ export class MenuManager {
             settingsStore.updateSite(siteId, { hideToolbar: !settings.hideToolbar });
           } else {
             settingsStore.update({ hideToolbar: !settings.hideToolbar });
+          }
+        }
+        break;
+
+      case 'hide_navbar':
+        {
+          if (siteId !== 'unknown') {
+            settingsStore.updateSite(siteId, { hideNavbar: !settings.hideNavbar });
+          } else {
+            settingsStore.update({ hideNavbar: !settings.hideNavbar });
           }
         }
         break;

@@ -175,8 +175,7 @@ export class IPCManager {
       if (!settings.lastPage) return;
 
       // Check if in single-column mode (not double-column)
-      const adapter = this.siteContext.currentAdapter;
-      if (!adapter || adapter.isDoubleColumn()) return;
+      if (this.siteContext.isDoubleColumn) return;
 
       // Check if restore is complete (prevent overwriting during restore chase)
       if (!ScrollState.isRestorationComplete()) {

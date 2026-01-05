@@ -29,8 +29,11 @@ export class SwipeHandler {
   private handleWheel(e: WheelEvent) {
     if (!this.siteContext.isReaderPage) return;
 
+    // 仅在双栏模式下启用滚轮翻页
+    if (!this.siteContext.isDoubleColumn) return;
+
     const adapter = this.siteContext.currentAdapter;
-    if (!adapter || !adapter.isDoubleColumn()) return;
+    if (!adapter) return;
 
     const deltaX = e.deltaX;
     const deltaY = e.deltaY;

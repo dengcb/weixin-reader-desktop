@@ -5230,6 +5230,7 @@ dependencies = [
  "chrono",
  "cocoa",
  "core-foundation-sys 0.3.1",
+ "log",
  "objc",
  "serde",
  "serde_json",
