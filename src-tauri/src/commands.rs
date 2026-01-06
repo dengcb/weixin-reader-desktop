@@ -128,7 +128,7 @@ pub fn set_title(window: WebviewWindow, title: String) {
 
 #[tauri::command]
 pub fn get_app_name(app: AppHandle) -> String {
-    app.config().product_name.clone().unwrap_or("微信阅读".to_string())
+    app.config().product_name.clone().unwrap_or("艾特阅读".to_string())
 }
 
 #[tauri::command]
@@ -229,4 +229,130 @@ pub fn navigate_to_url(window: WebviewWindow, url: String) {
 #[tauri::command]
 pub fn set_cursor_visible(window: WebviewWindow, visible: bool) {
     let _ = window.set_cursor_visible(visible);
+}
+
+/// 微信读书阅读进度响应数据
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WeReadBookProgress {
+    pub progress: Option<i32>,
+    pub reading_time: Option<i64>,
+    pub last_read_date: Option<String>,
+    pub chapter_uid: Option<i64>,
+    pub chapter_idx: Option<i32>,
+    pub summary: Option<String>,
+}
+
+/// 微信读书 API 响应
+#[derive(Debug, Serialize, Deserialize)]
+struct WeReadApiResponse {
+    #[serde(rename = "errCode")]
+    err_code: Option<i32>,
+    #[serde(rename = "errMsg")]
+    err_msg: Option<String>,
+    book: Option<WeReadBookData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WeReadBookData {
+    progress: Option<i32>,
+    #[serde(rename = "readingTime")]
+    reading_time: Option<i64>,
+    #[serde(rename = "updateTime")]
+    update_time: Option<i64>,
+    #[serde(rename = "chapterUid")]
+    chapter_uid: Option<i64>,
+    #[serde(rename = "chapterIdx")]
+    chapter_idx: Option<i32>,
+    summary: Option<String>,
+}
+
+/// 获取微信读书阅读进度
+/// 使用浏览器 Cookie 进行认证
+/// 注意：由于 HttpOnly Cookie 无法通过 JavaScript 读取，我们需要让前端直接调用 API
+#[tauri::command]
+pub async fn get_weread_book_progress(
+    _window: WebviewWindow,
+    book_id: String,
+    cookies: String,
+) -> Result<Option<WeReadBookProgress>, String> {
+    println!("[WeReadAPI] Fetching progress for bookId: {}", book_id);
+    println!("[WeReadAPI] Cookie length: {} chars", cookies.len());
+    println!("[WeReadAPI] Cookie preview: {}", &cookies[..std::cmp::min(150, cookies.len())]);
+
+    // 构建请求 URL
+    let url = format!(
+        "https://weread.qq.com/web/book/getProgress?bookId={}&_={}",
+        book_id,
+        chrono::Utc::now().timestamp_millis()
+    );
+
+    // 创建 HTTP 客户端（禁用代理，直接连接）
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .no_proxy()  // 禁用系统代理
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    // 发送请求，携带 Cookie（但可能不完整，缺少 HttpOnly Cookie）
+    let response = client
+        .get(&url)
+        .header("Cookie", cookies)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15")
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "zh-CN,zh;q=0.9")
+        .header("Referer", "https://weread.qq.com/")
+        .header("Origin", "https://weread.qq.com")
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    println!("[WeReadAPI] Response status: {}", response.status());
+
+    // 解析响应
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    println!("[WeReadAPI] Response body: {}", response_text);
+
+    let api_response: WeReadApiResponse = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse JSON: {} | Response: {}", e, response_text))?;
+
+    // 检查错误码
+    if let Some(err_code) = api_response.err_code {
+        if err_code != 0 {
+            let err_msg = api_response.err_msg.unwrap_or_else(|| "Unknown error".to_string());
+            println!("[WeReadAPI] API error: {} - {}", err_code, err_msg);
+
+            // Cookie 过期错误，静默返回 None
+            if err_code == -2010 || err_code == -2012 {
+                println!("[WeReadAPI] Cookie expired or invalid");
+                return Ok(None);
+            }
+
+            return Err(format!("API error {}: {}", err_code, err_msg));
+        }
+    }
+
+    // 提取数据
+    println!("[WeReadAPI] Parsed API response, book field exists: {}", api_response.book.is_some());
+    if let Some(book) = api_response.book {
+        println!("[WeReadAPI] Success! Progress: {}%", book.progress.unwrap_or(0));
+        Ok(Some(WeReadBookProgress {
+            progress: book.progress,
+            reading_time: book.reading_time,
+            last_read_date: book.update_time.map(|ts| {
+                chrono::DateTime::from_timestamp(ts, 0)
+                    .unwrap()
+                    .to_rfc3339()
+            }),
+            chapter_uid: book.chapter_uid,
+            chapter_idx: book.chapter_idx,
+            summary: book.summary,
+        }))
+    } else {
+        println!("[WeReadAPI] No book data in response");
+        Ok(None)
+    }
 }

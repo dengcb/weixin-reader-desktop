@@ -1,6 +1,7 @@
 
 import { SiteContext } from '../../core/site_context';
 import { log } from '../../core/logger';
+import { EventBus, Events } from '../../core/event_bus';
 
 export class SwipeHandler {
   private swipeAccumulator = 0;
@@ -60,12 +61,20 @@ export class SwipeHandler {
     const THRESHOLD = 50;
     if (this.swipeAccumulator >= THRESHOLD) {
       log.debug('[SwipeHandler] Swipe left detected, next page');
-      adapter.nextPage();
+
+      // 发送翻页方向事件（向前）
+      EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
+
+      adapter.nextPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;
       this.startCooldown();
     } else if (this.swipeAccumulator <= -THRESHOLD) {
       log.debug('[SwipeHandler] Swipe right detected, prev page');
-      adapter.prevPage();
+
+      // 发送翻页方向事件（向后）
+      EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'backward' });
+
+      adapter.prevPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;
       this.startCooldown();
     }

@@ -89,6 +89,8 @@ export class MenuManager {
 
     // 5. 订阅设置变化
     settingsStore.subscribe(async (settings) => {
+      // 使用 Tauri 原生 set_zoom API（而不是 CSS zoom）
+      // 让 Tauri 调用系统 webview 的缩放功能
       if (settings.zoom !== undefined) {
         try {
           await invoke('set_zoom', { value: settings.zoom });
@@ -121,6 +123,7 @@ export class MenuManager {
     try {
       // Reader-specific items
       await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: isReader });
+      await invoke('set_menu_item_enabled', { id: 'hide_cursor', enabled: isReader });
       await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: isReader });
       // hide_navbar 和 hide_toolbar 一样，只在阅读器页面启用
       await invoke('set_menu_item_enabled', { id: 'hide_navbar', enabled: isReader });
@@ -154,12 +157,22 @@ export class MenuManager {
     const navbarState = !!settings.hideNavbar;
     const autoFlipState = !!settings.autoFlip?.active;
 
+    // 应用 Tauri 原生缩放（初始化时调用一次）
+    if (settings.zoom !== undefined) {
+      try {
+        await invoke('set_zoom', { value: settings.zoom });
+      } catch (e) {
+        log.error('[MenuManager] set_zoom failed:', e);
+      }
+    }
+
     // Update enabled status FIRST
     await this.updateMenuEnabledStatus('sync-menu-state');
 
     // Then update menu state (checkmark) for all items
     try {
       await invoke('update_menu_state', { id: 'reader_wide', state: wideState });
+      await invoke('update_menu_state', { id: 'hide_cursor', state: !!settings.hideCursor });
       await invoke('update_menu_state', { id: 'hide_toolbar', state: toolbarState });
       await invoke('update_menu_state', { id: 'hide_navbar', state: navbarState });
       await invoke('update_menu_state', { id: 'auto_flip', state: autoFlipState });
@@ -214,6 +227,12 @@ export class MenuManager {
         }
         break;
 
+      case 'hide_cursor':
+        {
+          settingsStore.updateGlobal({ hideCursor: !settings.hideCursor });
+        }
+        break;
+
       case 'auto_flip':
         {
           const currentAutoFlip = settings.autoFlip || { active: false, interval: 15, keepAwake: true };
@@ -232,18 +251,39 @@ export class MenuManager {
 
       case 'zoom_in':
         {
-          let current = settings.zoom || 1.0;
-          current = Math.round((current + 0.1) * 10) / 10;
-          settingsStore.updateGlobal({ zoom: current });
+          // Chrome 缩放级别: 0.5 → 0.67 → 0.75 → 0.8 → 0.9 → 1.0 → 1.1 → 1.25 → 1.5 → 1.75 → 2.0
+          const zoomLevels = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+          const current = settings.zoom || 0.75;
+
+          // 找到下一个更大的级别
+          let nextZoom = zoomLevels[zoomLevels.length - 1]; // 默认最大值
+          for (const level of zoomLevels) {
+            if (level > current) {
+              nextZoom = level;
+              break;
+            }
+          }
+
+          settingsStore.updateGlobal({ zoom: nextZoom });
         }
         break;
 
       case 'zoom_out':
         {
-          let current = settings.zoom || 1.0;
-          current = Math.round((current - 0.1) * 10) / 10;
-          if (current < 0.1) current = 0.1;
-          settingsStore.updateGlobal({ zoom: current });
+          // Chrome 缩放级别: 0.5 → 0.67 → 0.75 → 0.8 → 0.9 → 1.0 → 1.1 → 1.25 → 1.5 → 1.75 → 2.0
+          const zoomLevels = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+          const current = settings.zoom || 0.75;
+
+          // 找到下一个更小的级别
+          let nextZoom = zoomLevels[0]; // 默认最小值
+          for (let i = zoomLevels.length - 1; i >= 0; i--) {
+            if (zoomLevels[i] < current) {
+              nextZoom = zoomLevels[i];
+              break;
+            }
+          }
+
+          settingsStore.updateGlobal({ zoom: nextZoom });
         }
         break;
 

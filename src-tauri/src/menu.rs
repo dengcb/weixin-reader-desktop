@@ -115,6 +115,7 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
     let toggle_fullscreen = PredefinedMenuItem::fullscreen(handle, Some("切换全屏"))?;
 
     let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, initial_settings.reader_wide, Some("CmdOrCtrl+9"))?;
+    let hide_cursor = CheckMenuItem::with_id(handle, "hide_cursor", "隐藏光标", true, initial_settings.hide_cursor, Some("CmdOrCtrl+8"))?;
     let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, initial_settings.hide_toolbar, Some("CmdOrCtrl+O"))?;
     // hide_navbar 始终启用，让用户可以随时点击（前端会判断是否在双栏模式）
     let hide_navbar = CheckMenuItem::with_id(handle, "hide_navbar", "隐藏导航栏", true, initial_settings.hide_navbar, Some("CmdOrCtrl+P"))?;
@@ -137,6 +138,7 @@ fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Result<
             &toggle_fullscreen,
             &PredefinedMenuItem::separator(handle)?,
             &reader_wide,
+            &hide_cursor,
             &hide_toolbar,
             &hide_navbar,
         ],
@@ -267,9 +269,11 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     // Use initial settings values for reader_wide and hide_toolbar
     let reader_wide_initial = initial_settings.reader_wide;
+    let hide_cursor_initial = initial_settings.hide_cursor;
     let hide_toolbar_initial = initial_settings.hide_toolbar;
     let hide_navbar_initial = initial_settings.hide_navbar;
     let reader_wide = CheckMenuItem::with_id(handle, "reader_wide", "阅读变宽", true, reader_wide_initial, Some("CmdOrCtrl+9"))?;
+    let hide_cursor = CheckMenuItem::with_id(handle, "hide_cursor", "隐藏光标", true, hide_cursor_initial, Some("CmdOrCtrl+8"))?;
     let hide_toolbar = CheckMenuItem::with_id(handle, "hide_toolbar", "隐藏工具栏", true, hide_toolbar_initial, Some("CmdOrCtrl+O"))?;
     // hide_navbar 始终启用，让用户可以随时点击（前端会判断是否在双栏模式）
     let hide_navbar = CheckMenuItem::with_id(handle, "hide_navbar", "隐藏导航栏", true, hide_navbar_initial, Some("CmdOrCtrl+P"))?;
@@ -292,6 +296,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             &toggle_fullscreen,
             &PredefinedMenuItem::separator(handle)?,
             &reader_wide,
+            &hide_cursor,
             &hide_toolbar,
             &hide_navbar,
         ],
@@ -371,6 +376,11 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             "reader_wide" => {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.emit("menu-action", "reader_wide");
+                }
+            }
+            "hide_cursor" => {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.emit("menu-action", "hide_cursor");
                 }
             }
             "hide_toolbar" => {
@@ -528,6 +538,7 @@ struct InitialSettings {
     hide_toolbar: bool,
     hide_navbar: bool,
     auto_flip_active: bool,
+    hide_cursor: bool,
 }
 
 // Load initial settings from the settings file (same path as settings.rs)
@@ -555,12 +566,16 @@ fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSett
                 .and_then(|obj| obj.get("active"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let hide_cursor = json.get("hideCursor")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             return InitialSettings {
                 reader_wide,
                 hide_toolbar,
                 hide_navbar,
                 auto_flip_active,
+                hide_cursor,
             };
         }
     }
@@ -571,5 +586,6 @@ fn get_initial_settings<R: Runtime>(handle: &tauri::AppHandle<R>) -> InitialSett
         hide_toolbar: false,
         hide_navbar: false,
         auto_flip_active: false,
+        hide_cursor: false,
     }
 }

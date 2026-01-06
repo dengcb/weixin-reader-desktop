@@ -17,7 +17,7 @@ export class AutoFlipper {
   private accumulatedMove = 0;
   private countdown = 30;
   private originalTitle: string | null = null;
-  private appName: string = "微信阅读";
+  private appName: string = "艾特阅读";
   private elapsedTime = 0;
   private siteContext: SiteContext;
   private bottomTriggered = false;
@@ -32,9 +32,9 @@ export class AutoFlipper {
 
   private async initAppName() {
     try {
-      this.appName = await invoke<string>('get_app_name') || "微信阅读";
+      this.appName = await invoke<string>('get_app_name') || "艾特阅读";
     } catch (e) {
-      this.appName = "微信阅读";
+      this.appName = "艾特阅读";
     }
   }
 

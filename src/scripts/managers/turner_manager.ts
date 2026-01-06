@@ -4,6 +4,7 @@ import { createSiteContext, SiteContext } from '../core/site_context';
 import { CursorHider } from './turner/cursor_hider';
 import { SwipeHandler } from './turner/swipe_handler';
 import { AutoFlipper } from './turner/auto_flipper';
+import { ProgressBar } from './turner/progress_bar';
 import { log } from '../core/logger';
 
 type RouteChangedEvent = {
@@ -16,7 +17,7 @@ type RouteChangedEvent = {
  * Turner Manager - Manages page turning functionality
  *
  * Responsibilities:
- * - Coordinates AutoFlipper, CursorHider, and SwipeHandler
+ * - Coordinates AutoFlipper, CursorHider, SwipeHandler, and ProgressBar
  * - Manages settings updates
  * - Handles route changes
  */
@@ -24,6 +25,7 @@ export class TurnerManager {
   private cursorHider: CursorHider;
   private swipeHandler: SwipeHandler;
   private autoFlipper: AutoFlipper;
+  private progressBar: ProgressBar;
   private siteContext: SiteContext;
 
   // Store references for cleanup
@@ -39,6 +41,7 @@ export class TurnerManager {
 
     this.swipeHandler = new SwipeHandler(this.siteContext, onScrollLock);
     this.autoFlipper = new AutoFlipper(this.siteContext, onScrollLock);
+    this.progressBar = new ProgressBar(this.siteContext);
 
     this.init();
   }
@@ -46,6 +49,11 @@ export class TurnerManager {
   private init() {
     settingsStore.subscribe((settings) => {
       this.updateState(settings);
+    });
+
+    // 监听双栏模式变化，更新进度条显示状态
+    this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
+      this.updateProgressBarVisibility();
     });
 
     this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
@@ -69,10 +77,23 @@ export class TurnerManager {
 
   private updateState(settings: MergedSettings) {
     this.autoFlipper.updateState(settings);
+    this.cursorHider.setEnabled(!!settings.hideCursor);
+    this.updateProgressBarVisibility();
+  }
+
+  private updateProgressBarVisibility() {
+    // 更新进度条显示状态
+    // 只有在双栏模式且隐藏导航栏时显示
+    const settings = settingsStore.get();
+    const isDoubleColumn = this.siteContext.isDoubleColumn;
+    const hideNavbar = settings.hideNavbar === true;
+    const shouldShowProgressBar = isDoubleColumn && hideNavbar;
+
+    this.progressBar.setVisibility(shouldShowProgressBar);
   }
 
   public destroy() {
-    // Remove event listener
+    // Remove event listeners
     if (this.routeChangedHandler) {
       window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
       this.routeChangedHandler = null;
@@ -82,5 +103,6 @@ export class TurnerManager {
     this.cursorHider.destroy();
     this.swipeHandler.destroy();
     this.autoFlipper.stopAll();
+    this.progressBar.destroy();
   }
 }

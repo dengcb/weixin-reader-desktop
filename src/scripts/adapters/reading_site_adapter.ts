@@ -59,12 +59,12 @@ export interface ReadingSiteAdapter {
   /**
    * 下一页
    */
-  nextPage(): void;
+  nextPage(): void | Promise<void>;
 
   /**
    * 上一页
    */
-  prevPage(): void;
+  prevPage(): void | Promise<void>;
 
   /**
    * 检测是否是双栏模式
@@ -82,6 +82,24 @@ export interface ReadingSiteAdapter {
    * 单栏模式：根据滚动位置计算
    */
   getChapterProgress?(): number;
+
+  /**
+   * 从服务器 API 获取完整的书籍阅读进度（可选）
+   * 返回整本书的阅读进度数据，而非当前章节
+   */
+  getBookProgress?(): Promise<{
+    progress?: number;        // 整本书的阅读进度（百分比）
+    readingTime?: number;     // 阅读时长（秒）
+    lastReadDate?: string;    // 最后阅读日期
+    chapterUid?: number;      // 当前章节 UID
+    chapterIdx?: number;      // 当前章节索引
+    summary?: string;         // 阅读位置摘要
+  } | null>;
+
+  /**
+   * 清理资源（可选）
+   */
+  destroy?(): void;
 
   // ==================== 章节导航 ====================
 

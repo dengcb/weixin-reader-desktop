@@ -58,6 +58,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&["about", "update", "settings"]).build())
         .plugin(tauri_plugin_log::Builder::new().targets([
@@ -111,7 +112,7 @@ pub fn run() {
                 WebviewUrl::App("index.html".into())
             };
 
-            let app_name = app.config().product_name.clone().unwrap_or("微信阅读".to_string());
+            let app_name = app.config().product_name.clone().unwrap_or("艾特阅读".to_string());
 
             // Console filter and HTTPS to HTTP conversion script
             // Must be injected BEFORE the main inject script
@@ -274,6 +275,7 @@ pub fn run() {
             commands::get_current_monitor,
             commands::navigate_to_url,
             commands::set_cursor_visible,
+            commands::get_weread_book_progress,
             update::check_update_manual,
             update::install_update_now,
             update::is_update_downloaded

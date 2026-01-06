@@ -1,6 +1,6 @@
 [package]
 name = "weixin-reader"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -31,6 +31,8 @@ tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["time"] }
 chrono = "0.4"
 log = "0.4"
+tauri-plugin-http = { version = "2.5.4", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

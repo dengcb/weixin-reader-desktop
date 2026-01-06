@@ -32,6 +32,7 @@ export interface AppSettings {
     zoom?: number;
     autoUpdate?: boolean;
     lastPage?: boolean;  // 是否启用最后阅读位置恢复
+    hideCursor?: boolean;  // 是否隐藏光标
   };
   sites?: {
     [siteId: string]: SiteSettings;
@@ -116,7 +117,7 @@ export class SettingsStore {
       const initialSettings: AppSettings = {
         _version: loadedVersion,
         global: {
-          zoom: 0.8,
+          zoom: 0.75, // Chrome 默认缩放级别
           autoUpdate: true,
           lastPage: true,
           ...migrated.global
@@ -132,7 +133,7 @@ export class SettingsStore {
       const fallbackSettings: AppSettings = {
         _version: 0,
         global: {
-          zoom: 0.8,
+          zoom: 0.75, // Chrome 默认缩放级别
           autoUpdate: true,
           lastPage: true
         },

@@ -1,24 +1,31 @@
 /**
- * IPC Manager - Central Event Bus
+ * IPC Manager - Central Event Bus (Refactored)
  *
  * Responsibilities:
  * - Monitor route changes (popstate, pushState, replaceState)
  * - Monitor title changes
- * - Dispatch events to all subscribers
+ * - Monitor scroll position
+ * - Dispatch events via EventBus
  *
  * Events dispatched:
- * - 'ipc:route-changed' -> { isReader: boolean, url: string, pathname: string }
- * - 'ipc:title-changed' -> { title: string }
+ * - Events.ROUTE_CHANGED -> { isReader: boolean, url: string, pathname: string }
+ * - Events.CHAPTER_CHANGED -> { url: string, pathname: string }
+ * - Events.TITLE_CHANGED -> { title: string }
  */
 
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { settingsStore } from '../core/settings_store';
-import { invoke } from '../core/tauri';
 import { ScrollState } from '../core/scroll_state';
 import { log } from '../core/logger';
+import { BaseManager, Events, type EventName } from '../core/base_manager';
 
 export type RouteChangedEvent = {
   isReader: boolean;
+  url: string;
+  pathname: string;
+};
+
+export type ChapterChangedEvent = {
   url: string;
   pathname: string;
 };
@@ -27,34 +34,36 @@ export type TitleChangedEvent = {
   title: string;
 };
 
-export class IPCManager {
+export class IPCManager extends BaseManager {
   private siteContext: SiteContext;
   private currentIsReader = false;
-  private initialized = false;  // Track if this is the initial check
-  private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastSavedReaderUrl = '';
   private lastSavedScrollY = 0;
 
-  // Store references for cleanup
-  private checkRouteHandler: (() => void) | null = null;
-  private titleObserver: MutationObserver | null = null;
-  private scrollHandler: (() => void) | null = null;
+  // Timers
+  private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private safetyTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Store original History API methods for restoration
+  // Original History API methods
   private originalPushState: typeof history.pushState | null = null;
   private originalReplaceState: typeof history.replaceState | null = null;
 
+  // Observer
+  private titleObserver: MutationObserver | null = null;
+
+  // 共享的路由检测函数
+  private checkRouteHandler: (() => void) | null = null;
+
   constructor() {
+    super();
     this.siteContext = createSiteContext();
     this.init();
   }
 
   private async init() {
-    // Wait for settings to be ready
     await settingsStore.init();
 
     // Safety fallback: Ensure scroll saving is enabled after 10 seconds
-    // This prevents a bug in AppManager.restoreScrollPosition from permanently disabling save
     this.safetyTimeout = setTimeout(() => {
       if (!ScrollState.isRestorationComplete()) {
         log.warn('[IPCManager] Force enabling scroll save after timeout');
@@ -68,62 +77,91 @@ export class IPCManager {
     this.monitorScroll();
   }
 
+  // =====================================================
+  // Route Monitoring
+  // =====================================================
+
   private monitorRoute() {
-    this.checkRouteHandler = () => {
-      const currentUrl = window.location.href;
-      const pathname = window.location.pathname;
+    // 创建共享的路由检测函数
+    this.checkRouteHandler = this.createRouteHandler();
 
-      // Use SiteContext to detect if we're on a reader page
-      const isReader = this.siteContext.isReaderPage;
-
-      // Detect route change
-      const routeChanged = this.currentIsReader !== isReader;
-      this.currentIsReader = isReader;
-
-      // Always handle last page saving (save URL when on reader page)
-      // Never clear URL during navigation - only app close should clear it
-      this.handleLastPageSaving(isReader, currentUrl);
-
-      // Dispatch route changed event if something changed
-      if (routeChanged) {
-        this.dispatchRouteChanged(isReader, currentUrl, pathname);
-      }
-    };
-
-    // Listen to navigation events
+    // 监听导航事件
     window.addEventListener('popstate', this.checkRouteHandler);
 
-    // Override history methods to detect SPA navigation
-    // Store original methods for cleanup
+    // Hook History API
     this.originalPushState = history.pushState;
     history.pushState = (...args) => {
       const result = this.originalPushState!.apply(history, args);
-      if (this.checkRouteHandler) this.checkRouteHandler();
+      this.checkRouteHandler!();
       return result;
     };
 
     this.originalReplaceState = history.replaceState;
     history.replaceState = (...args) => {
       const result = this.originalReplaceState!.apply(history, args);
-      if (this.checkRouteHandler) this.checkRouteHandler();
+      this.checkRouteHandler!();
       return result;
     };
 
-    // Initial check
+    // 初始检查
     this.checkRouteHandler();
-    // Dispatch initial route event to ensure listeners like StyleManager get the current state
-    const currentUrl = window.location.href;
-    const pathname = window.location.pathname;
-    const isReader = this.siteContext.isReaderPage;
-    this.dispatchRouteChanged(isReader, currentUrl, pathname);
   }
+
+  private createRouteHandler: () => (() => void) = () => {
+    // 使用闭包保存状态，避免每次创建新函数
+    let lastUrl = window.location.href;
+    let lastIsReader = this.siteContext.isReaderPage;
+    let lastTitle = document.title;
+
+    return () => {
+      const currentUrl = window.location.href;
+      const pathname = window.location.pathname;
+      const isReader = this.siteContext.isReaderPage;
+      const currentTitle = document.title;
+
+      // 检测路由变化（进入/离开阅读页）
+      const routeChanged = lastIsReader !== isReader;
+      lastIsReader = isReader;
+      this.currentIsReader = isReader;
+
+      // 检测章节切换（URL 变化 或 Title 变化）
+      // 微信读书双栏模式下，切换章节时 URL 可能不变，只有 Title 变化
+      const urlChanged = lastUrl !== currentUrl;
+      const titleChanged = lastTitle !== currentTitle;
+      const chapterChanged = isReader && (urlChanged || titleChanged);
+
+      // 保存最后阅读页面
+      this.handleLastPageSaving(isReader, currentUrl);
+
+      // 分发事件
+      if (routeChanged) {
+        const eventData = { isReader, url: currentUrl, pathname };
+
+        // 新系统：通过 EventBus
+        this.emit(Events.ROUTE_CHANGED, eventData);
+
+        // 兼容旧系统：同时发送到 window
+        window.dispatchEvent(new CustomEvent('ipc:route-changed', { detail: eventData }));
+        window.dispatchEvent(new CustomEvent('wxrd:route-changed', { detail: eventData }));
+      }
+
+      if (chapterChanged) {
+        const eventData = { url: currentUrl, pathname };
+
+        // 新系统：通过 EventBus
+        this.emit(Events.CHAPTER_CHANGED, eventData);
+
+        // 兼容旧系统：同时发送到 window
+        window.dispatchEvent(new CustomEvent('ipc:chapter-changed', { detail: eventData }));
+      }
+
+      lastUrl = currentUrl;
+      lastTitle = currentTitle;
+    };
+  };
 
   private handleLastPageSaving(isReader: boolean, currentUrl: string) {
     const settings = settingsStore.get();
-
-    // Only save reader URL, never clear it during navigation
-    // lastReaderUrl should persist across sessions for app restoration
-    // It's only cleared when app closes (handled by Rust backend)
     if (settings.lastPage && isReader) {
       if (settings.lastReaderUrl !== currentUrl) {
         settingsStore.update({ lastReaderUrl: currentUrl });
@@ -131,63 +169,62 @@ export class IPCManager {
     }
   }
 
-  private dispatchRouteChanged(isReader: boolean, url: string, pathname: string) {
-    const detail: RouteChangedEvent = { isReader, url, pathname };
-
-    // Dispatch legacy event for backward compatibility
-    window.dispatchEvent(new CustomEvent('wxrd:route-changed', { detail }));
-
-    // Dispatch new IPC event
-    window.dispatchEvent(new CustomEvent('ipc:route-changed', { detail }));
-  }
+  // =====================================================
+  // Title Monitoring
+  // =====================================================
 
   private monitorTitle() {
     const target = document.querySelector('title');
-    if (target) {
-      this.titleObserver = new MutationObserver(() => {
-        this.dispatchTitleChanged();
-      });
-      this.titleObserver.observe(target, { childList: true, characterData: true, subtree: true });
+    if (!target) return;
 
-      // Initial dispatch
-      this.dispatchTitleChanged();
-    }
+    const dispatch = () => {
+      if (document.title?.trim()) {
+        const eventData = { title: document.title };
+
+        // 新系统：通过 EventBus
+        this.emit(Events.TITLE_CHANGED, eventData);
+
+        // 兼容旧系统：同时发送到 window
+        window.dispatchEvent(new CustomEvent('ipc:title-changed', { detail: eventData }));
+
+        // Title 变化时调用共享的章节检测（微信读书双栏模式可能只改 Title）
+        if (this.checkRouteHandler) {
+          this.checkRouteHandler();
+        }
+      }
+    };
+
+    this.titleObserver = new MutationObserver(dispatch);
+    this.titleObserver.observe(target, { childList: true, characterData: true, subtree: true });
+
+    // 初始分发
+    dispatch();
   }
 
-  private dispatchTitleChanged() {
-    if (document.title && document.title.trim() !== '') {
-      const detail: TitleChangedEvent = { title: document.title };
-
-      // Dispatch new IPC event
-      window.dispatchEvent(new CustomEvent('ipc:title-changed', { detail }));
-    }
-  }
-
-  // ==================== Scroll Position Saving (Single-column mode) ====================
+  // =====================================================
+  // Scroll Monitoring
+  // =====================================================
 
   private monitorScroll() {
-    // Debounced scroll position saving for single-column reading mode
-    this.scrollHandler = () => {
-      // Only save in reader page and when lastPage is enabled
+    const scrollHandler = () => {
+      // 只在阅读页且启用了 lastPage 时保存
       if (!this.currentIsReader) return;
 
       const settings = settingsStore.get();
       if (!settings.lastPage) return;
 
-      // Check if in single-column mode (not double-column)
+      // 单栏模式才保存滚动位置
       if (this.siteContext.isDoubleColumn) return;
 
-      // Check if restore is complete (prevent overwriting during restore chase)
-      if (!ScrollState.isRestorationComplete()) {
-        return;
-      }
+      // 恢复期间不保存
+      if (!ScrollState.isRestorationComplete()) return;
 
       const scrollY = window.scrollY;
 
-      // Only save if scroll position changed significantly (>50px)
+      // 变化超过 50px 才保存
       if (Math.abs(scrollY - this.lastSavedScrollY) < 50) return;
 
-      // Debounce: save after 500ms of no scrolling
+      // 防抖：500ms 无滚动后才保存
       if (this.scrollSaveTimer) {
         clearTimeout(this.scrollSaveTimer);
       }
@@ -195,28 +232,24 @@ export class IPCManager {
       this.scrollSaveTimer = setTimeout(() => {
         this.lastSavedScrollY = scrollY;
         const currentUrl = window.location.href;
-
-        // Get current progress map or create new one
         const currentProgress = settingsStore.get().readingProgress || {};
 
-        // Update progress for current URL
-        const newProgress = {
-          ...currentProgress,
-          [currentUrl]: scrollY
-        };
-
         settingsStore.update({
-          scrollPosition: scrollY, // Keep legacy field for backward compat
-          readingProgress: newProgress
+          scrollPosition: scrollY,
+          readingProgress: { ...currentProgress, [currentUrl]: scrollY }
         });
       }, 500);
     };
 
-    window.addEventListener('scroll', this.scrollHandler, { passive: true });
+    window.addEventListener('scroll', scrollHandler, { passive: true });
   }
 
-  public destroy() {
-    // Clear timers
+  // =====================================================
+  // Cleanup
+  // =====================================================
+
+  destroy(): void {
+    // 清理定时器
     if (this.scrollSaveTimer) {
       clearTimeout(this.scrollSaveTimer);
       this.scrollSaveTimer = null;
@@ -226,17 +259,7 @@ export class IPCManager {
       this.safetyTimeout = null;
     }
 
-    // Remove event listeners
-    if (this.checkRouteHandler) {
-      window.removeEventListener('popstate', this.checkRouteHandler);
-      this.checkRouteHandler = null;
-    }
-    if (this.scrollHandler) {
-      window.removeEventListener('scroll', this.scrollHandler);
-      this.scrollHandler = null;
-    }
-
-    // Restore original History API methods
+    // 恢复 History API
     if (this.originalPushState) {
       history.pushState = this.originalPushState;
       this.originalPushState = null;
@@ -246,10 +269,13 @@ export class IPCManager {
       this.originalReplaceState = null;
     }
 
-    // Disconnect observer
+    // 断开观察器
     if (this.titleObserver) {
       this.titleObserver.disconnect();
       this.titleObserver = null;
     }
+
+    // 调用基类的清理（会自动清理所有事件监听器）
+    super.destroy();
   }
 }

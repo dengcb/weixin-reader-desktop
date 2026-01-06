@@ -101,6 +101,14 @@ import { StyleManager } from './managers/style_manager';
     // StyleManager 始终初始化
     safeInit('StyleManager', () => new StyleManager());
 
+    // ============================================
+    // Step 3: Expose Test APIs (开发测试用)
+    // ============================================
+    if (currentAdapter && currentAdapter.id === 'weread') {
+      (window as any).testWeReadAPI = () => (currentAdapter as any).testBookInfo();
+      log.info('[Inject] WeRead API 测试方法已暴露: window.testWeReadAPI()');
+    }
+
   } catch (e) {
     console.error('[Inject] Critical error during initialization:', e);
     log.error('[Inject] Critical initialization error', e);

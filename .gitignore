@@ -19,9 +19,11 @@ src-tauri/target/
 
 # Archives and Docs (Personal/Legacy)
 WXRD-archive/
+mcp-server-weread/
 Plan.md
 Task.md
 MultiSites.md
+Progress*.md
 
 # Logs
 logs
@@ -60,3 +62,6 @@ CLAUDE.md
 # Env
 .env
 .env.*
+
+# Test
+test-*.js

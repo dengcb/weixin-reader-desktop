@@ -1,13 +1,13 @@
 {
   "name": "weixin-reader",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "start": "bun run sync-version && tauri dev",
     "dev": "bun run sync-version && vite",
     "sync-version": "bun src/scripts/sync_version.ts",
-    "build:inject": "bun build src/scripts/inject.ts --outfile=src/scripts/inject.js --target=browser --minify",
+    "build:inject": "bun build src/scripts/inject.ts --outfile=src/scripts/inject.js --target=browser --minify-whitespace",
     "build": "bun run build:inject && rm -rf dist && mkdir -p dist && cp index.html dist/ && cp src/windows/*.html dist/ && cp icon.png dist/",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-http": "^2.5.4",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-updater": "^2.9.0"
   },

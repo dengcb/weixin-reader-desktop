@@ -13,6 +13,7 @@ export class CursorHider {
   private lastScreenY = 0;
   private siteContext: SiteContext;
   private timerStarted = false; // 跟踪定时器是否已启动
+  private enabled = false; // 功能开关，默认关闭
 
   // Store bound handlers for cleanup
   private onMouseMove: ((e: MouseEvent) => void) | null = null;
@@ -20,7 +21,34 @@ export class CursorHider {
 
   constructor(siteContext: SiteContext) {
     this.siteContext = siteContext;
-    this.init();
+  }
+
+  /**
+   * 设置启用状态
+   */
+  public setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    if (enabled) {
+      if (!this.onMouseMove) {
+        this.init();
+      }
+      // 立即启动定时器
+      this.resetTimer();
+    } else {
+      this.showCursor();
+      if (this.mouseHideTimer) {
+        window.clearTimeout(this.mouseHideTimer);
+        this.mouseHideTimer = null;
+      }
+    }
+    log.debug(`[CursorHider] 隐藏光标功能: ${enabled ? '启用' : '禁用'}`);
+  }
+
+  /**
+   * 切换启用状态
+   */
+  public toggle() {
+    this.setEnabled(!this.enabled);
   }
 
   private init() {
@@ -36,14 +64,17 @@ export class CursorHider {
         this.mouseHideTimer = null;
       }
 
-      // 3. Only start timer if in Reader Mode
-      if (this.siteContext.isReaderPage) {
+      // 3. Only start timer if enabled and in Reader Mode
+      if (this.enabled && this.siteContext.isReaderPage) {
         this.mouseHideTimer = window.setTimeout(() => {
           this.hideCursor();
         }, 3000);
         this.timerStarted = true;
       }
     };
+
+    // 保存为实例方法供 setEnabled 调用
+    (this as any).resetTimer = resetTimer;
 
     let lastMoveTime = 0;
     this.onMouseMove = (e: MouseEvent) => {
@@ -80,13 +111,34 @@ export class CursorHider {
     // 只有在用户移动鼠标后才开始 3 秒倒计时
   }
 
+  private resetTimer() {
+    // 由 init() 中的 resetTimer 引用调用
+    if (!this.enabled) return;
+
+    if (this.isMouseHidden) {
+      this.showCursor();
+    }
+
+    if (this.mouseHideTimer) {
+      window.clearTimeout(this.mouseHideTimer);
+      this.mouseHideTimer = null;
+    }
+
+    if (this.siteContext.isReaderPage) {
+      this.mouseHideTimer = window.setTimeout(() => {
+        this.hideCursor();
+      }, 3000);
+      this.timerStarted = true;
+    }
+  }
+
   public setScrollLock(duration = 200) {
     this.isScrollingOrSwiping = true;
     if (this.scrollLockTimer) {
-        clearTimeout(this.scrollLockTimer);
+      clearTimeout(this.scrollLockTimer);
     }
     this.scrollLockTimer = window.setTimeout(() => {
-        this.isScrollingOrSwiping = false;
+      this.isScrollingOrSwiping = false;
     }, duration);
   }
 
@@ -115,6 +167,7 @@ export class CursorHider {
 
   public destroy() {
     this.showCursor();
+    this.enabled = false;
     if (this.mouseHideTimer) {
       window.clearTimeout(this.mouseHideTimer);
       this.mouseHideTimer = null;
@@ -125,10 +178,10 @@ export class CursorHider {
     }
 
     if (this.onMouseMove) {
-        document.removeEventListener('mousemove', this.onMouseMove, false);
+      document.removeEventListener('mousemove', this.onMouseMove, false);
     }
     if (this.onMouseDown) {
-        document.removeEventListener('mousedown', this.onMouseDown, false);
+      document.removeEventListener('mousedown', this.onMouseDown, false);
     }
   }
 }

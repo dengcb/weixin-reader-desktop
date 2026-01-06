@@ -20,7 +20,7 @@ const RESTORE_FLAG_KEY = 'wxrd_has_restored';
 const SCROLL_RESTORED_KEY = 'wxrd_scroll_restored';
 
 export class AppManager {
-  private appName: string = "微信阅读";
+  private appName: string = "艾特阅读";
   private siteContext: SiteContext;
 
   // Store references for cleanup
@@ -36,7 +36,7 @@ export class AppManager {
     await waitForTauri();
 
     try {
-      this.appName = await invoke<string>('get_app_name') || "微信阅读";
+      this.appName = await invoke<string>('get_app_name') || "艾特阅读";
     } catch (e) {
       log.error("Failed to get app name:", e);
     }

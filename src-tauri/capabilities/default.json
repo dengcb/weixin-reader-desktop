@@ -21,6 +21,13 @@
     "core:event:default",
     "core:window:default",
     "core:window:allow-set-size",
-    "updater:default"
+    "updater:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://weread.qq.com/*" },
+        { "url": "https://*.weread.qq.com/*" }
+      ]
+    }
   ]
 }

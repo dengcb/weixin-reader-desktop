@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "weread-api",
+  "description": "Permission to access WeRead API for reading progress",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://weread.qq.com/web/book/getProgress*" }
+      ]
+    }
+  ]
+}
