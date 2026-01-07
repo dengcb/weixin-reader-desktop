@@ -25,6 +25,12 @@ export class SiteContext {
   /** 是否已初始化 MutationObserver */
   private observerInitialized = false;
 
+  /** 节流定时器 */
+  private throttleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 节流间隔（毫秒） */
+  private readonly THROTTLE_INTERVAL = 500;
+
   // 单例实例
   private static instance: SiteContext | null = null;
 
@@ -79,9 +85,16 @@ export class SiteContext {
 
       log.info('[SiteContext] initObserver: MutationObserver initialized');
 
-      // 使用 MutationObserver 监听 DOM 变化
+      // 使用 MutationObserver 监听 DOM 变化（带节流）
       const observer = new MutationObserver(() => {
-        startObserving();
+        // 节流：限制检测频率，避免频繁触发
+        if (this.throttleTimer) {
+          return;
+        }
+        this.throttleTimer = setTimeout(() => {
+          this.throttleTimer = null;
+          startObserving();
+        }, this.THROTTLE_INTERVAL);
       });
 
       observer.observe(document.body, {

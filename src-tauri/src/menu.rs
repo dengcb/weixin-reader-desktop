@@ -446,7 +446,10 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                             .inner_size(400.0, 300.0)
                             .center()
                             .resizable(false)
-                            .hidden_title(true)  // Hide title but keep native macOS decorations (corners, shadow)
+                            .hidden_title(true)    // 隐藏标题
+                            .closable(false)       // 隐藏关闭按钮
+                            .minimizable(false)    // 隐藏最小化按钮
+                            .maximizable(false)    // 隐藏最大化按钮
                             .build();
                     }
                 }
