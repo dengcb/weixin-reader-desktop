@@ -20,6 +20,8 @@
   <a href="#-技术架构">技术架构</a>
 </p>
 
+<img src="screen.jpg" width="960">
+
 </div>
 
 ---
