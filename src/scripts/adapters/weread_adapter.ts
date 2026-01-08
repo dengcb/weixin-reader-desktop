@@ -131,16 +131,16 @@ export class WeReadAdapter extends BaseSiteAdapter {
 
   getDarkThemeCSS(): string {
     return `
-      html, body {
-        background-color: #222222 !important;
+      body {
+        background-color: #2c2c2c !important;
       }
     `;
   }
 
   getLightThemeCSS(): string {
     return `
-      html, body {
-        background-color: #ffffff !important;
+      body {
+        background-color: #f4f5f7 !important;
       }
     `;
   }

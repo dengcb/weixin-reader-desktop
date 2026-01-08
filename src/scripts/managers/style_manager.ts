@@ -108,8 +108,8 @@ export class StyleManager {
       } else {
         // Fallback to default theme
         const defaultCSS = e.matches
-          ? 'html, body { background-color: #222222 !important; }'
-          : 'html, body { background-color: #ffffff !important; }';
+          ? 'html, body { background-color: #2c2c2c !important; }'
+          : 'html, body { background-color: #f4f5f7 !important; }';
         injectCSS('wxrd-base-bg', defaultCSS);
       }
     };

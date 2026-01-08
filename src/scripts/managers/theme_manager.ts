@@ -64,7 +64,7 @@ export class ThemeManager {
     const cssRoot = `
       html {
         filter: invert(1) hue-rotate(180deg) !important;
-        background-color: #e0e0e0 !important;
+        background-color: #d3d3d3 !important;
       }
     `;
     
