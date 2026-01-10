@@ -7,6 +7,7 @@ import { TurnerManager } from './managers/turner_manager';
 import { MenuManager } from './managers/menu_manager';
 import { ThemeManager } from './managers/theme_manager';
 import { StyleManager } from './managers/style_manager';
+import { RemoteManager } from './managers/remote_manager';
 
 // Main Entry Point
 (function () {
@@ -26,21 +27,25 @@ import { StyleManager } from './managers/style_manager';
     log.info(`[Inject] User Agent: ${navigator.userAgent}`);
 
     // 自动注册所有适配器
-    try {
-      const adapterInstances = createAdapterInstances();
-      if (!adapterInstances || adapterInstances.length === 0) {
-        log.error('[Inject] No adapters found! Auto-discovery failed.');
-      } else {
-        log.info(`[Inject] Found ${adapterInstances.length} adapters:`, adapterInstances.map(a => a.id).join(', '));
-
-        adapterInstances.forEach(adapter => {
-          siteRegistry.register(adapter);
-          const isMatch = adapter.matchesCurrentDomain ? adapter.matchesCurrentDomain() : false;
-          log.debug(`[Inject] Registered adapter: ${adapter.name} (${adapter.id}) - Match: ${isMatch}`);
-        });
+    const adapterInstances = (() => {
+      try {
+        return createAdapterInstances();
+      } catch (e) {
+        log.error('[Inject] Failed to create adapters', e);
+        return [];
       }
-    } catch (e) {
-      log.error('[Inject] Failed to register adapters', e);
+    })();
+
+    if (adapterInstances.length === 0) {
+      log.error('[Inject] No adapters found! Auto-discovery failed.');
+    } else {
+      log.info(`[Inject] Found ${adapterInstances.length} adapters:`, adapterInstances.map(a => a.id).join(', '));
+
+      adapterInstances.forEach(adapter => {
+        siteRegistry.register(adapter);
+        const isMatch = adapter.matchesCurrentDomain ? adapter.matchesCurrentDomain() : false;
+        log.debug(`[Inject] Registered adapter: ${adapter.name} (${adapter.id}) - Match: ${isMatch}`);
+      });
     }
 
     let currentAdapter = siteRegistry.getCurrentAdapter();
@@ -92,6 +97,7 @@ import { StyleManager } from './managers/style_manager';
     safeInit('MenuManager', () => new MenuManager());
     safeInit('AppManager', () => new AppManager());
     safeInit('TurnerManager', () => new TurnerManager());
+    safeInit('RemoteManager', () => new RemoteManager());
 
     // ThemeManager 仅在非阅读器页面初始化
     if (!isReader) {

@@ -263,7 +263,7 @@ export class SettingsStore {
 
     // 智能路由：区分全局设置和站点设置
     const globalFields = ['zoom', 'autoUpdate', 'lastPage'];
-    const siteFields = ['readerWide', 'hideToolbar', 'lastReaderUrl', 'scrollPosition', 'readingProgress', 'autoFlip'];
+    const siteFields = ['readerWide', 'hideToolbar', 'hideNavbar', 'lastReaderUrl', 'scrollPosition', 'readingProgress', 'autoFlip'];
 
     const current = this.lock.getData();
     let needsUpdate = false;

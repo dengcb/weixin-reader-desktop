@@ -16,6 +16,7 @@ import { invoke, listen, waitForTauriReady } from '../core/tauri';
 import { settingsStore, AppSettings, MergedSettings, SiteSettings } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { log } from '../core/logger';
+import { showToast } from '../core/toast';
 
 type RouteChangedEvent = {
   isReader: boolean;
@@ -265,6 +266,7 @@ export class MenuManager {
           }
 
           settingsStore.updateGlobal({ zoom: nextZoom });
+          showToast(Math.round(nextZoom * 100) + '%');
         }
         break;
 
@@ -284,11 +286,13 @@ export class MenuManager {
           }
 
           settingsStore.updateGlobal({ zoom: nextZoom });
+          showToast(Math.round(nextZoom * 100) + '%');
         }
         break;
 
       case 'zoom_reset':
         settingsStore.updateGlobal({ zoom: 1.0 });
+        showToast('100%');
         break;
     }
   }
