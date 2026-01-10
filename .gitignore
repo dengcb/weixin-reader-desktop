@@ -20,6 +20,7 @@ src-tauri/target/
 # Archives and Docs (Personal/Legacy)
 WXRD-archive/
 mcp-server-weread/
+macos/
 Plan.md
 Task.md
 MultiSites.md
