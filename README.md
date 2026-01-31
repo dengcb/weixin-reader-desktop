@@ -36,27 +36,27 @@
 
 ### 📦 极致轻量
 
-**安装包仅 ~5MB**
-<span>内存占用低至 **100MB**</span>
-<span>相比 Electron 降低 **80%**</span>
+**安装包仅 ~5MB**</br>
+内存占用低至 **100MB**</br>
+相比 Electron 降低 **80%**
 
 </td>
 <td align="center" width="33%">
 
 ### ⚡ 原生性能
 
-基于 **Rust + Tauri v2** 构建
-<span>启动速度快</span>
-<span>CPU 占用低</span>
+基于 **Rust + Tauri v2** 构建</br>
+启动速度快</br>
+CPU 占用低
 
 </td>
 <td align="center" width="33%">
 
 ### 🔒 安全可靠
 
-<span>完全开源</span>
-<span>无广告/无跟踪</span>
-<span>数据直连官方</span>
+完全开源</br>
+无广告/无跟踪</br>
+数据直连官方
 
 </td>
 </tr>
@@ -83,7 +83,7 @@
 **🎨 界面优化**
 - 🌓 深色模式 - 护眼舒适
 - 📺 宽屏模式 - 沉浸阅读
-- 🧹 隐藏工具栏 - 纯净界面
+- 🧹 隐藏边栏 - 纯净界面
 - 🔍 缩放控制 - 自由调节
 
 </td>
@@ -126,7 +126,7 @@
 <table>
 <tr>
 <th width="40%">芯片类型</th>
-<th>下载文件</th>
+<th width="60%">下载文件</th>
 </tr>
 <tr>
 <td>🍎 Apple Silicon (M1/M2/M3/M4)</td>
@@ -149,8 +149,8 @@ cd weixin-reader-desktop
 bun install
 
 # 3. 构建发布版本
-bun run release:arm    # Apple Silicon
-bun run release:intel  # Intel
+bun release:arm    # Apple Silicon
+bun release:intel  # Intel
 ```
 
 ---
@@ -208,10 +208,10 @@ bun run debug:intel  # Intel
 ### 📤 发布打包
 
 ```bash
-bun run release:all    # 构建所有架构
-bun run release:arm    # Apple Silicon
-bun run release:intel  # Intel
-bun run release:clear  # 清理发布文件
+bun release:all    # 构建所有架构
+bun release:arm    # Apple Silicon
+bun release:intel  # Intel
+bun release:clear  # 清理发布文件
 ```
 
 ### ✅ 测试
@@ -383,7 +383,6 @@ tauri-plugin-shell         → Shell 命令执行
 
 - 📝 [测试文档](docs/TESTING.md) - 详细的测试指南（Rust + TypeScript）
 - 🔌 [插件架构](docs/PLUGIN_ARCHITECTURE.md) - 插件系统设计与开发指南
-- 🔧 [开发文档](CLAUDE.md) - 项目架构与开发规范
 
 ---
 
@@ -407,8 +406,8 @@ tauri-plugin-shell         → Shell 命令执行
 
 ### 📡 数据来源
 
-所有内容均通过官方接口
-**weread.qq.com**
+所有内容均通过官方接口</br>
+**weread.qq.com**</br>
 直接加载
 
 </td>
@@ -416,9 +415,9 @@ tauri-plugin-shell         → Shell 命令执行
 
 ### 🙏 声明
 
-仅供学习交流
-请支持正版
-遵守相关法律法规
+仅供学习交流</br>
+请支持正版</br>
+遵守相关法律法规</br>
 
 </td>
 </tr>
@@ -428,7 +427,7 @@ tauri-plugin-shell         → Shell 命令执行
 
 ## 📄 开源协议
 
-[MIT License](LICENSE) © 2024
+[MIT License](LICENSE) © 2026
 
 ---
 
