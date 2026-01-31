@@ -21,7 +21,8 @@
 | `sites_test.rs` | 12 | 站点配置 |
 | `update_test.rs` | 18 | 更新管理器 |
 | `monitor_test.rs` | 1 | 显示器集成 |
-| **小计** | **79** | **Rust 后端全覆盖** |
+| `performance_test.rs` | 9 | 性能优化配置 |
+| **小计** | **88** | **Rust 后端全覆盖** |
 
 #### 前端 (TypeScript)
 
@@ -33,11 +34,13 @@
 | `event_bus.test.ts` | 58 | 事件总线系统 |
 | `optimistic_lock.test.ts` | 9 | 乐观锁并发控制 |
 | `settings_store.test.ts` | 20+ | 设置存储管理 |
-| **小计** | **174+** | **前端核心模块覆盖** |
+| `plugin_api.test.ts` | 23 | 插件 API 系统 |
+| `plugin_registry.test.ts` | 29 | 插件注册表 |
+| **小计** | **226+** | **前端核心模块覆盖** |
 
 #### 总计
 
-**253+ 测试用例**,实现前后端核心功能的全面测试覆盖。
+**314+ 测试用例**,实现前后端核心功能的全面测试覆盖。
 
 ### 运行测试
 

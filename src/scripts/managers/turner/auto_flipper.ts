@@ -176,8 +176,17 @@ export class AutoFlipper {
       document.title = `${this.appName} - 自动翻页 - 已读 ${percentage}%`;
     }
 
+    // 页面在后台且不需要保持唤醒时，暂停 RAF 循环以节省 CPU
     if (document.hidden && !this.keepAwake) {
-      this.singleRafId = requestAnimationFrame((t) => this.singleColumnLoop(t, adapter, gen));
+      this.singleRafId = null;
+      // 监听 visibilitychange 事件，页面恢复时重新启动循环
+      const resumeHandler = () => {
+        if (!document.hidden && this.isActive && gen === this.generation) {
+          document.removeEventListener('visibilitychange', resumeHandler);
+          this.startSingleColumnLogic(adapter);
+        }
+      };
+      document.addEventListener('visibilitychange', resumeHandler);
       return;
     }
 

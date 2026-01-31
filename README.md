@@ -5,7 +5,7 @@
 ### 🚀 基于 Tauri v2 + Rust 的高性能微信读书桌面客户端
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.7.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.8.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -37,26 +37,26 @@
 ### 📦 极致轻量
 
 **安装包仅 ~5MB**
-内存占用低至 **100MB**
-相比 Electron 降低 **80%**
+<span>内存占用低至 **100MB**</span>
+<span>相比 Electron 降低 **80%**</span>
 
 </td>
 <td align="center" width="33%">
 
 ### ⚡ 原生性能
 
-基于 **Rust + Tauri v2**
-启动速度快
-CPU 占用低
+基于 **Rust + Tauri v2** 构建
+<span>启动速度快</span>
+<span>CPU 占用低</span>
 
 </td>
 <td align="center" width="33%">
 
 ### 🔒 安全可靠
 
-完全开源
-无广告/无跟踪
-数据直连官方
+<span>完全开源</span>
+<span>无广告/无跟踪</span>
+<span>数据直连官方</span>
 
 </td>
 </tr>
@@ -98,6 +98,16 @@ CPU 占用低
 </td>
 </tr>
 </table>
+
+### 🔌 插件化架构 <sup>v0.8.0 新增</sup>
+
+> 全新插件系统，为未来扩展奠定基础
+
+```
+✓ 微信读书作为内置默认插件      ✓ 标准化插件接口
+✓ 支持第三方开发者扩展          ✓ 预留本地阅读能力
+✓ 命名空间隔离                  ✓ 热插拔支持
+```
 
 ### 🔄 智能更新
 
@@ -372,6 +382,7 @@ tauri-plugin-shell         → Shell 命令执行
 ## 📖 文档
 
 - 📝 [测试文档](docs/TESTING.md) - 详细的测试指南（Rust + TypeScript）
+- 🔌 [插件架构](docs/PLUGIN_ARCHITECTURE.md) - 插件系统设计与开发指南
 - 🔧 [开发文档](CLAUDE.md) - 项目架构与开发规范
 
 ---

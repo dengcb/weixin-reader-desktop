@@ -17,7 +17,7 @@ import { createSiteContext, SiteContext } from '../core/site_context';
 import { settingsStore } from '../core/settings_store';
 import { ScrollState } from '../core/scroll_state';
 import { log } from '../core/logger';
-import { BaseManager, Events, type EventName } from '../core/base_manager';
+import { BaseManager, Events } from '../core/base_manager';
 
 export type RouteChangedEvent = {
   isReader: boolean;
@@ -37,7 +37,6 @@ export type TitleChangedEvent = {
 export class IPCManager extends BaseManager {
   private siteContext: SiteContext;
   private currentIsReader = false;
-  private lastSavedReaderUrl = '';
   private lastSavedScrollY = 0;
 
   // Timers
@@ -75,6 +74,7 @@ export class IPCManager extends BaseManager {
     this.monitorRoute();
     this.monitorTitle();
     this.monitorScroll();
+    this.monitorVisibility();
   }
 
   // =====================================================
@@ -143,6 +143,15 @@ export class IPCManager extends BaseManager {
         // 兼容旧系统：同时发送到 window
         window.dispatchEvent(new CustomEvent('ipc:route-changed', { detail: eventData }));
         window.dispatchEvent(new CustomEvent('wxrd:route-changed', { detail: eventData }));
+
+        // 控制 SiteContext MutationObserver 的启停
+        if (isReader) {
+          this.siteContext.startObserving();
+          log.info('[IPCManager] Entered reader page, started SiteContext observer');
+        } else {
+          this.siteContext.stopObserving();
+          log.info('[IPCManager] Left reader page, stopped SiteContext observer');
+        }
       }
 
       if (chapterChanged) {
@@ -242,6 +251,28 @@ export class IPCManager extends BaseManager {
     };
 
     window.addEventListener('scroll', scrollHandler, { passive: true });
+  }
+
+  // =====================================================
+  // Visibility Monitoring (SiteContext Observer 控制)
+  // =====================================================
+
+  private monitorVisibility() {
+    const visibilityHandler = () => {
+      if (document.hidden) {
+        // 进入后台：停止 SiteContext Observer
+        this.siteContext.stopObserving();
+        log.info('[IPCManager] Document hidden, stopped SiteContext observer');
+      } else {
+        // 返回前台：如果在阅读页，重新启动 Observer
+        if (this.currentIsReader) {
+          this.siteContext.startObserving();
+          log.info('[IPCManager] Document visible and on reader page, started SiteContext observer');
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', visibilityHandler);
   }
 
   // =====================================================

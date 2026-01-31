@@ -25,11 +25,14 @@ export class SiteContext {
   /** 是否已初始化 MutationObserver */
   private observerInitialized = false;
 
+  /** 是否正在监听（控制 Observer 的启停） */
+  private isObserving = false;
+
   /** 节流定时器 */
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** 节流间隔（毫秒） */
-  private readonly THROTTLE_INTERVAL = 500;
+  /** 节流间隔（毫秒）- 增加到 1000ms 以降低 CPU 占用 */
+  private readonly THROTTLE_INTERVAL = 1000;
 
   // 单例实例
   private static instance: SiteContext | null = null;
@@ -37,7 +40,7 @@ export class SiteContext {
   // 私有构造函数
   private constructor() {
     this.registry = getSiteRegistry();
-    this.initDoubleColumnObserver();
+    // 不再自动启动 Observer，改为按需调用 startObserving()
   }
 
   /**
@@ -175,26 +178,13 @@ export class SiteContext {
   onDoubleColumnChange(callback: (isDoubleColumn: boolean) => void): () => void {
     this.doubleColumnListeners.add(callback);
 
-    // 立即发送当前值给新注册的监听器
-    if (this._cachedIsDoubleColumn !== null) {
-      try {
-        callback(this._cachedIsDoubleColumn);
-      } catch (e) {
-        log.error('[SiteContext] Error in immediate double column callback:', e);
-      }
+    // 立即发送当前值给新注册的监听器（同步调用，无需额外调度）
+    const currentValue = this.isDoubleColumn;
+    try {
+      callback(currentValue);
+    } catch (e) {
+      log.error('[SiteContext] Error in immediate double column callback:', e);
     }
-
-    // 同时也保留延迟回调，确保 DOM 完全渲染后再次检查
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        const currentValue = this.isDoubleColumn;
-        try {
-          callback(currentValue);
-        } catch (e) {
-          log.error('[SiteContext] Error in delayed double column callback:', e);
-        }
-      }, 400);
-    });
 
     // 返回取消监听的函数
     return () => {
@@ -241,6 +231,56 @@ export class SiteContext {
   get siteId(): string {
     const adapter = this.currentAdapter;
     return adapter?.id || 'unknown';
+  }
+
+  /**
+   * 启动双栏模式监听（按需调用）
+   * 由 IPCManager 在进入阅读页时调用
+   */
+  startObserving(): void {
+    if (this.isObserving || this.observerInitialized) {
+      log.info('[SiteContext] startObserving: already observing, skipping');
+      return;
+    }
+    this.initDoubleColumnObserver();
+    this.isObserving = true;
+    log.info('[SiteContext] Observer started');
+  }
+
+  /**
+   * 停止双栏模式监听
+   * 由 IPCManager 在离开阅读页或进入后台时调用
+   */
+  stopObserving(): void {
+    if (!this.isObserving) {
+      log.info('[SiteContext] stopObserving: not observing, skipping');
+      return;
+    }
+
+    if (this.doubleColumnObserver) {
+      this.doubleColumnObserver.disconnect();
+      log.info('[SiteContext] MutationObserver disconnected');
+    }
+    if (this.throttleTimer) {
+      clearTimeout(this.throttleTimer);
+      this.throttleTimer = null;
+      log.info('[SiteContext] Throttle timer cleared');
+    }
+    this.isObserving = false;
+    log.info('[SiteContext] Observer stopped');
+  }
+
+  /**
+   * 销毁实例，清理所有资源
+   */
+  destroy(): void {
+    log.info('[SiteContext] Destroying instance');
+    this.stopObserving();
+    this.doubleColumnListeners.clear();
+    this.doubleColumnObserver = null;
+    this.observerInitialized = false;
+    this._cachedIsDoubleColumn = null;
+    log.info('[SiteContext] Instance destroyed');
   }
 }
 

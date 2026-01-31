@@ -1,0 +1,31 @@
+{
+  "id": "weread",
+  "name": "微信读书",
+  "version": "1.0.0",
+  "description": "微信读书网站支持插件",
+  "author": "艾特阅读团队",
+  "homepage": "https://github.com/user/weixin-reader-desktop",
+  
+  "sourceType": "web",
+  "renderMode": "webview",
+  
+  "site": {
+    "domain": ["weread.qq.com"],
+    "homeUrl": "https://weread.qq.com/",
+    "readerPattern": "/web/reader/"
+  },
+  
+  "capabilities": {
+    "wideMode": true,
+    "hideToolbar": true,
+    "hideNavbar": true,
+    "autoFlip": true,
+    "chapterNav": true,
+    "progressTracker": true,
+    "doubleColumn": true,
+    "hideCursor": true,
+    "remoteControl": true
+  },
+  
+  "builtin": true
+}

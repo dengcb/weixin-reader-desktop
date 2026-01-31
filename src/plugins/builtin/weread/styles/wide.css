@@ -1,0 +1,28 @@
+/**
+ * 微信读书插件 - 宽屏模式样式
+ * Wide Mode Styles for WeRead Plugin
+ */
+
+/* ==================== 宽屏模式 ==================== */
+.wxrd-wide-enabled .readerTopBar,
+.wxrd-wide-enabled body:has(.readerControls[is-horizontal="true"]) .readerChapterContent,
+.wxrd-wide-enabled .app_content {
+  width: 96% !important;
+  max-width: calc(100vw - 224px) !important;
+}
+
+.wxrd-wide-enabled body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
+  margin-left: calc(50vw - 80px) !important;
+}
+
+/* ==================== 窄屏模式（默认） ==================== */
+.wxrd-wide-disabled .readerTopBar,
+.wxrd-wide-disabled body:has(.readerControls[is-horizontal="true"]) .readerChapterContent,
+.wxrd-wide-disabled .app_content {
+  width: 80% !important;
+  max-width: calc(100vw - 424px) !important;
+}
+
+.wxrd-wide-disabled body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
+  margin-left: calc(40% + 40px) !important;
+}

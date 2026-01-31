@@ -1,0 +1,14 @@
+/**
+ * 微信读书插件 - 主题样式
+ * Theme Styles for WeRead Plugin
+ */
+
+/* ==================== 深色主题 ==================== */
+.wxrd-theme-dark body {
+  background-color: #2c2c2c !important;
+}
+
+/* ==================== 浅色主题 ==================== */
+.wxrd-theme-light body {
+  background-color: #f4f5f7 !important;
+}

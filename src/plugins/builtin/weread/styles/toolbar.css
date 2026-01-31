@@ -1,0 +1,26 @@
+/**
+ * 微信读书插件 - 工具栏样式
+ * Toolbar Styles for WeRead Plugin
+ */
+
+/* ==================== 隐藏工具栏 ==================== */
+.wxrd-toolbar-hidden .readerControls {
+  display: none !important;
+}
+
+.wxrd-toolbar-hidden .readerTopBar,
+.wxrd-toolbar-hidden .app_content,
+.wxrd-toolbar-hidden body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
+  max-width: calc(100vw - 124px) !important;
+}
+
+/* ==================== 显示工具栏（默认） ==================== */
+.wxrd-toolbar-visible .readerControls {
+  display: block !important;
+}
+
+.wxrd-toolbar-visible .readerTopBar,
+.wxrd-toolbar-visible .app_content,
+.wxrd-toolbar-visible body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
+  max-width: calc(100vw - 224px) !important;
+}

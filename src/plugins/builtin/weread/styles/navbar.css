@@ -1,0 +1,26 @@
+/**
+ * 微信读书插件 - 导航栏样式
+ * Navbar Styles for WeRead Plugin
+ */
+
+/* ==================== 隐藏导航栏 ==================== */
+.wxrd-navbar-hidden .readerTopBar,
+.wxrd-navbar-hidden .renderTarget_pager {
+  display: none !important;
+}
+
+.wxrd-navbar-hidden body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
+  margin-top: 24px !important;
+  height: calc(100% - 48px) !important;
+}
+
+/* ==================== 显示导航栏（默认） ==================== */
+.wxrd-navbar-visible .readerTopBar,
+.wxrd-navbar-visible .renderTarget_pager {
+  display: flex !important;
+}
+
+.wxrd-navbar-visible body:has(.readerControls[is-horizontal="true"]) .readerChapterContent {
+  margin-top: 72px !important;
+  height: calc(100% - 132px) !important;
+}

@@ -18,13 +18,8 @@ src-tauri/target/
 **/mutants.out*/
 
 # Archives and Docs (Personal/Legacy)
-WXRD-archive/
-mcp-server-weread/
 macos/
-Plan.md
-Task.md
-MultiSites.md
-Progress*.md
+tasks/
 
 # Logs
 logs

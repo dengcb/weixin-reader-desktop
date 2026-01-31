@@ -1,0 +1,31 @@
+{
+  "id": "my-plugin",
+  "name": "我的阅读插件",
+  "version": "1.0.0",
+  "description": "一个示例阅读插件",
+  "author": "开发者名称",
+  "homepage": "https://github.com/your-username/your-plugin",
+  
+  "sourceType": "web",
+  "renderMode": "webview",
+  
+  "site": {
+    "domain": ["example.com"],
+    "homeUrl": "https://example.com/",
+    "readerPattern": "/reader/"
+  },
+  
+  "capabilities": {
+    "wideMode": true,
+    "hideToolbar": true,
+    "hideNavbar": false,
+    "autoFlip": true,
+    "chapterNav": false,
+    "progressTracker": false,
+    "doubleColumn": false,
+    "hideCursor": true,
+    "remoteControl": false
+  },
+  
+  "builtin": false
+}
