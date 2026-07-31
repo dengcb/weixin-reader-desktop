@@ -5,7 +5,7 @@
 ### 🚀 基于 Tauri v2 + Rust 的高性能微信读书桌面客户端
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v0.9.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.0.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -31,32 +31,40 @@
 > 通过脚本注入方式增强官方 Web 端体验，完全兼容官方功能的同时提供更好的桌面体验
 
 <table>
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
 <tr>
-<td align="center" width="33%">
+<td align="center">
 
 ### 📦 极致轻量
 
-**安装包仅 ~5MB**</br>
-内存占用低至 **100MB**</br>
+**安装包仅 ~5MB**<br>
+内存占用低至 **100MB**<br>
 相比 Electron 降低 **80%**
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td align="center" width="33%">
+<td align="center">
 
 ### ⚡ 原生性能
 
-基于 **Rust + Tauri v2** 构建</br>
-启动速度快</br>
+基于 **Rust + Tauri v2** 构建<br>
+启动速度快<br>
 CPU 占用低
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td align="center" width="33%">
+<td align="center">
 
 ### 🔒 安全可靠
 
-完全开源</br>
-无广告/无跟踪</br>
+完全开源<br>
+无广告/无跟踪<br>
 数据直连官方
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
 </tr>
@@ -77,23 +85,29 @@ CPU 占用低
 ### 📖 阅读增强
 
 <table>
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
 <tr>
-<td width="50%">
+<td>
 
 **🎨 界面优化**
 - 🌓 深色模式 - 护眼舒适
 - 📺 宽屏模式 - 沉浸阅读
 - 🧹 隐藏边栏 - 纯净界面
 - 🔍 缩放控制 - 自由调节
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td width="50%">
+<td>
 
 **⌨️ 翻页控制**
 - 🖱️ 触摸板双指滑动
 - ⚡ 自动翻页（可调速）
 - 👻 鼠标自动隐藏
 - 🎯 精准进度显示
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
 </tr>
@@ -114,21 +128,27 @@ CPU 占用低
 > 内置插件开发工具，无需外部 IDE 即可创建和编辑插件
 
 <table>
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
 <tr>
-<td width="50%">
+<td>
 
 **📝 表单式配置**
 - 基本信息（ID、名称、版本、描述）
 - 站点配置（域名、URL 模式）
 - 功能能力（宽屏、深色、翻页等）
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td width="50%">
+<td>
 
 **💻 代码编辑**
 - TypeScript 语法高亮
 - 多文件标签页切换
 - 实时预览插件信息
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
 </tr>
@@ -136,6 +156,16 @@ CPU 占用低
 
 ```
 路径: 设置 → 插件管理 → 新建插件
+```
+
+### 🏪 多站点书店切换 <sup>v1.0.0 新增</sup>
+
+> 以插件为数据源的多站点阅读器，一个壳切换多个书城
+
+```
+✓ 外部插件运行时加载               ✓「书店」菜单站内切换 + 当前站对勾
+✓ 每个书店独立记住阅读进度          ✓ 卸载重装进度自动接回
+✓ macOS 拦第三方追踪域名           ✓ 番茄小说作为官方插件开发范例
 ```
 
 ### 🔄 智能更新
@@ -289,30 +319,35 @@ bun test
 ### 📚 技术栈
 
 <table>
+<colgroup>
+<col style="width: 15%">
+<col style="width: 25%">
+<col style="width: 60%">
+</colgroup>
 <tr>
-<th width="20%">层级</th>
-<th width="30%">技术</th>
+<th>层级</th>
+<th>技术</th>
 <th>说明</th>
 </tr>
 <tr>
 <td><b>前端</b></td>
 <td>TypeScript + Vite</td>
-<td>注入脚本开发与构建</td>
+<td>注入脚本开发与构建&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 <tr>
 <td><b>后端</b></td>
 <td>Rust + Tauri v2</td>
-<td>原生桌面能力与系统集成</td>
+<td>原生桌面能力与系统集成&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 <tr>
 <td><b>构建</b></td>
 <td>Bun</td>
-<td>极速包管理与脚本执行</td>
+<td>极速包管理与脚本执行&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 <tr>
 <td><b>测试</b></td>
 <td>Cargo + Bun Test</td>
-<td>双层测试覆盖（332+ 测试用例）</td>
+<td>双层测试覆盖（332+ 测试用例）&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 </table>
 
@@ -341,7 +376,7 @@ bun test
                               └───────────────────────────────┘
 ```
 
-### 🔧 前端模块（六大管理器）
+### 🧩 前端模块（六大管理器）
 
 位于 `src/scripts/managers/` 目录：
 
@@ -395,7 +430,15 @@ bun test
 </tr>
 <tr>
 <td><code>menu.rs</code></td>
-<td>📋 原生菜单构建，事件处理</td>
+<td>📋 原生菜单构建，事件处理，多站点「书店」切换</td>
+</tr>
+<tr>
+<td><code>sites.rs</code></td>
+<td>🏪 站点首页 URL 解析（内置 + 外部插件）</td>
+</tr>
+<tr>
+<td><code>tracker_blocker.rs</code></td>
+<td>🚫 macOS 原生拦截第三方追踪域名（不拦网站自有代码）</td>
 </tr>
 <tr>
 <td><code>monitor.rs</code></td>
@@ -440,33 +483,40 @@ tauri-plugin-shell         → Shell 命令执行
 > 本项目仅为个人学习和使用的第三方客户端，与腾讯公司及微信读书团队无任何关联
 
 <table>
+<colgroup>
+<col style="width: 33%">
+<col style="width: 33%">
+<col style="width: 33%">
+</colgroup>
 <tr>
-<td align="center" width="33%">
+<td align="center">
 
 ### ✅ 承诺
 
-- 完全开源
-- 无隐私收集
-- 无广告植入
-- 无商业用途
+无隐私收集<br>
+无广告植入<br>
+无商业用途<br>
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td align="center" width="33%">
+<td align="center">
 
-### 📡 数据来源
+### 🗄️ 数据来源
 
-所有内容均通过官方接口</br>
-**weread.qq.com**</br>
+所有内容均通过官方接口<br>
+**weread.qq.com**<br>
 直接加载
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
-<td align="center" width="33%">
+<td align="center">
 
 ### 🙏 声明
 
-仅供学习交流</br>
-请支持正版</br>
-遵守相关法律法规</br>
+仅供学习交流<br>
+请支持正版<br>
+遵守相关法律法规<br>
+&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
 </tr>

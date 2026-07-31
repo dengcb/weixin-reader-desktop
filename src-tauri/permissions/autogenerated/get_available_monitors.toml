@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-available-monitors"
+description = "Enables the get_available_monitors command without any pre-configured scope."
+commands.allow = ["get_available_monitors"]
+
+[[permission]]
+identifier = "deny-get-available-monitors"
+description = "Denies the get_available_monitors command without any pre-configured scope."
+commands.deny = ["get_available_monitors"]

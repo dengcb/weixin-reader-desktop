@@ -7,6 +7,7 @@
  */
 
 import { log } from './core/logger';
+import { logToFile } from './core/tauri';
 import { settingsStore } from './core/settings_store';
 import { getPluginLoader } from './core/plugin_loader';
 import { getPluginRegistry } from './core/plugin_registry';
@@ -167,9 +168,68 @@ async function setupHotReloadListener(): Promise<void> {
 }
 
 /**
+ * 性能诊断：页面加载完成后，把导航耗时与最慢的 5 个资源写入日志文件
+ * 用于排查站点加载缓慢（如切换书店耗时过长）的真实原因
+ */
+function reportLoadPerformance(): void {
+  // 捕获加载失败的资源（失败请求不会进 resource timing，只能靠 error 事件拓名）
+  const failedResources: string[] = [];
+  window.addEventListener('error', (e) => {
+    const t = e.target as any;
+    if (t && t !== window && (t.src || t.href)) {
+      failedResources.push(`${t.tagName}:${String(t.src || t.href).slice(0, 90)}`);
+    }
+  }, true);
+
+  const report = () => {
+    // 稍等片刻，让 load 后的资源计时尽量完整
+    setTimeout(() => {
+      try {
+        const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+        const slowest = (performance.getEntriesByType('resource') as PerformanceResourceTiming[])
+          .map(r => ({ url: r.name.slice(0, 90), ms: Math.round(r.duration) }))
+          .sort((a, b) => b.ms - a.ms)
+          .slice(0, 5);
+        const line =
+          `[Perf] host=${location.hostname} ` +
+          `docResponse=${Math.round(nav?.responseEnd ?? -1)}ms ` +
+          `domInteractive=${Math.round(nav?.domInteractive ?? -1)}ms ` +
+          `DCL=${Math.round(nav?.domContentLoadedEventEnd ?? -1)}ms ` +
+          `load=${Math.round(nav?.loadEventEnd ?? -1)}ms ` +
+          `failed=${JSON.stringify(failedResources.slice(0, 5))} ` +
+          `slowest=${JSON.stringify(slowest)}`;
+        log.info(line);
+        logToFile(line);
+      } catch (e) {
+        log.warn('[Perf] Failed to collect performance data', e);
+      }
+    }, 1500);
+  };
+  if (document.readyState === 'complete') {
+    report();
+  } else {
+    window.addEventListener('load', report, { once: true });
+  }
+}
+
+/**
  * 主入口函数
  */
 async function main(): Promise<void> {
+  // 跨域 iframe 守卫：绝不在第三方跨域 iframe 中注入。
+  //   典型场景：微信扫码登录框 open.weixin.qq.com（嵌在 weread 页面里的跨域 iframe）。
+  //   Windows/WebView2 会把初始化脚本注入到所有子框架，我们的脚本一旦在该登录 iframe 内
+  //   执行就会干扰微信自身逻辑，导致二维码空白（Mac/WKWebView 默认只注主框架，故无此问题）。
+  //   合规上我们也不应在他人的 OAuth 登录框里运行任何脚本。同源 iframe 不受影响。
+  if (window.self !== window.top) {
+    try {
+      // 跨域时访问 top.location.href 会抛 SecurityError
+      void (window.top as Window).location.href;
+    } catch {
+      return;
+    }
+  }
+
   // 防止重复注入（兼容旧标志）
   if ((window as any).wxrd_injected || (window as any).atreader_injected) {
     return;
@@ -202,6 +262,9 @@ async function main(): Promise<void> {
     
     // 6. 设置热重载监听器（插件安装/卸载后自动刷新）
     await setupHotReloadListener();
+    
+    // 7. 性能诊断：记录页面加载耗时与最慢资源（落盘到日志）
+    reportLoadPerformance();
     
     log.info('[Inject] Initialization complete!');
     log.info('[Inject] ==========================================');

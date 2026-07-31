@@ -12,6 +12,7 @@ import { log } from './logger';
 import { createPluginAPI } from './plugin_api';
 import { getPluginRegistry } from './plugin_registry';
 import { settingsStore } from './settings_store';
+import { invoke } from './tauri';
 import type { ReaderPlugin } from './plugin_types';
 
 export class PluginLoader {
@@ -74,8 +75,8 @@ export class PluginLoader {
       }
     }
     
-    // 2. 加载外部插件（未来实现）
-    // await this.loadExternalPlugins();
+    // 2. 加载外部插件（已安装的 .atrd）
+    await this.loadExternalPlugins();
     
     // 3. 自动激活匹配当前页面的插件
     const activePlugin = registry.getActivePlugin();
@@ -344,6 +345,9 @@ export class PluginLoader {
       }
     }
     
+    // 3.5 重新加载外部插件（.atrd）
+    await this.loadExternalPlugins();
+    
     // 4. 自动激活匹配当前页面的插件
     const activePlugin = registry.getActivePlugin();
     
@@ -357,6 +361,58 @@ export class PluginLoader {
     log.info(`[PluginLoader] Hot reload complete. Total: ${stats.total}, Loaded: ${stats.loaded}`);
   }
   
+  // ==================== 外部插件加载 ====================
+
+  /**
+   * 加载所有已安装的外部插件（.atrd）
+   * 从磁盘取插件代码，实例化后注册进插件系统（与内置插件同一激活路径）
+   */
+  private async loadExternalPlugins(): Promise<void> {
+    const registry = getPluginRegistry();
+    let installed: Array<{ id: string }> = [];
+    try {
+      installed = await invoke('get_installed_plugins');
+    } catch (e) {
+      log.error('[PluginLoader] get_installed_plugins failed', e);
+      return;
+    }
+
+    for (const info of installed) {
+      const pluginId = info.id;
+      if (!settingsStore.isPluginEnabled(pluginId)) continue; // 尊重启用/禁用
+      if (registry.get(pluginId)) continue;                   // 避免与内置重复注册
+      try {
+        const code: string = await invoke('get_plugin_code', { pluginId });
+        const instance = await this.instantiateFromCode(code);
+        if (instance) {
+          registry.register(instance);
+          log.info(`[PluginLoader] External plugin registered: ${pluginId}`);
+        } else {
+          log.warn(`[PluginLoader] External plugin '${pluginId}' has no default export`);
+        }
+      } catch (e) {
+        log.error(`[PluginLoader] Failed to load external plugin '${pluginId}'`, e);
+      }
+    }
+  }
+
+  /**
+   * 从插件代码文本实例化插件
+   * 约定：外部插件 export default 其插件类（实现 ReaderPlugin）
+   * 使用 Blob URL + 运行时变量 specifier 的动态 import，避免被打包器静态解析
+   */
+  private async instantiateFromCode(code: string): Promise<ReaderPlugin | null> {
+    const blob = new Blob([code], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const mod = await import(/* @vite-ignore */ url);
+      const PluginClass = mod?.default;
+      return typeof PluginClass === 'function' ? new PluginClass() : null;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   /**
    * 获取所有内置插件 ID（用于初始化 enabledPlugins）
    */

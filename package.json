@@ -1,7 +1,7 @@
 {
   "name": "weixin-reader",
   "private": true,
-  "version": "0.9.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "start": "bun run sync-version && tauri dev",
@@ -10,6 +10,7 @@
     "build:inject": "bun build src/scripts/inject.ts --outfile=src/scripts/inject.js --target=browser --minify-whitespace",
     "build:plugin": "bun src/scripts/build_plugin.ts",
     "build:plugin:all": "bun src/scripts/build_plugin.ts --all",
+    "icon:fetch": "bun src/scripts/fetch_plugin_icon.ts",
     "build": "bun run build:inject && rm -rf dist && mkdir -p dist && cp index.html dist/ && cp src/windows/*.html dist/ && cp icon.png dist/",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -25,14 +26,14 @@
     "release:publish": "bun src/scripts/release.ts publish"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-http": "^2.5.4",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-updater": "^2.9.0"
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-http": "^2.5.9",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-updater": "^2.10.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "@types/node": "^25.0.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^25.9.5",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
   }

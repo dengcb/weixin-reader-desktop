@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-menu-item-enabled"
+description = "Enables the set_menu_item_enabled command without any pre-configured scope."
+commands.allow = ["set_menu_item_enabled"]
+
+[[permission]]
+identifier = "deny-set-menu-item-enabled"
+description = "Denies the set_menu_item_enabled command without any pre-configured scope."
+commands.deny = ["set_menu_item_enabled"]

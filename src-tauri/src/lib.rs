@@ -13,6 +13,7 @@ mod commands;
 mod update;
 mod sites;
 pub mod plugin_manager;
+mod tracker_blocker;
 
 fn check_network_connection() -> bool {
     let addr_str = sites::DEFAULT_SITE.network_check_addr();
@@ -88,27 +89,58 @@ pub fn run() {
                     .ok()
                     .and_then(|dir: PathBuf| std::fs::read_to_string(dir.join("settings.json")).ok());
 
-                if let Some(settings_content) = settings_opt {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&settings_content) {
-                        let last_page_enabled = json.get("lastPage")
+                // 启动 URL 解析（多站点，两个正交开关）：
+                // - 「记住书店，好看再来」(global.rememberSite) 决定回哪个站点：
+                //     开 → global.lastSiteId（无则 weread）；关 → 强制 weread
+                // - 「阅读不停，自动记录」(global.lastPage) 决定回页还是回首页：
+                //     开 → 该站点上次阅读页 sites[siteId].lastReaderUrl（无则站点首页）；关 → 站点首页
+                // 两个开关互不为前提，默认均为开（向后兼容）。
+                let resolved_url: Option<String> = settings_opt
+                    .as_ref()
+                    .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
+                    .and_then(|json| {
+                        let remember_site = json.get("global")
+                            .and_then(|g| g.get("rememberSite"))
                             .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let last_reader_url = json.get("lastReaderUrl")
-                            .and_then(|v| v.as_str());
+                            .unwrap_or(true);
+                        let remember_page = json.get("global")
+                            .and_then(|g| g.get("lastPage"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
 
-                        if last_page_enabled && last_reader_url.is_some() {
-                            let url_str = last_reader_url.unwrap();
-                            println!("[Init] Restoring last reader page directly: {}", url_str);
-                            WebviewUrl::External(url_str.parse().unwrap())
+                        let site_id = if remember_site {
+                            json.get("global")
+                                .and_then(|g| g.get("lastSiteId"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(sites::WEREAD.id)
+                                .to_string()
                         } else {
-                            println!("[Init] lastPage disabled or no URL, loading homepage");
-                            WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
+                            sites::WEREAD.id.to_string()
+                        };
+
+                        if remember_page {
+                            // 优先该站点上次阅读页，其次站点首页
+                            json.get("sites")
+                                .and_then(|s| s.get(&site_id))
+                                .and_then(|s| s.get("lastReaderUrl"))
+                                .and_then(|u| u.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| sites::resolve_home_url(&app.handle(), &site_id))
+                        } else {
+                            // 不恢复阅读页，直接站点首页
+                            sites::resolve_home_url(&app.handle(), &site_id)
                         }
-                    } else {
+                    });
+
+                match resolved_url {
+                    Some(url_str) => {
+                        println!("[Init] Restoring startup URL: {}", url_str);
+                        WebviewUrl::External(url_str.parse().unwrap())
+                    }
+                    None => {
+                        println!("[Init] No startup URL resolved, loading weread homepage");
                         WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                     }
-                } else {
-                    WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                 }
             } else {
                 println!("[Init] No network connection, using local error page");
@@ -237,22 +269,42 @@ pub fn run() {
             // - Add site-specific locking in settings manager
 
             // Platform-specific User-Agent
+            // Windows: 不设置自定义 UA，使用 WebView2 原生 UA。
+            //   原因：硬编码 UA 版本会与 WebView2 底层真实的 Sec-CH-UA 版本产生矛盾
+            //   （navigator.userAgent 说旧版、Sec-CH-UA 说真实新版），触发微信扫码登录
+            //   风控导致二维码空白。用原生 UA 表里如一，且随 WebView2 更新永不过期。
             #[cfg(target_os = "macos")]
-            let user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15";
+            let user_agent: Option<&str> = Some("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15");
             #[cfg(target_os = "windows")]
-            let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
+            let user_agent: Option<&str> = None;
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+            let user_agent: Option<&str> = Some("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
 
-            let win = WebviewWindowBuilder::new(app, "main", url)
+            let mut builder = WebviewWindowBuilder::new(app, "main", url)
                 .title(&app_name)
                 .inner_size(1280.0, 800.0)
                 .center()
                 .background_color(Color::from((26, 26, 26))) // #1a1a1a 深灰色，减少启动时白屏闪烁
-                .user_agent(user_agent)
                 // .initialization_script(console_filter_script)  <-- DISABLED
-                .initialization_script(inject_script)
-                .build()?;
+                .initialization_script(inject_script);
+            if let Some(ua) = user_agent {
+                builder = builder.user_agent(ua);
+            }
+            let win = builder.build()?;
+
+            // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置，否则默认 zoom 可能不正确）
+            // 从设置文件读取用户保存的 zoom 值，默认 0.75（Chrome 默认缩放级别）
+            {
+                let settings = settings::get_settings(app.handle().clone());
+                let zoom = settings.get("global")
+                    .and_then(|g| g.get("zoom"))
+                    .and_then(|z| z.as_f64())
+                    .unwrap_or(0.75);
+                let _ = win.set_zoom(zoom);
+            }
+
+            // 安装 tracker 拦截规则（macOS 原生 WKContentRuleList；非 macOS 为空操作）
+            tracker_blocker::install(&win);
 
             let app_handle = app.handle().clone(); // Re-declare app_handle since we commented out the previous one
 
@@ -274,6 +326,7 @@ pub fn run() {
             commands::log_to_file,
             commands::update_menu_state,
             commands::set_menu_item_enabled,
+            commands::set_active_bookstore,
             settings::get_settings,
             settings::save_settings,
             commands::set_zoom,

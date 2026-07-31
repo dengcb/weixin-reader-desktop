@@ -7,6 +7,7 @@
 //! - Event-driven window position monitoring (no polling)
 
 #![allow(deprecated)]
+#![allow(non_camel_case_types, non_upper_case_globals)]
 
 use tauri::{AppHandle, Manager, Runtime};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,9 +16,18 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl, class};
 #[cfg(target_os = "macos")]
-use cocoa::base::{id, nil};
+use objc::runtime::Object;
 #[cfg(target_os = "macos")]
-use cocoa::foundation::NSString;
+type id = *mut Object;
+#[cfg(target_os = "macos")]
+const nil: id = std::ptr::null_mut();
+
+/// 从 Rust 字符串创建 NSString（通过 objc msg_send，不依赖 cocoa crate）
+#[cfg(target_os = "macos")]
+fn ns_string(s: &str) -> id {
+    let c_str = std::ffi::CString::new(s).unwrap();
+    unsafe { msg_send![class!(NSString), stringWithUTF8String: c_str.as_ptr()] }
+}
 
 /// Get the index of the monitor (display) where the main window is currently located.
 ///
@@ -114,7 +124,7 @@ pub fn get_macos_display_names() -> Vec<String> {
 
             // Fallback: Try deviceDescription
             let device_description: id = msg_send![screen, deviceDescription];
-            let name_key: id = NSString::alloc(nil).init_str("NSDeviceName");
+            let name_key: id = ns_string("NSDeviceName");
             let device_name: id = msg_send![device_description, objectForKey: name_key];
 
             if device_name != nil {

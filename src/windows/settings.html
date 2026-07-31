@@ -603,6 +603,70 @@
       color: var(--active-color);
       margin-left: 8px;
     }
+
+    /* 自定义确认弹窗 */
+    .confirm-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .confirm-overlay.show { display: flex; }
+    .confirm-box {
+      width: 320px;
+      max-width: calc(100vw - 48px);
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px 20px 16px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+      text-align: center;
+    }
+    .confirm-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      margin: 0 auto 12px;
+      display: block;
+      object-fit: cover;
+      background: var(--bg-color);
+    }
+    .confirm-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-color);
+      margin-bottom: 8px;
+    }
+    .confirm-msg {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .confirm-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .confirm-actions button {
+      flex: 1;
+      padding: 8px 0;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+    }
+    .confirm-cancel {
+      background: var(--card-bg);
+      color: var(--text-color);
+    }
+    .confirm-ok {
+      background: var(--danger-color);
+      color: #fff;
+      border-color: var(--danger-color);
+    }
   </style>
 </head>
 
@@ -672,6 +736,19 @@
             </div>
             <label class="toggle">
               <input type="checkbox" id="lastPage">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">记住书店，好看再来</div>
+              <div class="setting-desc">记住上次所在的书店，下次启动回到该书店</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="rememberSite">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -794,6 +871,7 @@
       const autoFlipStepSelect = document.getElementById('autoFlipStep');
       const keepAwakeCheckbox = document.getElementById('keepAwake');
       const lastPageCheckbox = document.getElementById('lastPage');
+      const rememberSiteCheckbox = document.getElementById('rememberSite');
 
       // 加载设置
       invoke('get_settings').then((settings) => {
@@ -817,11 +895,18 @@
           keepAwakeCheckbox.checked = true;
         }
 
-        // 记录进度
+        // 记录进度（阅读不停，自动记录）
         if (global.lastPage !== undefined) {
           lastPageCheckbox.checked = global.lastPage;
         } else {
           lastPageCheckbox.checked = true;
+        }
+
+        // 记住书店（默认开，向后兼容）
+        if (global.rememberSite !== undefined) {
+          rememberSiteCheckbox.checked = global.rememberSite;
+        } else {
+          rememberSiteCheckbox.checked = true;
         }
 
         // 渲染插件列表
@@ -891,6 +976,21 @@
         });
       });
 
+      // 保存记住书店
+      rememberSiteCheckbox.addEventListener('change', () => {
+        const val = rememberSiteCheckbox.checked;
+        invoke('get_settings').then((current) => {
+          current = current || {};
+          const global = current.global || {};
+
+          const update = {
+            global: { ...global, rememberSite: val }
+          };
+
+          invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
+        });
+      });
+
       // ==================== 插件管理 ====================
       const BUILTIN_PLUGINS = [
         { 
@@ -902,12 +1002,11 @@
           enabled: true,
           homeUrl: 'https://weread.qq.com/',
           configSchema: {
-            wideMode: { type: 'boolean', label: '阅读变宽', settingsKey: 'sites.weread.readerWide' },
-            hideToolbar: { type: 'boolean', label: '隐藏工具栏', settingsKey: 'sites.weread.hideToolbar' },
-            hideNavbar: { type: 'boolean', label: '隐藏导航栏', settingsKey: 'sites.weread.hideNavbar' },
             autoFlip: { type: 'boolean', label: '自动翻页', settingsKey: 'sites.weread.autoFlip.active' },
+            wideMode: { type: 'boolean', label: '阅读变宽', settingsKey: 'sites.weread.readerWide' },
             hideCursor: { type: 'boolean', label: '隐藏光标', settingsKey: 'global.hideCursor' },
-            useSystemFont: { type: 'boolean', label: '使用系统字体', settingsKey: 'sites.weread.useSystemFont' }
+            hideToolbar: { type: 'boolean', label: '隐藏工具栏', settingsKey: 'sites.weread.hideToolbar' },
+            hideNavbar: { type: 'boolean', label: '隐藏导航栏', settingsKey: 'sites.weread.hideNavbar' }
           }
         }
       ];
@@ -929,6 +1028,59 @@
           console.error('Failed to load external plugins:', e);
           allPlugins = [...BUILTIN_PLUGINS];
         }
+      }
+
+      // 自定义卸载确认弹窗（异步，等待用户点击；显示插件/站点图标）
+      function confirmUninstall({ name, isBuiltin, icon, homeUrl }) {
+        return new Promise((resolve) => {
+          const overlay = document.getElementById('confirmOverlay');
+          const icon_ = document.getElementById('confirmIcon');
+          const title = document.getElementById('confirmTitle');
+          const msg = document.getElementById('confirmMsg');
+          const okBtn = document.getElementById('confirmOk');
+          const cancelBtn = document.getElementById('confirmCancel');
+
+          title.textContent = `卸载「${name}」`;
+          msg.textContent = isBuiltin
+            ? '内置插件卸载后可重新从 .atrd 文件安装。'
+            : '外部插件卸载后将删除插件文件（阅读进度保留）。';
+
+          // 图标优先级：插件自带 icon → 站点 favicon → 默认拼图图标
+          const fallback = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#9aa0a6"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>'
+          );
+          let faviconTried = false;
+          icon_.onerror = () => {
+            if (!faviconTried && homeUrl) {
+              faviconTried = true;
+              try { icon_.src = new URL(homeUrl).origin + '/favicon.ico'; return; } catch {}
+            }
+            icon_.onerror = null;
+            icon_.src = fallback;
+          };
+          if (icon) {
+            icon_.src = icon;                       // 插件自带图标（data URI / URL）
+          } else if (homeUrl) {
+            faviconTried = true;
+            try { icon_.src = new URL(homeUrl).origin + '/favicon.ico'; }
+            catch { icon_.src = fallback; }
+          } else {
+            icon_.src = fallback;
+          }
+
+          const cleanup = (result) => {
+            overlay.classList.remove('show');
+            okBtn.onclick = null;
+            cancelBtn.onclick = null;
+            overlay.onclick = null;
+            resolve(result);
+          };
+          okBtn.onclick = () => cleanup(true);
+          cancelBtn.onclick = () => cleanup(false);
+          overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+
+          overlay.classList.add('show');
+        });
       }
 
       // 渲染插件列表
@@ -1049,11 +1201,11 @@
         
         if (action === 'uninstall') {
           const isBuiltin = btn.dataset.builtin === 'true';
-          const pluginName = allPlugins.find(p => p.id === pluginId)?.name || pluginId;
+          const plugin = allPlugins.find(p => p.id === pluginId);
+          const pluginName = plugin?.name || pluginId;
           
-          if (!confirm(`确定要卸载插件"${pluginName}"吗？\n\n${isBuiltin ? '内置插件卸载后可重新从 .atrd 文件安装。' : '外部插件卸载后将删除插件文件。'}`)) {
-            return;
-          }
+          const confirmed = await confirmUninstall({ name: pluginName, isBuiltin, icon: plugin?.icon, homeUrl: plugin?.site?.homeUrl });
+          if (!confirmed) return;
           
           try {
             // 获取当前所有插件 ID 列表（用于 disablePlugin）
@@ -1416,5 +1568,18 @@
       });
     })();
   </script>
+
+  <!-- 自定义卸载确认弹窗 -->
+  <div class="confirm-overlay" id="confirmOverlay">
+    <div class="confirm-box">
+      <img class="confirm-icon" id="confirmIcon" alt="">
+      <div class="confirm-title" id="confirmTitle"></div>
+      <div class="confirm-msg" id="confirmMsg"></div>
+      <div class="confirm-actions">
+        <button class="confirm-cancel" id="confirmCancel">取消</button>
+        <button class="confirm-ok" id="confirmOk">卸载</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

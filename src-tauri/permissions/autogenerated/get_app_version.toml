@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-app-version"
+description = "Enables the get_app_version command without any pre-configured scope."
+commands.allow = ["get_app_version"]
+
+[[permission]]
+identifier = "deny-get-app-version"
+description = "Denies the get_app_version command without any pre-configured scope."
+commands.deny = ["get_app_version"]

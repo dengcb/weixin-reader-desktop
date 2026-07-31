@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-plugin-config"
+description = "Enables the get_plugin_config command without any pre-configured scope."
+commands.allow = ["get_plugin_config"]
+
+[[permission]]
+identifier = "deny-get-plugin-config"
+description = "Denies the get_plugin_config command without any pre-configured scope."
+commands.deny = ["get_plugin_config"]

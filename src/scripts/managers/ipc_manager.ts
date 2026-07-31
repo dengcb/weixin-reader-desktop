@@ -15,6 +15,8 @@
 
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { settingsStore } from '../core/settings_store';
+import { getPluginLoader } from '../core/plugin_loader';
+import { invoke } from '../core/tauri';
 import { ScrollState } from '../core/scroll_state';
 import { log } from '../core/logger';
 import { BaseManager, Events } from '../core/base_manager';
@@ -169,11 +171,27 @@ export class IPCManager extends BaseManager {
     };
   };
 
-  private handleLastPageSaving(isReader: boolean, currentUrl: string) {
-    const settings = settingsStore.get();
-    if (settings.lastPage && isReader) {
-      if (settings.lastReaderUrl !== currentUrl) {
-        settingsStore.update({ lastReaderUrl: currentUrl });
+  private handleLastPageSaving(_isReader: boolean, _currentUrl: string) {
+    // 多站点：站点身份以「活跃插件」为准（旧适配器仅覆盖微信读书）
+    const active = getPluginLoader().getActivePlugin();
+    const siteId = active?.manifest.id;
+    // 未匹配任何站点插件时不记录，避免污染
+    if (!siteId) return;
+
+    // 记录当前活跃站点（即使在首页也记录，便于启动选站）
+    const global = settingsStore.get().global;
+    if (global?.lastSiteId !== siteId) {
+      settingsStore.updateGlobal({ lastSiteId: siteId });
+      // 同步书店菜单对勾到当前站点
+      invoke('set_active_bookstore', { siteId }).catch(() => {});
+    }
+
+    // 阅读页时保存该站点上次阅读页（按站点独立、全量保留；续读始终生效）
+    if (active!.isReaderPage()) {
+      const url = window.location.href;
+      const site = settingsStore.getSite(siteId);
+      if (site.lastReaderUrl !== url) {
+        settingsStore.updateSite(siteId, { lastReaderUrl: url });
       }
     }
   }
@@ -184,7 +202,11 @@ export class IPCManager extends BaseManager {
 
   private monitorTitle() {
     const target = document.querySelector('title');
-    if (!target) return;
+    if (!target) {
+      // 页面可能还没加载完，延迟重试
+      setTimeout(() => this.monitorTitle(), 500);
+      return;
+    }
 
     const dispatch = () => {
       if (document.title?.trim()) {

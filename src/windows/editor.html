@@ -914,7 +914,7 @@ export default MyPlugin;
     const defaultStyleTemplates = {
       'wide.css': `/* 宽屏模式样式 */
 .reader-container {
-  max-width: 96% !important;
+  max-width: 90% !important;
   margin: 0 auto;
 }`,
       'toolbar.css': `/* 工具栏隐藏样式 */
@@ -1089,7 +1089,14 @@ export default MyPlugin;
       if (!invoke) return;
 
       try {
-        // 监听初始化数据
+        // 主路径：自读 URL 参数并主动拉取（不依赖会丢的 editor-init 事件，消除竞态）
+        const params = new URLSearchParams(location.search);
+        if (params.get('mode') === 'edit' && params.get('pluginId')) {
+          const data = await invoke('load_plugin_for_edit', { pluginId: params.get('pluginId') });
+          if (data) loadPluginData(data);
+        }
+
+        // 次路径：窗口已存在时 settings.html 会 emit 过来（此时监听已注册，可正常收到）
         if (listen) {
           await listen('editor-init', (event) => {
             const data = event.payload;
@@ -1148,8 +1155,12 @@ export default MyPlugin;
         data.files.forEach(file => {
           editorState.files[file.name] = file.content;
         });
-        codeEditor.value = editorState.files['index.ts'] || '';
-        styleEditor.value = editorState.files['wide.css'] || '';
+        // 代码框：按优先级取首个存在文件（兼容 index.ts 源码与已安装的 plugin.js）
+        codeEditor.value = editorState.files['index.ts'] || editorState.files['index.js']
+          || editorState.files['plugin.ts'] || editorState.files['plugin.js'] || '';
+        // 样式框：优先 wide.css，否则首个 .css（内联样式插件无 css 文件时为空）
+        const firstCss = Object.keys(editorState.files).find(n => n.endsWith('.css'));
+        styleEditor.value = editorState.files['wide.css'] || (firstCss ? editorState.files[firstCss] : '');
       }
 
       updatePreview();

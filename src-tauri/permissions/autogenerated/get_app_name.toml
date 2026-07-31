@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-app-name"
+description = "Enables the get_app_name command without any pre-configured scope."
+commands.allow = ["get_app_name"]
+
+[[permission]]
+identifier = "deny-get-app-name"
+description = "Denies the get_app_name command without any pre-configured scope."
+commands.deny = ["get_app_name"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-menu-state"
+description = "Enables the update_menu_state command without any pre-configured scope."
+commands.allow = ["update_menu_state"]
+
+[[permission]]
+identifier = "deny-update-menu-state"
+description = "Denies the update_menu_state command without any pre-configured scope."
+commands.deny = ["update_menu_state"]

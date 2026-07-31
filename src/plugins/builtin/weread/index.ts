@@ -23,7 +23,7 @@ const STYLES = {
       .readerTopBar,
       body:has(.readerControls[is-horizontal="true"]) .readerChapterContent,
       .app_content {
-        width: 96% !important;
+        width: 90% !important;
         max-width: calc(100vw - 224px) !important;
       }
       body:has(.readerControls:not([is-horizontal="true"])) .readerControls {

@@ -11,7 +11,9 @@ import { join, dirname } from 'path';
 import { $ } from 'bun';
 
 const BUILTIN_PLUGINS_DIR = 'src/plugins/builtin';
-const OUTPUT_DIR = 'dist/plugins';
+const EXTERNAL_PLUGINS_DIR = 'plugins';
+// 输出到 release/（同样被 git 忽略，但不会被 `rm -rf dist` 清掉）
+const OUTPUT_DIR = 'release/plugins';
 
 interface PluginManifest {
   id: string;
@@ -21,24 +23,36 @@ interface PluginManifest {
   [key: string]: any;
 }
 
+/**
+ * 解析插件源码目录
+ * 优先从外部插件目录 plugins/ 查找，回退到内置插件目录
+ */
+function resolvePluginDir(pluginId: string): string | null {
+  const externalDir = join(EXTERNAL_PLUGINS_DIR, pluginId);
+  if (existsSync(join(externalDir, 'manifest.json'))) {
+    return externalDir;
+  }
+  const builtinDir = join(BUILTIN_PLUGINS_DIR, pluginId);
+  if (existsSync(join(builtinDir, 'manifest.json'))) {
+    return builtinDir;
+  }
+  return null;
+}
+
 async function buildPlugin(pluginId: string): Promise<void> {
   console.log(`\n📦 Building plugin: ${pluginId}\n`);
   
-  const pluginDir = join(BUILTIN_PLUGINS_DIR, pluginId);
+  const pluginDir = resolvePluginDir(pluginId);
+  
+  // 1. 检查插件目录是否存在
+  if (!pluginDir) {
+    console.error(`❌ Plugin not found in '${EXTERNAL_PLUGINS_DIR}/${pluginId}' or '${BUILTIN_PLUGINS_DIR}/${pluginId}'`);
+    process.exit(1);
+  }
+  
   const manifestPath = join(pluginDir, 'manifest.json');
   const indexPath = join(pluginDir, 'index.ts');
   const stylesDir = join(pluginDir, 'styles');
-  
-  // 1. 检查插件目录是否存在
-  if (!existsSync(pluginDir)) {
-    console.error(`❌ Plugin directory not found: ${pluginDir}`);
-    process.exit(1);
-  }
-  
-  if (!existsSync(manifestPath)) {
-    console.error(`❌ Manifest not found: ${manifestPath}`);
-    process.exit(1);
-  }
   
   if (!existsSync(indexPath)) {
     console.error(`❌ Plugin entry not found: ${indexPath}`);
@@ -125,11 +139,20 @@ async function main() {
     // 默认编译 weread 插件
     await buildPlugin('weread');
   } else if (args[0] === '--all') {
-    // 编译所有内置插件
+    // 编译所有插件（外部 plugins/ + 内置 builtin/）
     const { readdirSync } = await import('fs');
-    const plugins = readdirSync(BUILTIN_PLUGINS_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
+    const collectPlugins = (dir: string): string[] => {
+      if (!existsSync(dir)) return [];
+      return readdirSync(dir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name)
+        .filter(name => existsSync(join(dir, name, 'manifest.json')));
+    };
+    // 去重（外部优先）
+    const plugins = Array.from(new Set([
+      ...collectPlugins(EXTERNAL_PLUGINS_DIR),
+      ...collectPlugins(BUILTIN_PLUGINS_DIR),
+    ]));
     
     for (const pluginId of plugins) {
       await buildPlugin(pluginId);

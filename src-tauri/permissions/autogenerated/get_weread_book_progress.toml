@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-weread-book-progress"
+description = "Enables the get_weread_book_progress command without any pre-configured scope."
+commands.allow = ["get_weread_book_progress"]
+
+[[permission]]
+identifier = "deny-get-weread-book-progress"
+description = "Denies the get_weread_book_progress command without any pre-configured scope."
+commands.deny = ["get_weread_book_progress"]

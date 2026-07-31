@@ -7,7 +7,7 @@
 .wxrd-wide-enabled .readerTopBar,
 .wxrd-wide-enabled body:has(.readerControls[is-horizontal="true"]) .readerChapterContent,
 .wxrd-wide-enabled .app_content {
-  width: 96% !important;
+  width: 90% !important;
   max-width: calc(100vw - 224px) !important;
 }
 

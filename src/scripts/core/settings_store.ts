@@ -32,7 +32,9 @@ export interface AppSettings {
   global?: {
     zoom?: number;
     autoUpdate?: boolean;
-    lastPage?: boolean;  // 是否启用最后阅读位置恢复
+    lastPage?: boolean;  // 「阅读不停，自动记录」：是否恢复上次阅读页（正交于 rememberSite）
+    rememberSite?: boolean;  // 「记住书店，好看再来」：是否恢复上次所在站点（关则每次进微信读书）
+    lastSiteId?: string;  // 上次活跃的站点 ID（供启动时选站）
     hideCursor?: boolean;  // 是否隐藏光标
     enabledPlugins?: string[];  // 启用的插件列表，undefined = 全部启用（向后兼容）
   };

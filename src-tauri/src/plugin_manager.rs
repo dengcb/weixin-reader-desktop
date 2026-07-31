@@ -18,6 +18,8 @@ pub struct PluginInfo {
     pub author: Option<String>,
     #[serde(default)]
     pub homepage: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
     #[serde(rename = "sourceType")]
     pub source_type: String,
     #[serde(default)]

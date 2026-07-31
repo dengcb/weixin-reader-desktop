@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-move-window-to-monitor"
+description = "Enables the move_window_to_monitor command without any pre-configured scope."
+commands.allow = ["move_window_to_monitor"]
+
+[[permission]]
+identifier = "deny-move-window-to-monitor"
+description = "Denies the move_window_to_monitor command without any pre-configured scope."
+commands.deny = ["move_window_to_monitor"]

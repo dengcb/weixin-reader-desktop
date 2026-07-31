@@ -109,6 +109,37 @@ pub fn set_menu_item_enabled(app: AppHandle, id: String, enabled: bool) {
     }
 }
 
+/// 设置当前活跃书店（书店菜单单选对勾）
+/// 找到「书店」子菜单，将 site_id 对应项勾上、其余取消
+#[tauri::command]
+pub fn set_active_bookstore(app: AppHandle, site_id: String) {
+    println!("[Bookstore] set_active_bookstore called: site_id={}", site_id);
+    let target = tauri::menu::MenuId::from(format!("switch_site_{}", site_id).as_str());
+    let mut found_menus = 0;
+    if let Some(menu) = app.menu() {
+        if let Ok(items) = menu.items() {
+            for top in items.iter() {
+                if let Some(submenu) = top.as_submenu() {
+                    // 通过标题识别书店子菜单
+                    if submenu.text().map(|t| t == "书店").unwrap_or(false) {
+                        found_menus += 1;
+                        if let Ok(sub_items) = submenu.items() {
+                            for it in sub_items.iter() {
+                                if let Some(check) = it.as_check_menuitem() {
+                                    let want = *it.id() == target;
+                                    let _ = check.set_checked(want);
+                                    println!("[Bookstore]   item={} -> checked={}", it.id().0, want);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("[Bookstore] done, 书店 submenus found={}", found_menus);
+}
+
 #[tauri::command]
 pub fn set_zoom(app: AppHandle, value: f64) {
     if let Some(win) = app.get_webview_window("main") {
@@ -361,6 +392,19 @@ pub async fn get_weread_book_progress(
 
 use crate::plugin_manager;
 
+/// 插件变更后重建应用菜单（使「书店」菜单随外部插件增减即时出现/消失）
+/// rebuild_full_menu 仅在 macOS/Windows 存在，其它平台为空操作
+fn refresh_app_menu(app: &AppHandle) {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        if let Err(e) = crate::menu::rebuild_full_menu(app) {
+            eprintln!("[Menu] Failed to rebuild menu after plugin change: {:?}", e);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = app;
+}
+
 /// 安装插件
 #[tauri::command]
 pub async fn install_plugin(app: AppHandle, path: String) -> Result<plugin_manager::PluginInfo, String> {
@@ -370,19 +414,69 @@ pub async fn install_plugin(app: AppHandle, path: String) -> Result<plugin_manag
     
     // 触发设置更新事件，通知前端
     let _ = app.emit("plugins-updated", ());
+    refresh_app_menu(&app);
     
     Ok(result)
+}
+
+/// 若主窗口当前停留在指定插件的站点上，先导航回微信读书（优先续读上次阅读页，无则首页）
+/// 用于卸载前脱离该站点，避免卸载后滞留在无插件支撑、且无书店菜单可切换的页面上
+fn navigate_home_if_on_plugin_site(app: &AppHandle, plugin_id: &str) {
+    let Some(win) = app.get_webview_window("main") else { return };
+    let Ok(url) = win.url() else { return };
+    let Some(host) = url.host_str().map(|h| h.to_string()) else { return };
+
+    // 取该插件声明的域名列表（site.domain 可为 string 或 string[]）
+    let domains: Vec<String> = plugin_manager::get_installed_plugins(app)
+        .ok()
+        .and_then(|list| list.into_iter().find(|p| p.id == plugin_id))
+        .and_then(|p| p.site)
+        .map(|s| match s.domain {
+            serde_json::Value::String(d) => vec![d],
+            serde_json::Value::Array(arr) => arr
+                .into_iter()
+                .filter_map(|v| v.as_str().map(|x| x.to_string()))
+                .collect(),
+            _ => vec![],
+        })
+        .unwrap_or_default();
+
+    let on_site = domains
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{}", d)));
+    if !on_site {
+        return;
+    }
+
+    // 导航目标：weread 上次阅读页 → 回退 weread 首页
+    let settings = crate::settings::get_settings(app.clone());
+    let target = settings
+        .get("sites")
+        .and_then(|s| s.get("weread"))
+        .and_then(|s| s.get("lastReaderUrl"))
+        .and_then(|u| u.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| crate::sites::resolve_home_url(app, "weread"));
+    if let Some(t) = target {
+        if let Ok(u) = t.parse::<tauri::Url>() {
+            println!("[Plugin] Main window is on '{}' site, navigating back to weread before uninstall", plugin_id);
+            let _ = win.navigate(u);
+        }
+    }
 }
 
 /// 卸载插件
 #[tauri::command]
 pub async fn uninstall_plugin(app: AppHandle, plugin_id: String) -> Result<(), String> {
     println!("[Plugin] Uninstalling plugin: {}", plugin_id);
+    // 若正停在该插件站点上，先跳回微信读书再卸载
+    navigate_home_if_on_plugin_site(&app, &plugin_id);
     plugin_manager::uninstall_plugin(&app, &plugin_id)?;
     println!("[Plugin] Plugin uninstalled: {}", plugin_id);
     
     // 触发设置更新事件
     let _ = app.emit("plugins-updated", ());
+    refresh_app_menu(&app);
     
     Ok(())
 }
@@ -427,6 +521,7 @@ pub struct PluginFile {
 
 /// 编辑器插件数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PluginEditorData {
     pub mode: String,
     pub plugin_id: Option<String>,
@@ -595,6 +690,7 @@ pub async fn install_plugin_from_editor(
         description: manifest.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
         author: manifest.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
         homepage: manifest.get("homepage").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        icon: manifest.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string()),
         source_type: manifest.get("sourceType").and_then(|v| v.as_str()).unwrap_or("web").to_string(),
         site: manifest.get("site").map(|v| {
             serde_json::from_value(v.clone()).ok()
@@ -607,6 +703,7 @@ pub async fn install_plugin_from_editor(
     
     // 触发插件更新事件
     let _ = app.emit("plugins-updated", ());
+    refresh_app_menu(&app);
     
     println!("[PluginEditor] Plugin installed: {} v{}", info.id, info.version);
     Ok(info)

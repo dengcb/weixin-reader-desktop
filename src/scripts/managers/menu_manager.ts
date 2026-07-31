@@ -50,6 +50,11 @@ export class MenuManager {
       this.handleMenuAction(event.payload);
     });
 
+    // 监听 Rust 端发来的 toast 事件（zoom 百分比提示）
+    listen<string>('show-toast', (event) => {
+      showToast(event.payload);
+    });
+
     this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
       this.isReader = e.detail.isReader;
       this.updateMenuEnabledStatus('route-changed');

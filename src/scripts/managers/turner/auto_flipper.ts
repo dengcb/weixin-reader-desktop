@@ -67,7 +67,12 @@ export class AutoFlipper {
     this.generation++; // Invalidate all pending loops
     if (this.doubleTimer) { clearInterval(this.doubleTimer); this.doubleTimer = null; }
     if (this.singleRafId) { cancelAnimationFrame(this.singleRafId); this.singleRafId = null; }
-    if (this.originalTitle) { document.title = this.originalTitle; this.originalTitle = null; }
+    if (this.originalTitle !== null) {
+      // 恢复原生窗口标题为当前页面标题
+      // document.title 从未被修改，始终是真实页面标题
+      invoke('set_title', { title: document.title }).catch(() => {});
+      this.originalTitle = null;
+    }
     this.elapsedTime = 0;
   }
 
@@ -102,7 +107,9 @@ export class AutoFlipper {
       if (document.hidden && !this.keepAwake) return;
 
       this.countdown--;
-      document.title = `${this.appName} - 自动翻页 - ${this.countdown} 秒`;
+      // 直接更新原生窗口标题栏，不修改 document.title
+      // 避免 MutationObserver 误判为章节切换，干扰自动翻页
+      invoke('set_title', { title: `${this.appName} - 自动翻页 - ${this.countdown} 秒` }).catch(() => {});
 
       if (this.countdown <= 0) {
         this.onScrollLock(); // Lock mouse input during page turn
@@ -173,7 +180,8 @@ export class AutoFlipper {
       const percentage = Math.min(100, Math.max(0, Math.round((scrollY / maxScroll) * 1000) / 10));
 
       this.elapsedTime -= 1000;
-      document.title = `${this.appName} - 自动翻页 - 已读 ${percentage}%`;
+      // 直接更新原生窗口标题栏，不修改 document.title
+      invoke('set_title', { title: `${this.appName} - 自动翻页 - 已读 ${percentage}%` }).catch(() => {});
     }
 
     // 页面在后台且不需要保持唤醒时，暂停 RAF 循环以节省 CPU
