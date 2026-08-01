@@ -523,9 +523,11 @@ bun run build:plugin:all          # 编译全部
 
 **输入/输出目录：**
 - 源码：优先 `plugins/<id>/`（外部插件开发工作区），回退 `src/plugins/builtin/<id>/`
-- 产物：`release/plugins/<id>.atrd`
+- 产物：
+  - 外部插件：`plugins/<id>/release/<id>.atrd`（随 plugins 目录上传 GitHub，用户可直接下载安装）
+  - 内置插件：`release/plugins/<id>.atrd`（被 git 忽略，需手动分发）
 
-> ⚠️ **产物为何在 `release/` 而非 `dist/`**：`bun run start`（`tauri dev`）会触发 `beforeDevCommand: bun run build`，而它开头就 `rm -rf dist`——早期产物落在 `dist/plugins/` 会被每次 dev 构建清掉。`release/` 同样被 git 忽略（编译产物不入库），但 `rm -rf dist` 碰不到。
+> 💡 **外部插件产物为何在 `plugins/<id>/release/`**：小白用户从 GitHub clone 项目后，可以直接在插件目录找到预编译的 `.atrd` 文件并安装，无需自己打包。编译脚本会自动跳过 `release/` 子目录，避免"包中包"问题。
 
 ### 6. 测试安装
 

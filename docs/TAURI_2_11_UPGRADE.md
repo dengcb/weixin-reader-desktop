@@ -191,6 +191,40 @@ invoke('set_title', { title: `${this.appName} - 自动翻页 - ${this.countdown}
 
 ---
 
+## 四、新增窗口的 invoke 权限丢失
+
+### 问题现象
+
+插件编辑器窗口（`plugin-editor`）打开后，编辑器里所有字段为空，
+无法加载插件配置。控制台无报错。
+
+### 根因
+
+Tauri 2.11 的 ACL 权限检查不仅针对命令，还针对窗口。
+`capabilities/default.json` 的 `windows` 数组必须显式列出所有需要 invoke 权限的窗口。
+
+旧版本（2.9）不检查窗口是否注册，所有窗口默认有权限。
+2.11 开始，未注册到 `windows` 数组的窗口，invoke 会被静默拒绝（无报错）。
+
+### 解决方案
+
+在 `src-tauri/capabilities/default.json` 的 `windows` 数组中添加新窗口：
+
+```json
+{
+  "windows": ["main", "settings", "privacy", "terms", "plugin-editor"]
+}
+```
+
+### 诊断方法
+
+如果某个窗口的 invoke 不工作（无报错、无日志），检查：
+
+1. 该窗口的 label 是否在 `capabilities/default.json` 的 `windows` 数组中
+2. 如果不在，添加后重新编译
+
+---
+
 ## 版本信息
 
 | 组件 | 升级前 | 升级后 |
@@ -282,3 +316,22 @@ zoom 按站点独立存储（`sites[siteId].zoom`）。控制权完全在 Rust �
 自动翻页的倒计时显示用 `invoke('set_title')` 直接更新原生窗口标题栏，**禁止**修改 `document.title`。
 
 修改 `document.title` 会触发 MutationObserver，被误判为章节切换，干扰翻页动作。
+
+### 铁律 9：新增窗口必须同步注册到 capabilities/windows
+
+在 Rust 或前端创建新窗口（`WebviewWindow::builder` 或 `new WebviewWindow`）时，必须同步：
+
+1. `src-tauri/capabilities/default.json` 的 `windows` 数组
+
+遗漏会导致该窗口的所有 invoke 被静默拒绝（无报错日志）。
+
+验证方法：
+```bash
+# 从 Rust 代码提取所有窗口 label
+grep -oP 'WebviewWindow::builder\(app, "\K[^"]+' src-tauri/src/*.rs
+# 从前端代码提取
+grep -oP "new WebviewWindow\('\K[^']+" src/windows/*.html
+# 对比 capabilities/default.json 的 windows 数组
+```
+
+当前已注册窗口：`main`、`settings`、`privacy`、`terms`、`plugin-editor`。

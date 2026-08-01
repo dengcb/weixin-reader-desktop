@@ -12,8 +12,10 @@ import { $ } from 'bun';
 
 const BUILTIN_PLUGINS_DIR = 'src/plugins/builtin';
 const EXTERNAL_PLUGINS_DIR = 'plugins';
-// 输出到 release/（同样被 git 忽略，但不会被 `rm -rf dist` 清掉）
-const OUTPUT_DIR = 'release/plugins';
+// 内置插件输出到 release/（被 git 忽略，不会被 `rm -rf dist` 清掉）
+const BUILTIN_OUTPUT_DIR = 'release/plugins';
+// 外部插件输出到 plugins/{pluginId}/release/（随 plugins 目录上传 GitHub，方便小白用户下载）
+const EXTERNAL_OUTPUT_SUBDIR = 'release';
 
 interface PluginManifest {
   id: string;
@@ -43,6 +45,12 @@ async function buildPlugin(pluginId: string): Promise<void> {
   console.log(`\n📦 Building plugin: ${pluginId}\n`);
   
   const pluginDir = resolvePluginDir(pluginId);
+  const isExternal = pluginDir?.startsWith(EXTERNAL_PLUGINS_DIR);
+  
+  // 根据插件类型确定输出目录
+  const outputDir = isExternal
+    ? join(pluginDir!, EXTERNAL_OUTPUT_SUBDIR)
+    : BUILTIN_OUTPUT_DIR;
   
   // 1. 检查插件目录是否存在
   if (!pluginDir) {
@@ -69,8 +77,8 @@ async function buildPlugin(pluginId: string): Promise<void> {
   console.log(`  Plugin: ${manifest.name} v${manifest.version}`);
   
   // 3. 创建临时构建目录
-  const tempDir = join(OUTPUT_DIR, `_temp_${pluginId}`);
-  const outputFile = join(OUTPUT_DIR, `${pluginId}.atrd`);
+  const tempDir = join(outputDir, `_temp_${pluginId}`);
+  const outputFile = join(outputDir, `${pluginId}.atrd`);
   
   // 清理旧文件
   if (existsSync(tempDir)) {
@@ -104,7 +112,7 @@ async function buildPlugin(pluginId: string): Promise<void> {
   );
   console.log(`  ✓ Created manifest.json (builtin: false)`);
   
-  // 6. 复制样式文件
+  // 6. 复制样式文件（排除 release 子目录，避免"包中包"）
   if (existsSync(stylesDir)) {
     cpSync(stylesDir, join(tempDir, 'styles'), { recursive: true });
     console.log(`  ✓ Copied styles directory`);
@@ -129,7 +137,12 @@ async function buildPlugin(pluginId: string): Promise<void> {
   rmSync(tempDir, { recursive: true });
   
   console.log(`\n✅ Successfully built: ${outputFile}`);
-  console.log(`   Size: ${(Bun.file(outputFile).size / 1024).toFixed(1)} KB\n`);
+  console.log(`   Size: ${(Bun.file(outputFile).size / 1024).toFixed(1)} KB`);
+  if (isExternal) {
+    console.log(`   📤 此文件会随 plugins 目录上传 GitHub，用户可直接下载安装\n`);
+  } else {
+    console.log(`   📁 此文件在 release/ 目录（被 git 忽略），需手动分发\n`);
+  }
 }
 
 async function main() {

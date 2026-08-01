@@ -422,7 +422,50 @@ fn refresh_app_menu(app: &AppHandle) {
 /// 安装插件
 #[tauri::command]
 pub async fn install_plugin(app: AppHandle, path: String) -> Result<plugin_manager::PluginInfo, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    
     println!("[Plugin] Installing plugin from: {}", path);
+    
+    // 先读取 manifest 检查是否已存在同名 ID 的插件
+    let file = std::fs::File::open(&path)
+        .map_err(|e| format!("Failed to open plugin file: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read plugin archive: {}", e))?;
+    
+    let manifest: plugin_manager::PluginInfo = {
+        let mut manifest_file = archive.by_name("manifest.json")
+            .map_err(|_| "Plugin package missing manifest.json")?;
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut manifest_file, &mut content)
+            .map_err(|e| format!("Failed to read manifest.json: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Invalid manifest.json: {}", e))?
+    };
+    
+    // 检查是否已存在同名 ID 的插件
+    let existing_plugin = plugin_manager::get_installed_plugins(&app)
+        .ok()
+        .and_then(|plugins| plugins.into_iter().find(|p| p.id == manifest.id));
+    
+    if let Some(existing) = existing_plugin {
+        // 弹出确认对话框
+        let message = format!(
+            "已安装「{}」插件，继续安装将覆盖现有版本。\n\n是否继续？",
+            existing.name
+        );
+        
+        let confirmed = app.dialog()
+            .message(&message)
+            .title("插件已存在")
+            .buttons(MessageDialogButtons::OkCancelCustom("继续安装".to_string(), "取消".to_string()))
+            .kind(MessageDialogKind::Warning)
+            .blocking_show_with_result();
+        
+        if confirmed != tauri_plugin_dialog::MessageDialogResult::Ok {
+            return Err("用户取消安装".to_string());
+        }
+    }
+    
     let result = plugin_manager::install_plugin_from_file(&app, &path)?;
     println!("[Plugin] Plugin installed: {} v{}", result.id, result.version);
     

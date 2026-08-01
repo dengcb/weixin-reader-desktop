@@ -1,5 +1,5 @@
 import { execSync, spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
 import { join } from 'path';
 
 const rootDir = process.cwd();
@@ -12,7 +12,7 @@ function relPath(absPath: string): string {
 }
 
 // 运行命令并处理输出（将绝对路径替换为相对路径）
-function runCommandWithFilteredOutput(cmd: string, args: string[], env: NodeJS.ProcessEnv): void {
+async function runCommandWithFilteredOutput(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     const child = spawn(cmd, args, {
         env,
         stdio: ['inherit', 'pipe', 'pipe'],
@@ -387,7 +387,11 @@ async function runUpload() {
         const uploadUrlTemplate = release.upload_url;
         const uploadBaseUrl = uploadUrlTemplate.split('{')[0];
 
-        const filesToUpload = readdirSync(releaseDir).filter(f => !f.endsWith('.DS_Store'));
+        const filesToUpload = readdirSync(releaseDir).filter(f => {
+            if (f.endsWith('.DS_Store')) return false;
+            const filePath = join(releaseDir, f);
+            return statSync(filePath).isFile();
+        });
         
         for (const fileName of filesToUpload) {
             const filePath = join(releaseDir, fileName);

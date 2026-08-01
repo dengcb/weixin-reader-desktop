@@ -1313,6 +1313,10 @@ export default MyPlugin;
             files: data.files
           });
           markClean();
+          // 通知前端重新加载插件（CSS 立刻生效）
+          if (emit) {
+            await emit('plugins-updated');
+          }
           alert('保存成功！');
         } else {
           // 新建模式：调用另存为

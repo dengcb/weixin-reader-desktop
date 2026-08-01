@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/remote-schema.json",
   "identifier": "default",
   "description": "Capability for the main window with remote domain access",
-  "windows": ["main", "settings", "privacy", "terms"],
+  "windows": ["main", "settings", "privacy", "terms", "plugin-editor"],
   "remote": {
     "urls": [
       "https://weread.qq.com/*",

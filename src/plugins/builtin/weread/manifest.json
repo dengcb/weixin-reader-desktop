@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "微信读书网站支持插件",
   "author": "艾特阅读团队",
-  "homepage": "https://github.com/user/weixin-reader-desktop",
+  "homepage": "https://github.com/dengcb/weixin-reader-desktop",
   
   "sourceType": "web",
   "renderMode": "webview",
