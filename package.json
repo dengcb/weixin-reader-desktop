@@ -10,6 +10,10 @@
     "build:inject": "bun build src/scripts/inject.ts --outfile=src/scripts/inject.js --target=browser --minify-whitespace",
     "build:plugin": "bun src/scripts/build_plugin.ts",
     "build:plugin:all": "bun src/scripts/build_plugin.ts --all",
+    "check:frozen": "bun scripts/check-frozen.ts",
+    "check:ipc": "bun scripts/check-ipc.ts",
+    "typecheck": "bun scripts/typecheck.ts",
+    "test": "bun test",
     "icon:fetch": "bun src/scripts/fetch_plugin_icon.ts",
     "build": "bun run build:inject && rm -rf dist && mkdir -p dist && cp index.html dist/ && cp src/windows/*.html dist/ && cp icon.png dist/",
     "preview": "vite preview",
@@ -26,14 +30,13 @@
     "release:publish": "bun src/scripts/release.ts publish"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-http": "^2.5.9",
-    "@tauri-apps/plugin-opener": "^2.5.4",
-    "@tauri-apps/plugin-updater": "^2.10.1"
+    "@tauri-apps/api": "^2.11.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
+    "@types/bun": "^1.3.14",
     "@types/node": "^25.9.5",
+    "happy-dom": "^20.11.1",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
   }

@@ -9,9 +9,10 @@
  * - Log API with prefixed output
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { createPluginAPI } from '../plugin_api';
 import type { PluginManifest } from '../plugin_types';
+import { settingsStore } from '../settings_store';
 
 // Mock localStorage for test environment
 const localStorageData: Record<string, string> = {};
@@ -35,6 +36,8 @@ const mockManifest: PluginManifest = {
   name: 'Test Plugin',
   version: '1.0.0',
   sourceType: 'web',
+  renderMode: 'webview',
+  capabilities: {},
 };
 
 describe('Plugin API', () => {
@@ -133,10 +136,10 @@ describe('Plugin API', () => {
 
     it('should remove values', async () => {
       await api.storage.set('key1', 'value1');
-      expect(await api.storage.get('key1')).toBe('value1');
+      expect(await api.storage.get<string>('key1')).toBe('value1');
       
       await api.storage.remove('key1');
-      expect(await api.storage.get('key1')).toBeNull();
+      expect(await api.storage.get<string>('key1')).toBeNull();
     });
 
     it('should list keys for this plugin', async () => {
@@ -154,8 +157,44 @@ describe('Plugin API', () => {
       await api.storage.set('shared-key', 'value1');
       await api2.storage.set('shared-key', 'value2');
       
-      expect(await api.storage.get('shared-key')).toBe('value1');
-      expect(await api2.storage.get('shared-key')).toBe('value2');
+      expect(await api.storage.get<string>('shared-key')).toBe('value1');
+      expect(await api2.storage.get<string>('shared-key')).toBe('value2');
+    });
+  });
+
+  describe('Settings API', () => {
+    it('merges display settings and custom config, then routes writes by field owner', async () => {
+      const originals = {
+        getSite: settingsStore.getSite,
+        getPluginConfig: settingsStore.getPluginConfig,
+        updateSite: settingsStore.updateSite,
+        updatePluginConfig: settingsStore.updatePluginConfig,
+      };
+      const writes: string[] = [];
+      settingsStore.getSite = () => ({ readerWide: true, zoom: 0.8 });
+      settingsStore.getPluginConfig = () => ({ customMode: 'focus', readerWide: false });
+      settingsStore.updateSite = async (_id, patch) => { writes.push(`site:${JSON.stringify(patch)}`); };
+      settingsStore.updatePluginConfig = async (_id, patch) => {
+        writes.push(`plugin:${JSON.stringify(patch)}`);
+      };
+      try {
+        expect(api.settings.getAll()).toEqual({
+          customMode: 'focus',
+          readerWide: true,
+          zoom: 0.8,
+        });
+        await api.settings.set('zoom', 1);
+        await api.settings.set('customMode', 'plain');
+        expect(writes).toEqual([
+          'site:{"zoom":1}',
+          'plugin:{"customMode":"plain"}',
+        ]);
+      } finally {
+        settingsStore.getSite = originals.getSite;
+        settingsStore.getPluginConfig = originals.getPluginConfig;
+        settingsStore.updateSite = originals.updateSite;
+        settingsStore.updatePluginConfig = originals.updatePluginConfig;
+      }
     });
   });
 
@@ -295,8 +334,8 @@ describe('Plugin Namespace Isolation', () => {
       expect(true).toBe(true); // Skip in non-browser env
       return;
     }
-    const manifest1: PluginManifest = { id: 'plugin-a', name: 'A', version: '1.0.0', sourceType: 'web' };
-    const manifest2: PluginManifest = { id: 'plugin-b', name: 'B', version: '1.0.0', sourceType: 'web' };
+    const manifest1: PluginManifest = { ...mockManifest, id: 'plugin-a', name: 'A' };
+    const manifest2: PluginManifest = { ...mockManifest, id: 'plugin-b', name: 'B' };
     
     const api1 = createPluginAPI(manifest1);
     const api2 = createPluginAPI(manifest2);

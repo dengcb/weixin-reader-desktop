@@ -8,7 +8,7 @@
  * 4. 便捷的事件订阅方法
  */
 
-import { EventBus, Events, type EventName, type ListenerOptions } from './event_bus';
+import { EventBus, type EventName, type ListenerOptions } from './event_bus';
 
 let nextManagerId = 0;
 

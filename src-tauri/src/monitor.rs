@@ -9,18 +9,39 @@
 #![allow(deprecated)]
 #![allow(non_camel_case_types, non_upper_case_globals)]
 
-use tauri::{AppHandle, Manager, Runtime};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tauri::{AppHandle, Manager, Runtime};
 
 #[cfg(target_os = "macos")]
-use objc::{msg_send, sel, sel_impl, class};
-#[cfg(target_os = "macos")]
 use objc::runtime::Object;
+#[cfg(target_os = "macos")]
+use objc::{class, msg_send, sel, sel_impl};
 #[cfg(target_os = "macos")]
 type id = *mut Object;
 #[cfg(target_os = "macos")]
 const nil: id = std::ptr::null_mut();
+
+fn point_in_monitor_bounds(
+    window_position: (i32, i32),
+    monitor_position: (i32, i32),
+    monitor_size: (u32, u32),
+    scale: f64,
+) -> bool {
+    if !scale.is_finite() || scale <= 0.0 {
+        return false;
+    }
+    let logical_mx = monitor_position.0 as f64 / scale;
+    let logical_my = monitor_position.1 as f64 / scale;
+    let logical_mw = monitor_size.0 as f64 / scale;
+    let logical_mh = monitor_size.1 as f64 / scale;
+    let logical_wx = window_position.0 as f64 / scale;
+    let logical_wy = window_position.1 as f64 / scale;
+    logical_wx >= logical_mx
+        && logical_wx < logical_mx + logical_mw
+        && logical_wy >= logical_my
+        && logical_wy < logical_my + logical_mh
+}
 
 /// 从 Rust 字符串创建 NSString（通过 objc msg_send，不依赖 cocoa crate）
 #[cfg(target_os = "macos")]
@@ -39,12 +60,16 @@ fn ns_string(s: &str) -> id {
 /// * `None` - Unable to determine the monitor (window not found or position unavailable)
 pub fn get_current_monitor_index<R: Runtime>(handle: &AppHandle<R>) -> Option<usize> {
     // Get window position (physical pixels)
-    let (window_x, window_y) = handle.get_webview_window("main")
+    let (window_x, window_y) = handle
+        .get_webview_window("main")
         .and_then(|w| w.outer_position().ok())
         .map(|p| (p.x, p.y))
         .unwrap_or((0, 0));
 
-    eprintln!("DEBUG: get_current_monitor_index: window position = ({}, {})", window_x, window_y);
+    eprintln!(
+        "DEBUG: get_current_monitor_index: window position = ({}, {})",
+        window_x, window_y
+    );
 
     // Use Tauri's available_monitors to get all displays
     if let Ok(monitors) = handle.available_monitors() {
@@ -55,27 +80,27 @@ pub fn get_current_monitor_index<R: Runtime>(handle: &AppHandle<R>) -> Option<us
             let size = monitor.size();
             let scale = monitor.scale_factor();
 
-            eprintln!("DEBUG: Monitor[{}]: x={}, y={}, width={}, height={}, scale={}",
-                i, pos.x, pos.y, size.width, size.height, scale);
+            eprintln!(
+                "DEBUG: Monitor[{}]: x={}, y={}, width={}, height={}, scale={}",
+                i, pos.x, pos.y, size.width, size.height, scale
+            );
 
-            // Convert monitor physical bounds to logical bounds
-            let logical_mx = pos.x as f64 / scale;
-            let logical_my = pos.y as f64 / scale;
-            let logical_mw = size.width as f64 / scale;
-            let logical_mh = size.height as f64 / scale;
+            let within = point_in_monitor_bounds(
+                (window_x, window_y),
+                (pos.x, pos.y),
+                (size.width, size.height),
+                scale,
+            );
 
-            // Convert window position to logical
-            let logical_wx = window_x as f64 / scale;
-            let logical_wy = window_y as f64 / scale;
+            eprintln!(
+                "DEBUG: Window logical ({:.0}, {:.0}) within monitor[{}]: {}",
+                window_x as f64 / scale,
+                window_y as f64 / scale,
+                i,
+                within
+            );
 
-            // Check if logical window position is within this monitor's bounds
-            let within_x = logical_wx >= logical_mx && logical_wx < logical_mx + logical_mw;
-            let within_y = logical_wy >= logical_my && logical_wy < logical_my + logical_mh;
-
-            eprintln!("DEBUG: Window logical ({:.0}, {:.0}) within monitor[{}]: x={}, y={}",
-                logical_wx, logical_wy, i, within_x, within_y);
-
-            if within_x && within_y {
+            if within {
                 eprintln!("DEBUG: Window is on monitor[{}]", i);
                 return Some(i);
             }
@@ -187,31 +212,54 @@ pub fn calculate_center_position<R: Runtime>(
             let pos = target_monitor.position();
             let size = target_monitor.size();
 
-            // Convert window size from physical pixels to logical points
-            let logical_width = (window_size.0 as f64 / scale) as i32;
-            let logical_height = (window_size.1 as f64 / scale) as i32;
+            let (x, y) = calculate_center_from_physical_bounds(
+                (pos.x, pos.y),
+                (size.width, size.height),
+                scale,
+                window_size,
+            );
 
-            // Convert monitor bounds to logical
-            let logical_mx = pos.x as f64 / scale;
-            let logical_my = pos.y as f64 / scale;
-            let logical_mw = size.width as f64 / scale;
-            let logical_mh = size.height as f64 / scale;
-
-            // Calculate center position
-            let x = (logical_mx + (logical_mw - logical_width as f64) / 2.0) as i32;
-            let y = (logical_my + (logical_mh - logical_height as f64) / 2.0) as i32;
-
-            eprintln!("DEBUG: Calculated center position ({}, {}) for monitor[{}]", x, y, monitor_index);
-            eprintln!("DEBUG: Target monitor: logical=({:.0}, {:.0}), size={:.0}x{:.0}, scale={}",
-                logical_mx, logical_my, logical_mw, logical_mh, scale);
-            eprintln!("DEBUG: Window size: physical={}x{}, logical={}x{}",
-                window_size.0, window_size.1, logical_width, logical_height);
+            eprintln!(
+                "DEBUG: Calculated center position ({}, {}) for monitor[{}]",
+                x, y, monitor_index
+            );
+            eprintln!(
+                "DEBUG: Target monitor: logical=({:.0}, {:.0}), size={:.0}x{:.0}, scale={}",
+                pos.x as f64 / scale,
+                pos.y as f64 / scale,
+                size.width as f64 / scale,
+                size.height as f64 / scale,
+                scale
+            );
+            eprintln!(
+                "DEBUG: Window size: physical={}x{}",
+                window_size.0, window_size.1
+            );
 
             return Some((x, y));
         }
     }
 
     None
+}
+
+/// 与硬件无关的居中计算，供普通单元测试覆盖。
+fn calculate_center_from_physical_bounds(
+    monitor_position: (i32, i32),
+    monitor_size: (u32, u32),
+    scale: f64,
+    window_size: (u32, u32),
+) -> (i32, i32) {
+    let logical_width = window_size.0 as f64 / scale;
+    let logical_height = window_size.1 as f64 / scale;
+    let logical_mx = monitor_position.0 as f64 / scale;
+    let logical_my = monitor_position.1 as f64 / scale;
+    let logical_mw = monitor_size.0 as f64 / scale;
+    let logical_mh = monitor_size.1 as f64 / scale;
+    (
+        (logical_mx + (logical_mw - logical_width) / 2.0) as i32,
+        (logical_my + (logical_mh - logical_height) / 2.0) as i32,
+    )
 }
 
 /// Start event-driven window position monitoring.
@@ -223,10 +271,8 @@ pub fn calculate_center_position<R: Runtime>(
 /// # Arguments
 /// * `handle` - The app handle
 /// * `menu_rebuild_callback` - A callback function to rebuild the menu
-pub fn start_position_monitoring<R: Runtime, F>(
-    handle: AppHandle<R>,
-    menu_rebuild_callback: F,
-) where
+pub fn start_position_monitoring<R: Runtime, F>(handle: AppHandle<R>, menu_rebuild_callback: F)
+where
     F: Fn(&AppHandle<R>) -> tauri::Result<()> + Send + Sync + Clone + 'static,
 {
     // Track last known monitor index to detect actual monitor changes
@@ -249,7 +295,10 @@ pub fn start_position_monitoring<R: Runtime, F>(
                 if let Some(new_idx) = get_current_monitor_index(&handle_clone) {
                     let prev_idx = last_idx.load(Ordering::Relaxed);
                     if prev_idx != new_idx {
-                        eprintln!("DEBUG MONITOR: Window moved from monitor {} to {}, rebuilding menu", prev_idx, new_idx);
+                        eprintln!(
+                            "DEBUG MONITOR: Window moved from monitor {} to {}, rebuilding menu",
+                            prev_idx, new_idx
+                        );
                         last_idx.store(new_idx, Ordering::Relaxed);
 
                         // Rebuild menu after a short delay to let the move complete
@@ -274,6 +323,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
+    #[ignore = "requires a real macOS display session"]
     fn test_get_macos_display_names_not_empty() {
         let names = get_macos_display_names();
         assert!(!names.is_empty(), "macOS display names should not be empty");
@@ -281,8 +331,38 @@ mod tests {
 
     #[test]
     fn test_calculate_center_position_basic() {
-        // This is a basic unit test - integration tests would need a running Tauri app
-        // For now, we just test the function signature and None handling
-        // TODO: Add proper integration tests with mock AppHandle
+        assert_eq!(
+            calculate_center_from_physical_bounds((0, 0), (3840, 2160), 2.0, (1600, 1200)),
+            (560, 240),
+        );
+        assert_eq!(
+            calculate_center_from_physical_bounds((-1920, 0), (1920, 1080), 1.0, (1200, 800)),
+            (-1560, 140),
+        );
+    }
+
+    #[test]
+    fn center_calculation_handles_offsets_fractional_scale_and_large_windows() {
+        assert_eq!(
+            calculate_center_from_physical_bounds((1920, 0), (2560, 1440), 1.25, (1000, 750)),
+            (2160, 276),
+        );
+        assert_eq!(
+            calculate_center_from_physical_bounds((0, 0), (1000, 800), 1.0, (1400, 1000)),
+            (-200, -100),
+        );
+    }
+
+    #[test]
+    fn monitor_bounds_include_top_left_and_exclude_bottom_right() {
+        let position = (-1920, 100);
+        let size = (1920, 1080);
+        assert!(point_in_monitor_bounds(position, position, size, 2.0));
+        assert!(point_in_monitor_bounds((-1, 1179), position, size, 2.0));
+        assert!(!point_in_monitor_bounds((0, 1179), position, size, 2.0));
+        assert!(!point_in_monitor_bounds((-1, 1180), position, size, 2.0));
+        assert!(!point_in_monitor_bounds((-1921, 100), position, size, 2.0));
+        assert!(!point_in_monitor_bounds(position, position, size, 0.0));
+        assert!(!point_in_monitor_bounds(position, position, size, f64::NAN));
     }
 }

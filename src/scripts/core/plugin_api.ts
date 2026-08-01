@@ -22,20 +22,53 @@ import type {
   PluginManifest,
 } from './plugin_types';
 
+type Cleanup = () => void;
+const pluginCleanups = new Map<string, Set<Cleanup>>();
+const pluginStyleIds = new Map<string, Set<string>>();
+
+const trackCleanup = (pluginId: string, cleanup: Cleanup): Cleanup => {
+  let cleanups = pluginCleanups.get(pluginId);
+  if (!cleanups) {
+    cleanups = new Set();
+    pluginCleanups.set(pluginId, cleanups);
+  }
+  cleanups.add(cleanup);
+  return () => {
+    cleanups?.delete(cleanup);
+    cleanup();
+  };
+};
+
+export const cleanupPluginAPI = (pluginId: string): void => {
+  for (const cleanup of pluginCleanups.get(pluginId) ?? []) {
+    try { cleanup(); } catch (error) { coreLog.error('[PluginAPI] Cleanup failed', error); }
+  }
+  pluginCleanups.delete(pluginId);
+  for (const styleId of pluginStyleIds.get(pluginId) ?? []) removeCSS(styleId);
+  pluginStyleIds.delete(pluginId);
+  EventBus.clearHistoryByPrefix(`plugin:${pluginId}:`);
+};
+
 /**
  * 为插件创建 Style API
  * 样式 ID 自动添加插件前缀，避免冲突
  */
 const createStyleAPI = (pluginId: string): StyleAPI => {
   const prefix = `plugin-${pluginId}-`;
+  const styles = new Set<string>();
+  pluginStyleIds.set(pluginId, styles);
   
   return {
     inject(id: string, css: string): void {
-      injectCSS(`${prefix}${id}`, css);
+      const fullId = `${prefix}${id}`;
+      styles.add(fullId);
+      injectCSS(fullId, css);
     },
     
     remove(id: string): void {
-      removeCSS(`${prefix}${id}`);
+      const fullId = `${prefix}${id}`;
+      styles.delete(fullId);
+      removeCSS(fullId);
     },
     
     has(id: string): boolean {
@@ -46,28 +79,38 @@ const createStyleAPI = (pluginId: string): StyleAPI => {
 
 /**
  * 为插件创建 Settings API
- * 设置存储在 sites.[pluginId] 命名空间下
+ * 显示设置存储在 sites.[pluginId]，插件自定义设置存储在 pluginConfigs.[pluginId]
  */
 const createSettingsAPI = (pluginId: string): SettingsAPI => {
+  const siteKeys = new Set(['zoom', 'readerWide', 'hideToolbar', 'hideNavbar']);
+  const getMerged = (): Record<string, any> => ({
+    ...settingsStore.getPluginConfig(pluginId),
+    ...settingsStore.getSite(pluginId),
+  });
+
   return {
     get<T>(key: string, defaultValue?: T): T {
-      const siteSettings = settingsStore.getSite(pluginId);
-      const value = (siteSettings as any)?.[key];
+      const value = getMerged()[key];
       return value !== undefined ? value : (defaultValue as T);
     },
     
     async set(key: string, value: any): Promise<void> {
-      await settingsStore.updateSite(pluginId, { [key]: value });
+      if (siteKeys.has(key)) {
+        await settingsStore.updateSite(pluginId, { [key]: value });
+      } else {
+        await settingsStore.updatePluginConfig(pluginId, { [key]: value });
+      }
     },
     
     getAll(): Record<string, any> {
-      return settingsStore.getSite(pluginId) || {};
+      return getMerged();
     },
     
     subscribe(callback: (settings: Record<string, any>) => void): () => void {
-      return settingsStore.subscribe(() => {
-        callback(settingsStore.getSite(pluginId) || {});
+      const unsubscribe = settingsStore.subscribe(() => {
+        callback(getMerged());
       });
+      return trackCleanup(pluginId, unsubscribe);
     },
   };
 };
@@ -92,10 +135,10 @@ const createEventsAPI = (pluginId: string): EventsAPI => {
       // 同时监听全局事件总线
       const unsubscribe = EventBus.on(fullEvent, handler);
       
-      return () => {
+      return trackCleanup(pluginId, () => {
         handlers.get(fullEvent)?.delete(handler);
         unsubscribe();
-      };
+      });
     },
     
     emit(event: string, ...args: any[]): void {
@@ -105,14 +148,15 @@ const createEventsAPI = (pluginId: string): EventsAPI => {
     
     once(event: string, handler: (...args: any[]) => void): () => void {
       const fullEvent = `${prefix}${event}`;
-      
-      const wrappedHandler = (...args: any[]) => {
+      let trackedCleanup: Cleanup = () => undefined;
+      const unsubscribe = EventBus.once(fullEvent, (...args) => {
+        // EventBus 已在回调前移除 once 监听；同时从插件资源表移除，
+        // 避免长时运行的插件为每次 once 累积空清理函数。
+        trackedCleanup();
         handler(...args);
-        unsubscribe();
-      };
-      
-      const unsubscribe = EventBus.on(fullEvent, wrappedHandler);
-      return unsubscribe;
+      });
+      trackedCleanup = trackCleanup(pluginId, unsubscribe);
+      return trackedCleanup;
     },
   };
 };
@@ -256,6 +300,7 @@ const createContentAPI = (_pluginId: string): ContentAPI => {
  */
 export const createPluginAPI = (manifest: PluginManifest): PluginAPI => {
   const pluginId = manifest.id;
+  cleanupPluginAPI(pluginId);
   
   return {
     style: createStyleAPI(pluginId),

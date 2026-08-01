@@ -15,11 +15,11 @@
 
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { settingsStore } from '../core/settings_store';
-import { getPluginLoader } from '../core/plugin_loader';
 import { invoke } from '../core/tauri';
 import { ScrollState } from '../core/scroll_state';
 import { log } from '../core/logger';
 import { BaseManager, Events } from '../core/base_manager';
+import { saveReadingPosition } from '../core/reading_position';
 
 export type RouteChangedEvent = {
   isReader: boolean;
@@ -44,6 +44,7 @@ export class IPCManager extends BaseManager {
   // Timers
   private scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private safetyTimeout: ReturnType<typeof setTimeout> | null = null;
+  private titleRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Original History API methods
   private originalPushState: typeof history.pushState | null = null;
@@ -54,6 +55,8 @@ export class IPCManager extends BaseManager {
 
   // 共享的路由检测函数
   private checkRouteHandler: (() => void) | null = null;
+  private scrollHandler: (() => void) | null = null;
+  private visibilityHandler: (() => void) | null = null;
 
   constructor() {
     super();
@@ -63,9 +66,12 @@ export class IPCManager extends BaseManager {
 
   private async init() {
     await settingsStore.init();
+    if (this.destroyed) return;
 
     // Safety fallback: Ensure scroll saving is enabled after 10 seconds
     this.safetyTimeout = setTimeout(() => {
+      this.safetyTimeout = null;
+      if (this.destroyed) return;
       if (!ScrollState.isRestorationComplete()) {
         log.warn('[IPCManager] Force enabling scroll save after timeout');
         ScrollState.markRestorationComplete();
@@ -114,6 +120,7 @@ export class IPCManager extends BaseManager {
     let lastUrl = window.location.href;
     let lastIsReader = this.siteContext.isReaderPage;
     let lastTitle = document.title;
+    let initial = true;
 
     return () => {
       const currentUrl = window.location.href;
@@ -122,7 +129,8 @@ export class IPCManager extends BaseManager {
       const currentTitle = document.title;
 
       // 检测路由变化（进入/离开阅读页）
-      const routeChanged = lastIsReader !== isReader;
+      const routeChanged = initial || lastIsReader !== isReader;
+      initial = false;
       lastIsReader = isReader;
       this.currentIsReader = isReader;
 
@@ -173,8 +181,8 @@ export class IPCManager extends BaseManager {
 
   private handleLastPageSaving(_isReader: boolean, _currentUrl: string) {
     // 多站点：站点身份以「活跃插件」为准（旧适配器仅覆盖微信读书）
-    const active = getPluginLoader().getActivePlugin();
-    const siteId = active?.manifest.id;
+    const active = this.siteContext.currentRuntime;
+    const siteId = active?.id;
     // 未匹配任何站点插件时不记录，避免污染
     if (!siteId) return;
 
@@ -207,10 +215,14 @@ export class IPCManager extends BaseManager {
   // =====================================================
 
   private monitorTitle() {
+    if (this.destroyed) return;
     const target = document.querySelector('title');
     if (!target) {
       // 页面可能还没加载完，延迟重试
-      setTimeout(() => this.monitorTitle(), 500);
+      this.titleRetryTimer = setTimeout(() => {
+        this.titleRetryTimer = null;
+        this.monitorTitle();
+      }, 500);
       return;
     }
 
@@ -243,7 +255,7 @@ export class IPCManager extends BaseManager {
   // =====================================================
 
   private monitorScroll() {
-    const scrollHandler = () => {
+    this.scrollHandler = () => {
       // 只在阅读页且启用了 lastPage 时保存
       if (!this.currentIsReader) return;
 
@@ -267,23 +279,21 @@ export class IPCManager extends BaseManager {
       }
 
       this.scrollSaveTimer = setTimeout(() => {
+        this.scrollSaveTimer = null;
+        if (this.destroyed) return;
         this.lastSavedScrollY = scrollY;
         const currentUrl = window.location.href;
-        const active = getPluginLoader().getActivePlugin();
-        const sid = active?.manifest.id;
+        const active = this.siteContext.currentRuntime;
+        const sid = active?.id;
         if (!sid) return;
 
-        const currentSite = settingsStore.getSite(sid);
-        const currentProgress = currentSite.readingProgress || {};
-
-        settingsStore.updateSite(sid, {
-          scrollPosition: scrollY,
-          readingProgress: { ...currentProgress, [currentUrl]: scrollY }
+        saveReadingPosition(sid, currentUrl, scrollY).catch((error) => {
+          log.error('[IPCManager] Failed to save reading position', error);
         });
       }, 500);
     };
 
-    window.addEventListener('scroll', scrollHandler, { passive: true });
+    window.addEventListener('scroll', this.scrollHandler, { passive: true });
   }
 
   // =====================================================
@@ -291,7 +301,7 @@ export class IPCManager extends BaseManager {
   // =====================================================
 
   private monitorVisibility() {
-    const visibilityHandler = () => {
+    this.visibilityHandler = () => {
       if (document.hidden) {
         // 进入后台：停止 SiteContext Observer
         this.siteContext.stopObserving();
@@ -305,7 +315,8 @@ export class IPCManager extends BaseManager {
       }
     };
 
-    document.addEventListener('visibilitychange', visibilityHandler);
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+    this.visibilityHandler();
   }
 
   // =====================================================
@@ -321,6 +332,22 @@ export class IPCManager extends BaseManager {
     if (this.safetyTimeout) {
       clearTimeout(this.safetyTimeout);
       this.safetyTimeout = null;
+    }
+    if (this.titleRetryTimer) {
+      clearTimeout(this.titleRetryTimer);
+      this.titleRetryTimer = null;
+    }
+
+    if (this.checkRouteHandler) {
+      window.removeEventListener('popstate', this.checkRouteHandler);
+    }
+    if (this.scrollHandler) {
+      window.removeEventListener('scroll', this.scrollHandler);
+      this.scrollHandler = null;
+    }
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
     }
 
     // 恢复 History API

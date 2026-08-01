@@ -2,18 +2,19 @@
  * 进度跟踪器 (新算法)
  *
  * 三级事件系统：
- * - HIGH: 进入阅读页 -> 从 __INITIAL_STATE__ 初始化章节数据 + 获取初始进度
+ * - HIGH: 进入阅读页 -> 初始化章节数据 + 获取初始进度
  * - MEDIUM: 章节切换 -> 修正算法 + 重置 turningPages
  * - LOW: 翻页 -> turningPages ± 1
  *
  * 数据源原则：
- * - 只在首次打开书籍时从 __INITIAL_STATE__ 获取章节数据（不调用 API）
- * - 只在首次打开时调用 getProgress API 获取当前阅读位置
+ * - ChapterManager 获取并有界缓存章节数据及校准结果
+ * - 每次进入书籍都调用 getProgress API 获取已登录用户的初始位置
  * - 后续所有操作均为本地内存计算
  */
 
 import { BaseManager, Events } from '../core/base_manager';
 import { chapterManager, ChapterData } from '../core/chapter_manager';
+import { getChapterUrl } from '../utils/chapter';
 
 /**
  * 进度更新事件优先级
@@ -32,8 +33,11 @@ enum PageDirection {
   BACKWARD = -1, // 向后（上一页）
 }
 
+type InitializationRetryReason = 'metadata' | 'progress';
+
 export class ProgressTracker extends BaseManager {
-  // 当前书籍 ID
+  // URL 中的书籍 token 用于识别 SPA 切书，数字 ID 用于官方进度 API。
+  private currentBookToken: string | null = null;
   private currentBookId: string | null = null;
   private currentChapterIdx: number = 0;
   private currentProgress: number = 0;  // 当前进度 0-100
@@ -41,8 +45,15 @@ export class ProgressTracker extends BaseManager {
   // 每章已翻页数
   private turningPages: number = 0;
 
-  // 防止重复初始化
-  private isInitializing: boolean = false;
+  // 同书重复事件只初始化一次；切书时用代次阻止旧异步结果回写。
+  private initializingBookToken: string | null = null;
+  private initializationGeneration = 0;
+  private initializationRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private metadataRetryCount = 0;
+  private progressRetryCount = 0;
+  private readonly INITIALIZATION_RETRY_MS = 500;
+  private readonly METADATA_RETRY_LIMIT = 20;
+  private readonly PROGRESS_RETRY_LIMIT = 3;
 
   // 事件优先级控制
   private lastEventPriority: EventPriority = EventPriority.LOW;
@@ -55,6 +66,11 @@ export class ProgressTracker extends BaseManager {
   private lastDirectionTime: number = 0;  // 记录最后一次翻页方向确认的时间
   private pageDirectionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly DIRECTION_DEBOUNCE_MS = 500;
+
+  // 目录跳转时的 Title 等待句柄。
+  private titleWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  private titleWaitResolve: (() => void) | null = null;
+  private chapterChangeGeneration = 0;
 
   // DOM 事件处理器（用于清理）
   private domReadyHandler: (() => void) | null = null;
@@ -69,19 +85,23 @@ export class ProgressTracker extends BaseManager {
     // 监听路由变化事件（进入阅读页）
     this.onWithHistory(Events.ROUTE_CHANGED, (e: RouteChangedEvent) => {
       if (e.isReader) {
-        const bookId = this.extractBookIdFromUrl(e.url);
-        if (bookId) {
-          if (this.currentBookId !== bookId) {
-            this.onEnterReaderPage(bookId);
-          }
-        }
+        const bookToken = this.extractBookTokenFromUrl(e.url);
+        if (bookToken) void this.onEnterReaderPage(bookToken);
+      } else {
+        this.leaveReaderPage();
       }
     });
 
     // 监听章节切换事件
     this.on(Events.CHAPTER_CHANGED, (e: ChapterChangedEvent) => {
-      if (this.currentBookId) {
-        this.onChapterChange(this.currentBookId, e.url);
+      const bookToken = this.extractBookTokenFromUrl(e.url);
+      if (!bookToken) return;
+
+      // IPCManager 在阅读页内切换书籍时发布章节事件，这里必须走完整的官方进度初始化。
+      if (this.currentBookToken !== bookToken) {
+        void this.onEnterReaderPage(bookToken);
+      } else if (this.currentBookId) {
+        void this.onChapterChange(e.url);
       }
     });
 
@@ -109,10 +129,8 @@ export class ProgressTracker extends BaseManager {
   private checkCurrentPage() {
     const currentUrl = window.location.href;
     if (window.location.pathname.includes('/web/reader/')) {
-      const bookId = this.extractBookIdFromUrl(currentUrl);
-      if (bookId) {
-        this.onEnterReaderPage(bookId);
-      }
+      const bookToken = this.extractBookTokenFromUrl(currentUrl);
+      if (bookToken) void this.onEnterReaderPage(bookToken);
     }
   }
 
@@ -123,63 +141,75 @@ export class ProgressTracker extends BaseManager {
   /**
    * 高优先级事件：进入阅读页
    * - 初始化章节数据（通过 ChapterManager）
-   * - 调用 API 获取初始进度百分比（仅此一次）
+   * - 调用 API 获取这次进入书籍的初始进度百分比
    * - 计算初始 turningPages
    */
-  private async onEnterReaderPage(bookId: string): Promise<void> {
+  private async onEnterReaderPage(bookToken: string, retry = false): Promise<void> {
     if (!this.shouldExecuteEvent(EventPriority.HIGH)) {
       return;
     }
 
-    if (!bookId) {
+    if (!bookToken || this.destroyed) {
       return;
     }
 
-    if (this.isInitializing) {
+    // 历史回放与 DOMContentLoaded 可能同时通知首次进入，同书只保留一个进度请求。
+    if (this.initializingBookToken === bookToken) {
       return;
     }
 
-    this.isInitializing = true;
+    if (!retry) {
+      this.cancelInitializationRetry();
+      this.metadataRetryCount = 0;
+      this.progressRetryCount = 0;
+    }
+
+    const generation = ++this.initializationGeneration;
+    this.initializingBookToken = bookToken;
+    let retryReason: InitializationRetryReason | null = null;
+
+    // 切书初始化期间暂停旧书状态，避免用新书章节表计算旧书进度。
+    if (this.currentBookToken !== bookToken) {
+      this.chapterChangeGeneration++;
+      this.currentBookToken = null;
+      this.currentBookId = null;
+      this.clearDirectionTracking();
+      this.finishTitleWait();
+    }
 
     try {
-      // 1. 提取 URL 路径作为 bookIdSegment
-      const pathMatch = window.location.pathname.match(/\/web\/reader\/([^?#]+)/);
-      if (!pathMatch) {
-        return;
-      }
-      const fullPath = pathMatch[1];
-      const kIndex = fullPath.indexOf('k');
-      const bookIdSegment = kIndex > 0 ? fullPath.substring(0, kIndex) : fullPath;
-
-      // 2. 初始化章节数据
-      const success = await chapterManager.initialize(bookIdSegment);
-      if (!success) {
+      // 1. 初始化章节数据
+      const success = await chapterManager.initialize(bookToken);
+      if (!this.isCurrentInitialization(generation, bookToken) || !success) {
         // ChapterManager 初始化失败（可能未登录），静默返回
+        retryReason = 'metadata';
         return;
       }
 
       const chapterInfos = chapterManager.getChapters();
       if (!chapterInfos.length) {
+        retryReason = 'metadata';
         return;
       }
 
-      // 3. 获取初始阅读进度（只调用一次 API）
+      // 2. 获取已登录用户对本书的官方阅读进度。
       const numericBookId = chapterManager.readNumericBookId();
       if (!numericBookId) {
+        retryReason = 'metadata';
         return;
       }
 
       const readInfo = await this.fetchReadInfo(numericBookId);
-      if (!readInfo || readInfo.chapterIdx === undefined || readInfo.chapterOffset === undefined) {
+      if (!this.isCurrentInitialization(generation, bookToken) ||
+          !readInfo || readInfo.chapterIdx === undefined || readInfo.chapterOffset === undefined) {
+        if (this.isCurrentInitialization(generation, bookToken)) retryReason = 'progress';
         return;
       }
 
-      this.currentBookId = numericBookId;
-      this.currentChapterIdx = readInfo.chapterIdx;
-
-      // 4. 计算初始进度百分比
+      // 3. 计算初始进度百分比
       const currentChapterInfo = chapterInfos.find(ch => ch.chapterIdx === readInfo.chapterIdx);
       if (!currentChapterInfo) {
+        retryReason = 'metadata';
         return;
       }
 
@@ -187,14 +217,66 @@ export class ProgressTracker extends BaseManager {
       const initialProgressPercent = Math.floor((readInfo.chapterOffset / currentChapterInfo.maxOffset) * 100);
       this.currentProgress = initialProgressPercent;
 
-      // 5. 计算初始 turningPages = maxPages × 进度百分比
+      // 4. 计算初始 turningPages = maxPages × 进度百分比
       this.turningPages = Math.floor(currentChapterInfo.maxPages * (initialProgressPercent / 100));
 
+      // 数据齐全后再一次性切换当前书籍，避免失败初始化留下半成品状态。
+      this.currentBookToken = bookToken;
+      this.currentBookId = numericBookId;
+      this.currentChapterIdx = readInfo.chapterIdx;
+
       this.updateProgressBar(this.currentProgress);
+      this.metadataRetryCount = 0;
+      this.progressRetryCount = 0;
 
     } finally {
-      this.isInitializing = false;
+      if (generation === this.initializationGeneration && this.initializingBookToken === bookToken) {
+        this.initializingBookToken = null;
+        if (retryReason) this.scheduleInitializationRetry(bookToken, retryReason);
+      }
     }
+  }
+
+  private isCurrentInitialization(generation: number, bookToken: string): boolean {
+    return !this.destroyed &&
+      generation === this.initializationGeneration &&
+      this.initializingBookToken === bookToken;
+  }
+
+  private scheduleInitializationRetry(bookToken: string, reason: InitializationRetryReason): void {
+    if (this.destroyed || this.extractBookTokenFromUrl(window.location.href) !== bookToken) return;
+
+    if (reason === 'metadata') {
+      if (++this.metadataRetryCount > this.METADATA_RETRY_LIMIT) return;
+    } else if (++this.progressRetryCount > this.PROGRESS_RETRY_LIMIT) {
+      return;
+    }
+
+    this.cancelInitializationRetry();
+    this.initializationRetryTimer = setTimeout(() => {
+      this.initializationRetryTimer = null;
+      void this.onEnterReaderPage(bookToken, true);
+    }, this.INITIALIZATION_RETRY_MS);
+  }
+
+  private cancelInitializationRetry(): void {
+    if (this.initializationRetryTimer) {
+      clearTimeout(this.initializationRetryTimer);
+      this.initializationRetryTimer = null;
+    }
+  }
+
+  private leaveReaderPage(): void {
+    this.initializationGeneration++;
+    this.chapterChangeGeneration++;
+    this.initializingBookToken = null;
+    this.currentBookToken = null;
+    this.currentBookId = null;
+    this.cancelInitializationRetry();
+    this.metadataRetryCount = 0;
+    this.progressRetryCount = 0;
+    this.clearDirectionTracking();
+    this.finishTitleWait();
   }
 
   /**
@@ -204,46 +286,60 @@ export class ProgressTracker extends BaseManager {
    *
    * 核心原则：不依赖异步 API，只使用本地缓存 + 翻页方向判断
    */
-  private async onChapterChange(bookId: string, newUrl: string): Promise<void> {
+  private async onChapterChange(newUrl: string): Promise<void> {
     if (!this.shouldExecuteEvent(EventPriority.MEDIUM)) {
       return;
     }
 
-    if (!bookId) {
-      return;
-    }
+    const generation = ++this.chapterChangeGeneration;
 
     const chapterInfos = chapterManager.getChapters();
     if (!chapterInfos.length) {
       return;
     }
 
-    // 判断方向：使用最后一次翻页方向（10秒内有效）
+    const oldChapterIdx = this.currentChapterIdx;
+
+    // URL 中有章节 ID 时优先用缓存的 chapterUid 精确判断。
+    // 双栏模式可能只更新 Title、URL 不变，此时继续使用经验方向窗口。
+    const urlChapter = this.findChapterFromUrl(newUrl, chapterInfos);
+    const urlChapterDelta = urlChapter ? urlChapter.chapterIdx - oldChapterIdx : 0;
+
+    // 判断方向：仍遵守经验所得的 500ms 方向确认结果（10秒内有效）。
     const DIRECTION_VALID_MS = 10000; // 翻页方向 10 秒内有效
     const now = Date.now();
     const isDirectionValid = this.lastPageDirection !== null &&
                              (now - this.lastDirectionTime) < DIRECTION_VALID_MS;
 
+    // URL 未变化时可能只是双栏 Title 更新，不能把原章节 ID 当成跳章目标。
+    const changedUrlChapter = urlChapterDelta !== 0 ? urlChapter : null;
+
+    // 有明确目标章节 ID 时，用它校验“方向所预期的相邻章节”。没有已确认方向，
+    // 或目标不是该方向的相邻章节，都视为目录/直接跳转，不校准离开的章节。
+    if (changedUrlChapter) {
+      const expectedDelta = this.lastPageDirection === PageDirection.FORWARD ? 1 : -1;
+      if (!isDirectionValid || urlChapterDelta !== expectedDelta) {
+        this.resetToJumpedChapter(changedUrlChapter);
+        return;
+      }
+    }
+
     if (!isDirectionValid) {
       // 没有翻页方向或方向太旧 → 用户通过目录跳转
-      // 重新调用 API 获取当前章节信息（这是唯一允许的异步调用）
-      await this.reinitializeAfterJump(bookId);
+      // URL 没有可识别章节 ID 时，降级为 Title 匹配。
+      await this.reinitializeAfterJump(generation);
       return;
     }
 
     const isForward = this.lastPageDirection === PageDirection.FORWARD;
-    const oldChapterIdx = this.currentChapterIdx;
 
     // 执行修正算法（在重置之前）
-    await this.applyCorrectionAlgorithm(bookId, oldChapterIdx, isForward);
+    this.applyCorrectionAlgorithm(oldChapterIdx, isForward);
 
     // 计算新章节索引（本地计算，不调用 API）
-    let newChapterIdx: number;
-    if (isForward) {
-      newChapterIdx = oldChapterIdx + 1;
-    } else {
-      newChapterIdx = oldChapterIdx - 1;
-    }
+    const newChapterIdx = changedUrlChapter
+      ? changedUrlChapter.chapterIdx
+      : oldChapterIdx + (isForward ? 1 : -1);
 
     // 从缓存查找新章节信息
     const newChapterInfo = chapterInfos.find(ch => ch.chapterIdx === newChapterIdx);
@@ -268,11 +364,35 @@ export class ProgressTracker extends BaseManager {
 
     this.updateProgressBar(this.currentProgress);
 
-    // 清除翻页方向（已使用）
-    this.lastPageDirection = null;
-    this.pendingDirection = null;  // 同时清除局内变量
+    this.clearDirectionTracking();
+  }
 
-    // 取消待执行的翻页处理，防止覆盖章节切换的进度
+  /** 从阅读 URL 的章节片段反查已缓存的 chapterUid。 */
+  private findChapterFromUrl(newUrl: string, chapterInfos: ChapterData[]): ChapterData | null {
+    try {
+      const pathname = new URL(newUrl, window.location.href).pathname;
+      const pathMatch = pathname.match(/\/web\/reader\/([^?#]+)/);
+      if (!pathMatch) return null;
+      const fullPath = pathMatch[1];
+      return chapterInfos.find(chapter => fullPath.endsWith(getChapterUrl(chapter.chapterUid))) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 目录直跳已由章节 ID 确认时，不再依赖 Title。 */
+  private resetToJumpedChapter(chapter: ChapterData): void {
+    this.currentChapterIdx = chapter.chapterIdx;
+    this.turningPages = 0;
+    this.currentProgress = 0;
+    this.updateProgressBar(this.currentProgress);
+    this.clearDirectionTracking();
+  }
+
+  private clearDirectionTracking(): void {
+    this.lastPageDirection = null;
+    this.pendingDirection = null;
+    this.lastDirectionTime = 0;
     if (this.pageDirectionTimer) {
       clearTimeout(this.pageDirectionTimer);
       this.pageDirectionTimer = null;
@@ -283,7 +403,7 @@ export class ProgressTracker extends BaseManager {
    * 目录跳转后重新初始化
    * 霸王硬上弓方案：从页面 Title 提取章节名，与缓存章节名匹配
    */
-  private async reinitializeAfterJump(bookId: string): Promise<void> {
+  private async reinitializeAfterJump(generation = this.chapterChangeGeneration): Promise<void> {
     const chapterInfos = chapterManager.getChapters();
     if (!chapterInfos.length) {
       return;
@@ -291,6 +411,7 @@ export class ProgressTracker extends BaseManager {
 
     // 等待 DOM Title 更新 (最多等待 1 秒)
     await this.waitForTitleUpdate();
+    if (this.destroyed || generation !== this.chapterChangeGeneration) return;
 
     // 从页面 Title 提取章节名
     // 格式: "书名 - 章节名 - 作者名 - 微信读书"
@@ -299,7 +420,7 @@ export class ProgressTracker extends BaseManager {
     // 遍历缓存，用短的章节名匹配长的页面标题
     let matchedChapter: ChapterData | null = null;
     for (const chapter of chapterInfos) {
-      if (pageTitle.includes(chapter.title)) {
+      if (chapter.title && pageTitle.includes(chapter.title)) {
         matchedChapter = chapter;
         break;
       }
@@ -317,13 +438,16 @@ export class ProgressTracker extends BaseManager {
     this.currentProgress = 0;
 
     this.updateProgressBar(this.currentProgress);
+    this.clearDirectionTracking();
   }
 
   /**
    * 等待页面 Title 更新（最多 1 秒）
    */
   private async waitForTitleUpdate(): Promise<void> {
+    this.finishTitleWait();
     return new Promise((resolve) => {
+      this.titleWaitResolve = resolve;
       let attempts = 0;
       const maxAttempts = 10; // 100ms × 10 = 1 秒
 
@@ -332,9 +456,9 @@ export class ProgressTracker extends BaseManager {
 
         // 检查 Title 是否包含章节分隔符 " - "
         if (document.title.includes(' - ') || attempts >= maxAttempts) {
-          resolve();
+          this.finishTitleWait();
         } else {
-          setTimeout(checkTitle, 100);
+          this.titleWaitTimer = setTimeout(checkTitle, 100);
         }
       };
 
@@ -342,11 +466,21 @@ export class ProgressTracker extends BaseManager {
     });
   }
 
+  private finishTitleWait(): void {
+    if (this.titleWaitTimer) {
+      clearTimeout(this.titleWaitTimer);
+      this.titleWaitTimer = null;
+    }
+    const resolve = this.titleWaitResolve;
+    this.titleWaitResolve = null;
+    resolve?.();
+  }
+
   /**
    * 修正算法
    * 正着读和倒着读逻辑一样：根据实际页数修正全书的 maxPages
    */
-  private async applyCorrectionAlgorithm(bookId: string, oldChapterIdx: number, isForward: boolean): Promise<void> {
+  private applyCorrectionAlgorithm(oldChapterIdx: number, isForward: boolean): void {
     const chapterInfos = chapterManager.getChapters();
     if (!chapterInfos.length) {
       return;
@@ -397,7 +531,6 @@ export class ProgressTracker extends BaseManager {
   // 翻页监听
   // =====================================================
 
-  private lastPageTurnTime = 0;
   private pageTurnMonitorInitialized = false;
 
   private initPageTurnMonitor(): void {
@@ -433,6 +566,7 @@ export class ProgressTracker extends BaseManager {
     }
 
     this.pageDirectionTimer = setTimeout(() => {
+      this.pageDirectionTimer = null;
       // 500ms 结束：把局内变量赋给局外变量
       if (this.pendingDirection !== null) {
         this.lastPageDirection = this.pendingDirection;
@@ -442,13 +576,6 @@ export class ProgressTracker extends BaseManager {
       // 执行翻页处理
       this.processPageTurn();
     }, this.DIRECTION_DEBOUNCE_MS);
-  }
-
-  /**
-   * 处理翻页（已废弃,防抖逻辑已移至 recordPageDirection）
-   */
-  private handlePageTurn(): void {
-    // 空实现,防抖已移到 recordPageDirection 中
   }
 
   /**
@@ -487,6 +614,10 @@ export class ProgressTracker extends BaseManager {
    * 不限制上下限，允许超过 100% 或低于 0%
    */
   private updateProgressFromTurningPages(): void {
+    if (!this.currentBookToken || !this.currentBookId || chapterManager.getBookId() !== this.currentBookToken) {
+      return;
+    }
+
     // 检查登录状态
     if (!chapterManager.isLoggedIn()) {
       return;
@@ -527,37 +658,23 @@ export class ProgressTracker extends BaseManager {
     return true;
   }
 
-  private extractBookIdFromUrl(url: string): string | null {
-    const match = url.match(/\/web\/reader\/([^/]+)/);
-    if (!match) {
+  private extractBookTokenFromUrl(url: string): string | null {
+    let pathname: string;
+    try {
+      pathname = new URL(url, window.location.href).pathname;
+    } catch {
       return null;
     }
 
-    return this.getNumericBookId();
-  }
-
-  private getNumericBookId(): string | null {
-    const jsonLdScript = document.querySelector('script[type="application/ld+json"]');
-    if (jsonLdScript && jsonLdScript.textContent) {
-      try {
-        const data = JSON.parse(jsonLdScript.textContent);
-        if (data['@Id']) {
-          return String(data['@Id']);
-        }
-      } catch (e) {
-        // 忽略
-      }
-    }
-
-    if ((window as any).bookId) {
-      return String((window as any).bookId);
-    }
-
-    return null;
+    const match = pathname.match(/\/web\/reader\/([^/]+)/);
+    if (!match) return null;
+    const fullPath = match[1];
+    const chapterMarker = fullPath.indexOf('k');
+    return chapterMarker > 0 ? fullPath.substring(0, chapterMarker) : fullPath;
   }
 
   /**
-   * 获取阅读进度（只用于初始化，仅调用一次 API）
+   * 获取阅读进度（只用于这次进入书籍的初始化）
    */
   private async fetchReadInfo(bookId: string): Promise<{
     chapterIdx?: number;
@@ -592,7 +709,7 @@ export class ProgressTracker extends BaseManager {
 
       return null;
 
-    } catch (error: any) {
+    } catch {
       // 未登录或网络错误时静默返回
       return null;
     }
@@ -616,6 +733,12 @@ export class ProgressTracker extends BaseManager {
   // =====================================================
 
   destroy(): void {
+    this.initializationGeneration++;
+    this.chapterChangeGeneration++;
+    this.initializingBookToken = null;
+    this.cancelInitializationRetry();
+    this.finishTitleWait();
+
     // 清理定时器
     if (this.pageDirectionTimer) {
       clearTimeout(this.pageDirectionTimer);

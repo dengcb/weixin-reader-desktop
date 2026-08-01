@@ -1,991 +1,282 @@
-# 测试指南
+# 测试与验收指南
 
-本文档介绍微信读书桌面应用的完整测试体系,包括 Rust 后端测试和 TypeScript 前端测试,为后续开发者提供测试编写指引。
+本文描述当前测试体系。最后核对日期：2026-08-02。
 
-## 测试概览
+## 当前结果
 
-项目采用双层测试架构:
-- **Rust 后端**: 使用 Rust 内置测试框架,测试文件位于 `src-tauri/tests/` 目录
-- **TypeScript 前端**: 使用 Bun 测试框架,测试文件位于 `src/scripts/core/__tests__/` 目录
+| 层级 | 结果 | 说明 |
+|---|---:|---|
+| Bun DOM/契约测试 | 242 通过 | 27 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
+| Rust 单元测试 | 58 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新与 Tauri mock |
+| Rust 集成测试 | 6 通过 | `src-tauri/tests/plugin_test.rs` |
+| 真机硬件测试 | 1 忽略 | 需要真实 macOS 显示会话 |
+| 模拟 E2E | 6 通过 | Python Playwright + 临时 Chromium，本地 `test-page.html` |
 
-### 测试统计
+数量是当前快照，不应当写成永久承诺；新增测试后同步本文。
 
-#### 后端 (Rust)
+## 完整质量门禁
 
-| 测试文件 | 测试数量 | 覆盖模块 |
-|---------|---------|---------|
-| `commands_test.rs` | 14 | Tauri 命令处理 |
-| `core_test.rs` | 10 | 核心功能 |
-| `menu_test.rs` | 12 | 菜单系统 |
-| `settings_test.rs` | 10 | 设置管理 |
-| `sites_test.rs` | 12 | 站点配置 |
-| `update_test.rs` | 18 | 更新管理器 |
-| `plugin_test.rs` | 6 | 插件生命周期管理 |
-| `monitor_test.rs` | 1 | 显示器集成 |
-| `performance_test.rs` | 9 | 性能优化配置 |
-| **小计** | **94** | **Rust 后端全覆盖** |
-
-#### 前端 (TypeScript)
-
-| 测试文件 | 测试数量 | 覆盖模块 |
-|---------|---------|---------|
-| `utils.test.ts` | 30 | CSS 注入、键盘事件 |
-| `scroll_state.test.ts` | 24 | 滚动恢复机制 |
-| `site_registry.test.ts` | 33 | 站点适配器注册表 |
-| `event_bus.test.ts` | 58 | 事件总线系统 |
-| `optimistic_lock.test.ts` | 9 | 乐观锁并发控制 |
-| `settings_store.test.ts` | 20+ | 设置存储管理 |
-| `plugin_api.test.ts` | 23 | 插件 API 系统 |
-| `plugin_registry.test.ts` | 29 | 插件注册表 |
-| `plugin_loader.test.ts` | 12 | 插件加载器与安装 |
-| **小计** | **238+** | **前端核心模块覆盖** |
-
-#### 总计
-
-**332+ 测试用例**,实现前后端核心功能的全面测试覆盖。
-
-### 运行测试
-
-#### 后端测试 (Rust)
+从仓库根目录运行：
 
 ```bash
-# 运行所有后端测试
-cargo test --manifest-path src-tauri/Cargo.toml
-
-# 运行特定测试文件
-cargo test --manifest-path src-tauri/Cargo.toml --test menu_test
-
-# 运行特定测试函数
-cargo test --manifest-path src-tauri/Cargo.toml test_menu_item_id_format
-
-# 显示测试输出
-cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
-
-# 运行未通过的测试
-cargo test --manifest-path src-tauri/Cargo.toml -- --fail-fast
-```
-
-#### 前端测试 (TypeScript)
-
-```bash
-# 运行所有前端测试
+bun run check:frozen
+bun run typecheck
 bun test
+bun run check:ipc
+bun run build
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+bun run test:e2e
+git diff --check
+```
 
-# 运行特定目录的测试
-bun test src/scripts/core/__tests__/
+门禁含义：
 
-# 运行特定测试文件
+1. 冻结文件未被意外修改。
+2. 可修改 TypeScript 严格检查无错误。
+3. 前端架构、生命周期和 DOM 行为回归通过。
+4. IPC handler、AppManifest、permission 和 Capability 一致。
+5. `inject.js` 只通过构建生成，dist 可构建。
+6. Rust 格式、测试和编译通过。
+7. 现有模拟交互没有回归。
+8. diff 没有空白错误。
+
+## Bun DOM 测试
+
+### 环境
+
+`bunfig.toml` 在运行测试前加载 `test/preload.ts`。preload 使用 `happy-dom` 提供：
+
+- window、document、history、location。
+- localStorage、sessionStorage。
+- DOM Event、KeyboardEvent、WheelEvent。
+- HTMLElement、MutationObserver 等浏览器对象。
+
+类型由 `@types/bun` 提供。
+
+### 测试文件
+
+| 文件 | 重点 |
+|---|---|
+| `utils.test.ts` | CSS 注入/删除、键盘事件 |
+| `scroll_state.test.ts` | 恢复完成标记、等待与超时 |
+| `event_bus.test.ts` | 去重、once 异常、有限历史、模块和 AbortSignal 清理 |
+| `plugin_api.test.ts` | 命名空间、样式、存储、设置字段归属、事件 |
+| `plugin_registry.test.ts` | 注册、域名/扩展名匹配、活动运行时和状态 |
+| `plugin_loader.test.ts` | 内置加载、启停、重载和错误处理 |
+| `plugin_lifecycle.test.ts` | 样式/监听器释放、失败回滚、Blob URL、热重载残留 |
+| `settings_store.test.ts` | schema v2、串行 patch、冲突重试、失败回滚、迟到 listener |
+| `site_runtime.test.ts` | WeRead/外部插件统一上下文、样式/章节能力桥接、懒构造、Observer 重启 |
+| `tauri.test.ts` | 动态 Tauri 桥接、等待/重试/中止和日志失败隔离 |
+| `reading_position.test.ts` | 当前 URL 阅读位置 IPC 参数、空值和错误传播 |
+| `base_manager.test.ts` | 模块 ID、订阅/history 清理和幂等销毁 |
+| `chapter_manager.test.ts` | 章节 API、同书请求合并、20 本 LRU 缓存、迟到结果与中止清理、URL 和页数换算 |
+| `ipc_manager.test.ts` | 初始阅读路由、SPA history hook、滚动保存/取消 |
+| `menu_manager.test.ts` | 设置字段归属、原生菜单同步和 listener 释放 |
+| `app_manager.test.ts` | 自动翻页退出复位、独立位置恢复和旧值降级 |
+| `app_runtime.test.ts` | 逆序释放、热重载串行化和 generation 失效 |
+| `remote_manager.test.ts` | 键盘映射、输入区隔离、捕获监听器释放 |
+| `style_manager.test.ts` | manager/plugin 样式所有权、双栏规则和清理 |
+| `turner_manager.test.ts` | 子组件协调、离开阅读页停翻与完整销毁 |
+| `auto_flipper.test.ts` | 单栏恢复门禁、后台暂停、到底翻页和 timer 清理 |
+| `cursor_hider.test.ts` | 启停、非阅读页保护、滚动锁和鼠标 listener 清理 |
+| `progress_bar.test.ts` | 历史进度、DOM 重建、章节变化和销毁取消 |
+| `progress_tracker.test.ts` | 官方进度初始化/重试/切书并发、经验公式、方向防抖、有符号页数、章节校准与跳章降级 |
+| `toast.test.ts` | `textContent` 安全渲染、替换和动画后移除 |
+| `manager_behavior.test.ts` | 滚动参数、翻页阈值、自动翻页进度事件、光标/主题清理 |
+| `test/tauri_contract.test.ts` | 更新端点、窗口状态、窗口标签和 Capability 最小权限 |
+
+### 运行方式
+
+```bash
+bun test
 bun test src/scripts/core/__tests__/event_bus.test.ts
-
-# 监听模式 (文件变化自动重新运行)
-bun test --watch
-
-# 显示覆盖率
-bun test --coverage
+bun test src/scripts/core/__tests__/manager_behavior.test.ts
 ```
 
----
+测试输出中有两类预期错误日志：EventBus 测试故意让回调抛错，以验证错误隔离和 once 清理；它们不代表测试失败，以最终 exit code 和 pass/fail 汇总为准。
 
-## 第一部分: Rust 后端测试
+`bun test --coverage` 当前快照为函数 72.00%、行 80.52%。这是“测试实际导入模块”的覆盖率，不是对仓库每个文件的完整覆盖；微信读书进度逻辑达到函数 91.30%、行 96.63%。
 
-## 测试文件说明
+### 编写规则
 
-### 1. commands_test.rs - 命令处理测试
+- 每个测试清理 DOM、EventBus 历史、订阅、timer 和替换过的全局函数。
+- Manager 生命周期测试必须显式调用 `destroy()`。
+- 涉及异步注册时，覆盖“尚未注册完成就 destroy”的情况。
+- 行为参数应测试精确值，例如滚动恢复重试、滑动阈值、光标延迟和自动翻页周期。
+- 不要用关闭 TypeScript 严格选项来通过测试。
+- 不要在测试中改写冻结站点实现；通过公共事件和运行时接口验证契约。
 
-测试 Tauri 后端暴露给前端的命令接口。
+## TypeScript 严格检查
 
-**测试覆盖**:
-- `MonitorInfo` 结构体 - 多显示器信息 (Retina 支持)
-- `WeReadBookProgress` - 阅读进度数据结构
-- WeRead API 错误码处理 (-2010, -2012)
-- 自动翻页间隔范围 (5-60秒)
-- 缩放值范围 (0.5-2.0)
-- 光标可见性切换
+`bun run typecheck` 运行 `scripts/typecheck.ts`，底层执行严格 `tsc --noEmit`。
 
-**示例**:
-```rust
-#[test]
-fn test_auto_flip_interval_range() {
-    let valid_intervals = vec![5, 10, 30, 60];
+全局仍开启：
 
-    for interval in valid_intervals {
-        assert!(interval >= 5 && interval <= 60,
-            "Auto-flip interval should be 5-60 seconds");
-    }
-}
-```
+- `strict`
+- `noUnusedLocals`
+- `noUnusedParameters`
+- `noFallthroughCasesInSwitch`
 
-### 2. core_test.rs - 核心功能测试
+冻结文件中已有 3 个 TS6133 使用“文件 + 符号 + 可选行号”的精确白名单。脚本会同时拒绝：
 
-测试应用核心的数据结构和计算逻辑。
+- 新增的任何 TypeScript 错误。
+- 新增的冻结文件未使用符号。
+- 白名单条目消失但脚本没有同步收紧。
 
-**测试覆盖**:
-- 设置序列化/反序列化
-- 自动翻页设置结构
-- 菜单项 ID 格式
-- 版本号格式 (semver)
-- 物理到逻辑坐标转换 (Retina 显示)
-- 窗口居中计算
-- 边界检查算法
-- 显示器索引追踪
+不要改成忽略整个文件或关闭全局未使用检查。
 
-**关键测试 - 坐标转换**:
-```rust
-#[test]
-fn test_display_info_logical_conversion() {
-    // Retina 显示 (scale factor 2)
-    let physical_width = 3840u32;
-    let scale_factor = 2.0f64;
-    let logical_width = (physical_width as f64 / scale_factor) as u32;
-    assert_eq!(logical_width, 1920);
-}
-```
+## 冻结文件检查
 
-### 3. menu_test.rs - 菜单系统测试
+`scripts/frozen-files.sha256` 保存以下实现的 SHA-256：
 
-测试 macOS 原生菜单的构建和交互逻辑。
+- `progress_tracker.ts`
+- `weread_adapter.ts`
+- WeRead 插件实现及四个 CSS
+- Fanqie 插件实现
+- 插件模板行为实现
 
-**测试覆盖**:
-- 菜单项 ID 格式 (snake_case)
-- 多显示器菜单项生成逻辑
-- 显示器名称中文双引号格式 ("...")
-- 快捷键格式 (CmdOrCtrl+)
-- 菜单勾选状态与设置的映射
-- 菜单重建触发条件
-- 当前显示器过滤
-- 窗口跨显示器居中计算
-- 退出时自动翻页状态清理
-- 菜单中文本地化
-
-**关键测试 - 显示器过滤**:
-```rust
-#[test]
-fn test_current_monitor_filtering() {
-    let total_monitors = 3;
-    let current_monitor_index = Some(1);
-
-    let mut available_monitors = Vec::new();
-    for index in 0..total_monitors {
-        if current_monitor_index != Some(index) {
-            available_monitors.push(index);
-        }
-    }
-
-    // 当前显示器不应出现在菜单中
-    assert_eq!(available_monitors.len(), 2);
-    assert!(!available_monitors.contains(&1));
-}
-```
-
-### 4. settings_test.rs - 设置管理测试
-
-测试设置的持久化、版本控制和并发安全。
-
-**测试覆盖**:
-- 版本控制与乐观锁
-- 并发更新处理
-- 允许的键验证 (_version, global, sites)
-- 隐藏光标设置
-- 多站点支持
-- 设置合并逻辑 (浅合并策略)
-- 版本溢出保护
-
-**关键测试 - 版本控制**:
-```rust
-#[test]
-fn test_version_control() {
-    let settings = json!({
-        "_version": 1,
-        "global": { "theme": "dark" }
-    });
-
-    // 模拟版本不匹配导致保存失败
-    let stored_version = settings.get("_version")
-        .and_then(|v| v.as_i64())
-        .unwrap();
-
-    let update_version = stored_version + 1; // 递增版本号
-    assert_eq!(update_version, 2);
-}
-```
-
-### 5. sites_test.rs - 站点配置测试
-
-测试多站点配置结构,支持未来扩展。
-
-**测试覆盖**:
-- 站点配置结构完整性
-- 网络检测地址生成 (domain:443)
-- 域名格式验证
-- URL 格式验证 (HTTPS)
-- 站点 ID 唯一性
-- 默认站点配置
-- DNS 规范合规性
-- 多站点扩展性
-
-**关键测试 - 网络检测地址**:
-```rust
-#[test]
-fn test_network_check_addr_generation() {
-    struct SiteConfig {
-        domain: &'static str,
-    }
-
-    let site = SiteConfig {
-        domain: "weread.qq.com",
-    };
-
-    let check_addr = format!("{}:443", site.domain);
-    assert_eq!(check_addr, "weread.qq.com:443");
-}
-```
-
-### 6. update_test.rs - 更新管理器测试
-
-测试应用自动更新机制。
-
-**测试覆盖**:
-- 更新状态初始化与设置
-- 更新信息结构 (has_update, version, body)
-- 版本号格式 (semver)
-- 菜单文本状态转换
-- 超时配置 (检查 10s, 下载 30s, 手动 15s)
-- 自动更新开关
-- 更新检查间隔 (24h)
-- 初始化延迟 (10s 等待菜单就绪)
-- 版本比较逻辑
-- 网络错误恢复
-
-**关键测试 - 超时配置**:
-```rust
-#[test]
-fn test_timeout_configurations() {
-    let silent_check_timeout = Duration::from_secs(10);
-    let download_timeout = Duration::from_secs(30);
-    let manual_check_timeout = Duration::from_secs(15);
-
-    // 下载超时应该大于检查超时
-    assert!(download_timeout > silent_check_timeout);
-}
-```
-
-### 7. monitor_test.rs - 显示器集成测试
-
-测试显示器相关的集成功能。
-
-**测试覆盖**:
-- Mock 环境下的显示器 API 调用
-- Panic 捕获和错误处理
-
-## 测试编写指南
-
-### 基本结构
-
-```rust
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    #[test]
-    fn test_feature_name() {
-        // Arrange (准备)
-        let input = "some value";
-
-        // Act (执行)
-        let result = process(input);
-
-        // Assert (断言)
-        assert_eq!(result, "expected");
-    }
-}
-```
-
-### 命名规范
-
-- 测试函数: `test_<被测试的功能>_<具体场景>`
-- 测试模块: `<模块名>_tests`
-- 测试文件: `<模块名>_test.rs`
-
-### 断言技巧
-
-```rust
-// 相等断言
-assert_eq!(actual, expected);
-assert_ne!(actual, unexpected);
-
-// 布尔断言
-assert!(condition, "Error message: {}", value);
-
-// 匹配断言
-assert!(result.is_ok());
-assert!(result.is_err());
-
-// 宏断言
-assert_matches!(result, Ok(value) if value > 0);
-```
-
-### 测试数据构造
-
-```rust
-// 使用 serde_json 构造复杂数据
-let settings = json!({
-    "readerWide": true,
-    "autoFlip": {
-        "active": false,
-        "interval": 30
-    }
-});
-
-// 使用 vec! 构造批量数据
-let test_cases = vec![
-    ("input1", "expected1"),
-    ("input2", "expected2"),
-];
-
-for (input, expected) in test_cases {
-    assert_eq!(process(input), expected);
-}
-```
-
-## 测试最佳实践
-
-### 1. 测试独立性
-
-每个测试应该独立运行,不依赖其他测试的状态:
-
-```rust
-// ✅ 好的做法
-#[test]
-fn test_feature_a() {
-    let state = create_test_state(); // 每次创建新状态
-    assert!(state.is_valid());
-}
-
-// ❌ 坏的做法
-static mut SHARED_STATE: usize = 0;
-
-#[test]
-fn test_with_shared_state() {
-    unsafe { SHARED_STATE = 1; } // 依赖共享状态
-}
-```
-
-### 2. 测试可读性
-
-使用描述性的测试名称和清晰的注释:
-
-```rust
-/// 测试当窗口移动到新显示器时,菜单应该重建
-#[test]
-fn test_menu_rebuild_trigger_logic() {
-    // 场景 1: 首次检测 - 应该触发重建
-    let last_monitor_index: Option<usize> = None;
-    let current_monitor_index = Some(0);
-    let should_rebuild = last_monitor_index != current_monitor_index;
-    assert!(should_rebuild, "Should rebuild menu on first monitor detection");
-}
-```
-
-### 3. 边界测试
-
-覆盖边界条件和异常情况:
-
-```rust
-#[test]
-fn test_auto_flip_interval_boundaries() {
-    // 最小边界
-    assert!(is_valid_interval(5));
-
-    // 最大边界
-    assert!(is_valid_interval(60));
-
-    // 超出边界
-    assert!(!is_valid_interval(4));
-    assert!(!is_valid_interval(61));
-}
-```
-
-### 4. 使用 Mock 避免外部依赖
-
-对于需要 Tauri 运行时的功能,使用 mock 环境:
-
-```rust
-use tauri::test::mock_builder;
-
-#[test]
-fn test_with_mock_runtime() {
-    let app = mock_builder()
-        .setup(|app| {
-            // 测试设置
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("failed to build app");
-
-    // 使用 mock app 进行测试
-}
-```
-
-## 持续集成
-
-测试在 CI/CD 流程中自动运行:
-
-```yaml
-# .github/workflows/test.yml
-jobs:
-  test:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-## 调试测试
-
-### 显示输出
+运行：
 
 ```bash
-# 显示所有 println! 输出
-cargo test -- --nocapture
-
-# 显示特定测试的输出
-cargo test test_name -- --nocapture
+bun run check:frozen
 ```
 
-### 只运行失败的测试
+这个门禁保证架构、内存和安全重构不会顺手改变经过真站验证的页面逻辑。若确实需要修改冻结行为，必须作为独立变更评审、真站验证，并明确更新哈希基线。
+
+### 微信读书进度经验公式硬约束
+
+`progress_tracker.ts` 的初始化与页数估算来自长期真站试验，不按一般算法重写。维护时必须保留：
+
+- 每次进入一本书，通过官方 `getProgress` 接口取得已登录用户的 `chapterIdx` 和 `chapterOffset`，并将该值作为底部进度条初始估值；任何失败分支都不能用零值覆盖已经成功取得的数据。
+- `maxOffset = wordCount × 1.5 + 1000`。
+- `maxPages = floor(maxOffset ÷ 800)`。
+- 初始化 `progress = floor(chapterOffset ÷ maxOffset × 100)`。
+- 初始化 `turningPages = floor(maxPages × progress ÷ 100)`。
+- 翻页 `progress = round(turningPages ÷ maxPages × 100)`，保留负值和超过 100 的值作为跨章校准输入。
+- 500ms 方向合并、至少 6 页、误差严格超过 20% 等参数均为经验值，不因代码风格或理论推导随意调整。
+
+2026-08-02 经项目维护者授权，可在完全理解且保留上述硬约束的前提下重构相关代码。当前实现增加了基于 `chapterUid` 的相邻/目录跳转识别、进书重试、SPA 切书代次隔离，以及有界多书章节缓存。迟到请求不能覆盖新书，失败请求不能把成功的官方进度写成零；初始化顺序、四个公式和经验参数未改。
+
+## Rust 测试
+
+### 布局
+
+Rust 核心测试与被测实现放在同一模块的 `#[cfg(test)]` 中，便于直接测试私有纯函数和持久化边界：
+
+| 模块 | 重点 |
+|---|---|
+| `settings.rs` | 默认 schema、patch 保留、损坏重置、并发冲突、原子失败、版本溢出 |
+| `reading_progress.rs` | URL hash、独立文件、siteId 校验、10,000 条上限 |
+| `plugin_manager.rs` | ID/文件名/域名、路径穿越、ZIP symlink、文件数、替换回滚、卸载保留进度 |
+| `commands.rs` | DNS label、编辑器文件边界、运行时插件窗口限制、真实 Tauri IPC metadata 分发 |
+| `lib.rs` | 启动站点、启动 URL、rememberSite/lastPage 和站点缩放归属 |
+| `menu.rs` | schema v2 菜单初值、缩放邻级与 mock App 菜单 |
+| `monitor.rs` | 纯位置计算与显式真机测试 |
+| `sites.rs` | 内置站点与已安装插件首页解析 |
+| `update.rs` | schema v2 自动更新开关、定时策略、序列化与 managed state |
+| `plugin_test.rs` | manifest/站点配置反序列化与基础结构 |
+
+运行：
 
 ```bash
-# 第一次运行
-cargo test
-
-# 只运行上次失败的测试
-cargo test -- --fail-fast
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml settings::
+cargo test --manifest-path src-tauri/Cargo.toml plugin_manager::
+cargo test --manifest-path src-tauri/Cargo.toml --test plugin_test
 ```
 
-### 条件编译
+### 真机显示器测试
 
-在测试中使用条件编译:
+`monitor::tests::test_get_macos_display_names_not_empty` 标记为 ignored，因为无头 CI 或没有真实显示会话时不能给出可靠结论。
 
-```rust
-#[cfg(test)]
-mod tests {
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn test_macos_only() {
-        // macOS 专属测试
-    }
-}
-```
-
----
-
-## 第二部分: TypeScript 前端测试
-
-前端测试使用 **Bun 测试框架**,测试文件位于 `src/scripts/core/__tests__/` 目录。
-
-### 前端测试文件说明
-
-#### 1. utils.test.ts - 工具函数测试
-
-测试核心工具函数,包括 CSS 注入和键盘事件触发。
-
-**测试覆盖**:
-- CSS 注入到 `<head>` 标签
-- 更新已存在的 style 元素
-- CSS 移除功能
-- 特殊字符和媒体查询处理
-- ArrowLeft/ArrowRight 键盘事件触发
-- 事件冒泡验证
-- keyCode 映射 (Left → 37, Right → 39)
-
-**示例**:
-```typescript
-describe('injectCSS', () => {
-  it('should inject CSS into document head', () => {
-    const cssContent = '.test { color: red; }';
-    injectCSS('test-style-1', cssContent);
-
-    const style = document.getElementById('test-style-1');
-    expect(style).not.toBeNull();
-    expect(style?.innerHTML).toBe(cssContent);
-  });
-
-  it('should update existing style element', () => {
-    injectCSS('test-id', '.test { color: red; }');
-    injectCSS('test-id', '.test { color: blue; }');
-
-    const styles = document.querySelectorAll('#test-id');
-    expect(styles.length).toBe(1); // 只有一个元素
-  });
-});
-```
-
-#### 2. scroll_state.test.ts - 滚动状态测试
-
-测试滚动位置恢复的互斥机制,防止保存操作与恢复操作冲突。
-
-**测试覆盖**:
-- 恢复完成状态检查 (`isRestorationComplete`)
-- 恢复完成标记 (`markRestorationComplete`)
-- 异步等待恢复 (`waitForRestoration`)
-- 轮询机制 (100ms 间隔)
-- 超时处理 (默认 2000ms)
-- 并发等待调用
-- 状态持久化
-
-**关键测试 - 异步等待**:
-```typescript
-it('should resolve when restoration completes during wait', async () => {
-  const start = Date.now();
-
-  // 200ms 后标记完成
-  setTimeout(() => {
-    ScrollState.markRestorationComplete();
-  }, 200);
-
-  await ScrollState.waitForRestoration(1000);
-  const elapsed = Date.now() - start;
-
-  // 应该在 200-400ms 之间完成
-  expect(elapsed).toBeGreaterThanOrEqual(200);
-  expect(elapsed).toBeLessThan(400);
-});
-```
-
-**应用场景**:
-```typescript
-// 恢复前不允许保存
-if (ScrollState.isRestorationComplete()) {
-  saveScrollPosition(); // 只有恢复完成后才保存
-}
-
-// 等待恢复完成后再执行自动滚动
-await ScrollState.waitForRestoration();
-startAutoScroll();
-```
-
-#### 3. site_registry.test.ts - 站点注册表测试
-
-测试多站点适配器的注册和管理机制。
-
-**测试覆盖**:
-- 单例模式验证
-- 适配器注册 (`register`, `registerAll`)
-- 适配器检索 (`getAdapter`, `getAllAdapters`)
-- 当前域名匹配 (`getCurrentAdapter`)
-- 域名变化时缓存失效
-- 阅读页面/主页检测 (`isReaderPage`, `isHomePage`)
-- 菜单项委托 (`getReaderMenuItems`)
-- 边界情况处理 (缺失方法、空适配器)
-
-**关键测试 - 域名匹配与缓存**:
-```typescript
-it('should cache current adapter', () => {
-  const adapter = createMockAdapter('weread', 'weread.qq.com');
-  registry.register(adapter);
-
-  const first = registry.getCurrentAdapter();
-  const second = registry.getCurrentAdapter();
-
-  expect(first).toBe(second); // 缓存相同实例
-});
-
-it('should invalidate cache when domain changes', () => {
-  registry.register(wereadAdapter);
-  registry.register(kindleAdapter);
-
-  expect(registry.getCurrentAdapter()).toBe(wereadAdapter);
-
-  // 更改域名
-  Object.defineProperty(window, 'location', {
-    value: { hostname: 'read.amazon.com' }
-  });
-
-  expect(registry.getCurrentAdapter()).toBe(kindleAdapter);
-});
-```
-
-#### 4. event_bus.test.ts - 事件总线测试 (最复杂)
-
-测试应用的核心事件分发系统,包含历史回放、自动去重、错误隔离等高级功能。
-
-**测试覆盖**:
-- 基础订阅和发布 (`on`, `emit`)
-- 自动去重 (同一回调不会重复注册)
-- 一次性监听器 (`once`)
-- **历史回放** (`onWithHistory`) - 解决"迟到订阅者"问题
-- 错误隔离 (一个监听器失败不影响其他)
-- 模块清理 (`offModule`)
-- AbortSignal 取消订阅
-- 统计工具 (`getListenerCount`, `getStats`)
-- 事件链 (一个事件触发另一个事件)
-
-**核心功能 - 历史回放**:
-```typescript
-describe('onWithHistory', () => {
-  it('should replay last event immediately for new subscribers', () => {
-    let receivedData: number | null = null;
-
-    // 先发布事件
-    eventBus.emit('data-loaded', 42);
-
-    // 后订阅 - 应该立即收到历史事件
-    eventBus.onWithHistory('data-loaded', (data) => {
-      receivedData = data;
-    });
-
-    expect(receivedData).toBe(42); // 立即收到历史数据
-  });
-});
-```
-
-**错误隔离测试**:
-```typescript
-it('should isolate errors and not break other listeners', () => {
-  const results: number[] = [];
-
-  eventBus.on('test', () => {
-    throw new Error('Listener 1 failed');
-  });
-
-  eventBus.on('test', (data) => {
-    results.push(data); // 应该仍然执行
-  });
-
-  eventBus.emit('test', 100);
-
-  expect(results).toEqual([100]); // 第二个监听器正常工作
-});
-```
-
-**实际应用场景**:
-```typescript
-// 场景 1: 避免模块初始化顺序问题
-// AppManager 先于 MenuManager 初始化并发布 'route-changed'
-// MenuManager 后初始化,但仍能收到最近的路由变化
-eventBus.onWithHistory('route-changed', (route) => {
-  updateMenuForRoute(route);
-});
-
-// 场景 2: 模块卸载时批量清理
-class MyManager extends BaseManager {
-  destroy() {
-    eventBus.offModule('MyManager'); // 清理所有监听器
-  }
-}
-```
-
-#### 5. optimistic_lock.test.ts - 乐观锁测试
-
-测试并发更新的乐观锁机制,防止设置冲突。
-
-**测试覆盖**:
-- 版本号递增
-- 并发更新冲突检测
-- 最大重试次数限制
-- 版本溢出保护
-
-**示例**:
-```typescript
-it('should detect version conflict', async () => {
-  const lock = new OptimisticLock();
-
-  const update1 = lock.tryUpdate(async (data) => {
-    await sleep(100);
-    return { ...data, value: 'A' };
-  });
-
-  const update2 = lock.tryUpdate(async (data) => {
-    return { ...data, value: 'B' };
-  });
-
-  const results = await Promise.allSettled([update1, update2]);
-
-  // 只有一个成功,另一个因版本冲突失败
-  const successes = results.filter(r => r.status === 'fulfilled');
-  expect(successes.length).toBe(1);
-});
-```
-
-#### 6. settings_store.test.ts - 设置存储测试
-
-测试设置的持久化、同步和并发控制。
-
-**测试覆盖**:
-- 单例模式
-- 设置加载和保存
-- 跨窗口同步 (通过 Tauri 事件)
-- 版本冲突处理
-- 嵌套对象更新
-- 自动重试机制
-
-### 前端测试编写指南
-
-#### 基本结构
-
-```typescript
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-
-describe('Feature Name', () => {
-  beforeEach(() => {
-    // 每个测试前的准备工作
-  });
-
-  afterEach(() => {
-    // 每个测试后的清理工作
-  });
-
-  it('should do something', () => {
-    // Arrange (准备)
-    const input = createTestData();
-
-    // Act (执行)
-    const result = functionUnderTest(input);
-
-    // Assert (断言)
-    expect(result).toBe(expected);
-  });
-});
-```
-
-#### Mock 浏览器 API
-
-前端测试需要模拟浏览器环境:
-
-```typescript
-// Mock window.location
-const mockLocation = {
-  hostname: 'weread.qq.com',
-  href: 'https://weread.qq.com/',
-};
-
-beforeEach(() => {
-  Object.defineProperty(window, 'location', {
-    writable: true,
-    value: mockLocation,
-  });
-});
-
-// Mock Tauri API
-beforeEach(() => {
-  (window as any).__TAURI__ = {
-    core: {
-      invoke: async (cmd: string, args: any) => {
-        // Mock 实现
-      }
-    },
-    event: {
-      listen: (event: string, handler: Function) => {
-        // Mock 实现
-        return Promise.resolve(() => {});
-      }
-    }
-  };
-});
-```
-
-#### 异步测试
-
-```typescript
-it('should handle async operations', async () => {
-  const promise = asyncFunction();
-
-  // 等待完成
-  const result = await promise;
-  expect(result).toBe(expected);
-
-  // 或者测试超时
-  await expect(
-    asyncFunctionWithTimeout(100)
-  ).resolves.toBeUndefined();
-});
-```
-
-#### 测试定时器
-
-```typescript
-it('should poll every 100ms', async () => {
-  let pollCount = 0;
-  const originalFunc = MyClass.checkStatus;
-
-  MyClass.checkStatus = () => {
-    pollCount++;
-    return originalFunc.call(MyClass);
-  };
-
-  await MyClass.waitWithPolling(500);
-
-  // 500ms 应该轮询约 5 次
-  expect(pollCount).toBeGreaterThanOrEqual(4);
-  expect(pollCount).toBeLessThanOrEqual(6);
-
-  MyClass.checkStatus = originalFunc;
-});
-```
-
-### 前端测试最佳实践
-
-#### 1. 清理副作用
-
-确保每个测试后清理 DOM 和全局状态:
-
-```typescript
-afterEach(() => {
-  // 清理 DOM
-  document.querySelectorAll('style[id^="test-"]')
-    .forEach(el => el.remove());
-
-  // 清理全局变量
-  delete (window as any).__test_data;
-
-  // 清理事件监听器
-  eventBus.off('test-event');
-});
-```
-
-#### 2. 使用描述性的测试名称
-
-```typescript
-// ✅ 好的命名
-it('should replay history immediately for late subscribers')
-it('should invalidate cache when domain changes')
-it('should isolate errors between listeners')
-
-// ❌ 不好的命名
-it('should work')
-it('test history')
-it('test error')
-```
-
-#### 3. 一个测试只验证一个行为
-
-```typescript
-// ✅ 好的做法
-it('should inject CSS into document head', () => {
-  injectCSS('id', 'css');
-  expect(document.getElementById('id')).not.toBeNull();
-});
-
-it('should update existing style element', () => {
-  injectCSS('id', 'css1');
-  injectCSS('id', 'css2');
-  expect(document.querySelectorAll('#id').length).toBe(1);
-});
-
-// ❌ 坏的做法
-it('should handle CSS injection', () => {
-  // 测试了太多行为
-  injectCSS('id', 'css');
-  expect(document.getElementById('id')).not.toBeNull();
-  injectCSS('id', 'css2');
-  expect(document.querySelectorAll('#id').length).toBe(1);
-  removeCSS('id');
-  expect(document.getElementById('id')).toBeNull();
-});
-```
-
-#### 4. 测试边界情况
-
-```typescript
-describe('Edge Cases', () => {
-  it('should handle empty input', () => {
-    expect(processData('')).toBe('');
-  });
-
-  it('should handle null values', () => {
-    expect(processData(null)).toBeNull();
-  });
-
-  it('should handle concurrent operations', async () => {
-    const promises = Array(100).fill(0).map(() =>
-      asyncOperation()
-    );
-    const results = await Promise.all(promises);
-    // 验证结果
-  });
-});
-```
-
-### 前端测试调试
-
-#### 显示详细输出
+需要真机执行时：
 
 ```bash
-# 显示所有 console.log
-bun test --verbose
-
-# 显示失败测试的详细信息
-bun test --bail
+cargo test --manifest-path src-tauri/Cargo.toml \
+  monitor::tests::test_get_macos_display_names_not_empty \
+  -- --ignored --nocapture
 ```
 
-#### 只运行特定测试
+普通单元测试只验证可重复的纯计算逻辑，不把开发机硬件状态当作 CI 前提。
+
+## IPC / Capability 一致性
+
+`bun run check:ipc` 自动检查：
+
+- `build.rs` AppManifest 与 `generate_handler![]` 完全一致。
+- 23 个命令都有生成 permission。
+- Capability permission 没有缺失或残留命令。
+- `tauri.conf.json` 启用的 Capability 文件集合正确。
+- `main-runtime` 的命令集合精确匹配阅读运行时白名单。
+- 远程主窗口没有 FS、Shell、Updater、Dialog、Opener、窗口创建或插件管理能力。
+
+新增命令后此检查失败时，不要绕过脚本；同步修改 handler、AppManifest、permission 和最小 Capability。
+
+## 构建验证
+
+`bun run build` 会：
+
+1. 用 Bun 从 `src/scripts/inject.ts` 打包 `src/scripts/inject.js`。
+2. 重建 `dist/`。
+3. 复制本地窗口页面与图标。
+
+禁止手工编辑 `inject.js`。任何 TypeScript 修改后都应重新构建，再检查工作区差异。
+
+Rust 验证：
 
 ```bash
-# 使用 it.only 只运行一个测试
-it.only('should test this specific case', () => {
-  // ...
-});
-
-# 使用 describe.only 只运行一组测试
-describe.only('Critical Tests', () => {
-  // ...
-});
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-#### 跳过测试
+## 模拟 E2E
+
+`e2e/test-page.html` 提供模拟 Tauri/WebView 环境；`e2e/tests/test_reader_features.py` 使用 Playwright 验证：
+
+1. 阅读变宽。
+2. 隐藏工具栏。
+3. 自动翻页开关。
+4. 离开阅读页清除自动翻页。
+5. 菜单状态同步。
+6. 日志输出。
+
+安装依赖并运行：
 
 ```bash
-# 临时跳过
-it.skip('should test later', () => {
-  // ...
-});
-
-# 条件跳过
-it.skipIf(process.env.CI)('should skip in CI', () => {
-  // ...
-});
+python3 -m venv .venv
+source .venv/bin/activate
+pip install playwright
+playwright install chromium
+bun run test:e2e
 ```
 
-### 持续集成 (CI/CD)
+模拟 E2E 不访问真实微信读书或 Fanqie，也不证明 Tauri ACL、原生菜单、签名更新和硬件显示器行为。
 
-完整的 CI 配置应该包含前后端测试:
+## 真实验收边界
 
-```yaml
-# .github/workflows/test.yml
-jobs:
-  test:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
+以下结论必须由人工或真机环境确认：
 
-      # Rust 后端测试
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+- 微信读书/Fanqie 的实际 DOM、样式和阅读进度算法。
+- 远程页面 Tauri ACL 和 OAuth/登录。
+- 打包后的 GitHub 更新检查、签名下载、安装和重启。
+- 各窗口位置/尺寸恢复。
+- 多显示器名称、移动和菜单重建。
+- macOS 原生追踪器拦截效果。
+- 长时间阅读后的内存曲线。
 
-      # TypeScript 前端测试
-      - uses: oven-sh/setup-bun@v1
-      - name: Install dependencies
-        run: bun install
-      - name: Run frontend tests
-        run: bun test
-```
+静态检查、本地单元测试和模拟 E2E 只能作为回归证据，不能替代这些验收。
 
----
+## 提交前检查表
 
-## 参考资源
-
-### 后端 (Rust)
-- [Rust 测试文档](https://doc.rust-lang.org/book/ch11-00-testing.html)
-- [Tauri 测试指南](https://v2.tauri.app/start/testing/)
-- 项目内测试文件: `src-tauri/tests/`
-
-### 前端 (TypeScript)
-- [Bun 测试文档](https://bun.sh/docs/cli/test)
-- [TypeScript 测试最佳实践](https://github.com/goldbergyoni/javascript-testing-best-practices)
-- 项目内测试文件: `src/scripts/core/__tests__/`
+- [ ] 没有修改冻结文件，或已完成独立评审和真站验证。
+- [ ] TypeScript 严格检查通过。
+- [ ] Bun 全量测试通过。
+- [ ] IPC/Capability 一致性通过。
+- [ ] `inject.js` 由构建生成。
+- [ ] rustfmt、Rust test、Rust check 通过。
+- [ ] 模拟 E2E 通过。
+- [ ] `git diff --check` 通过。
+- [ ] 文档中的接口、测试数量和文件名已同步。
+- [ ] 真站/真机未验证项被明确标注。

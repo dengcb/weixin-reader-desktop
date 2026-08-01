@@ -65,13 +65,6 @@ async function runStep(name: string, fn: () => void | Promise<void>) {
     }
 }
 
-// 专门用于执行命令的步骤
-function runCommandStep(name: string, command: string, env: NodeJS.ProcessEnv = process.env) {
-    runStep(name, () => {
-        execSync(command, { stdio: 'inherit', env });
-    });
-}
-
 console.log('🚀 Starting Release Process...');
 const totalStart = performance.now();
 

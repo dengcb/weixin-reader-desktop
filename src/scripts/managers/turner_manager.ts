@@ -1,11 +1,10 @@
 
-import { settingsStore, AppSettings, MergedSettings } from '../core/settings_store';
+import { settingsStore, MergedSettings } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { CursorHider } from './turner/cursor_hider';
 import { SwipeHandler } from './turner/swipe_handler';
 import { AutoFlipper } from './turner/auto_flipper';
 import { ProgressBar } from './turner/progress_bar';
-import { log } from '../core/logger';
 
 type RouteChangedEvent = {
   isReader: boolean;
@@ -30,6 +29,8 @@ export class TurnerManager {
 
   // Store references for cleanup
   private routeChangedHandler: ((e: Event) => void) | null = null;
+  private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeDoubleColumn: (() => void) | null = null;
 
   constructor() {
     this.siteContext = createSiteContext();
@@ -47,12 +48,12 @@ export class TurnerManager {
   }
 
   private init() {
-    settingsStore.subscribe((settings) => {
+    this.unsubscribeSettings = settingsStore.subscribe((settings) => {
       this.updateState(settings);
     });
 
     // 监听双栏模式变化，更新进度条显示状态
-    this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
+    this.unsubscribeDoubleColumn = this.siteContext.onDoubleColumnChange(() => {
       this.updateProgressBarVisibility();
     });
 
@@ -105,5 +106,9 @@ export class TurnerManager {
     this.swipeHandler.destroy();
     this.autoFlipper.stopAll();
     this.progressBar.destroy();
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+    this.unsubscribeDoubleColumn?.();
+    this.unsubscribeDoubleColumn = null;
   }
 }

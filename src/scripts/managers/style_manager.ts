@@ -12,7 +12,7 @@
  */
 
 import { injectCSS, removeCSS } from '../core/utils';
-import { settingsStore, AppSettings, SiteSettings, MergedSettings } from '../core/settings_store';
+import { settingsStore, MergedSettings } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { log } from '../core/logger';
 import { RouteChangedEvent } from './ipc_manager';
@@ -29,6 +29,8 @@ export class StyleManager {
   private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
   private darkModeQuery: MediaQueryList | null = null;
   private darkModeHandler: ((e: MediaQueryListEvent | MediaQueryList) => void) | null = null;
+  private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeDoubleColumn: (() => void) | null = null;
 
   constructor() {
     this.siteContext = createSiteContext();
@@ -50,7 +52,7 @@ export class StyleManager {
     this.handleTheme();
 
     // 4. Subscribe to settings changes
-    settingsStore.subscribe(() => {
+    this.unsubscribeSettings = settingsStore.subscribe(() => {
       // Always get the full merged settings (including current site settings)
       this.updateStyles(settingsStore.get());
     });
@@ -92,7 +94,7 @@ export class StyleManager {
     window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
 
     // 6. 监听双栏模式变化（集中管理）
-    this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
+    this.unsubscribeDoubleColumn = this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
       log.debug('[StyleManager] Double column mode changed from SiteContext:', isDoubleColumn);
       this.applyStyles();
     });
@@ -100,10 +102,10 @@ export class StyleManager {
 
   private handleTheme() {
     this.darkModeHandler = (e: MediaQueryList | MediaQueryListEvent) => {
-      const adapter = this.siteContext.currentAdapter;
+      const runtime = this.siteContext.currentRuntime;
 
-      if (adapter && adapter.getDarkThemeCSS && adapter.getLightThemeCSS) {
-        const css = e.matches ? adapter.getDarkThemeCSS() : adapter.getLightThemeCSS();
+      if (runtime?.styleOwner === 'manager' && runtime.getDarkThemeCSS && runtime.getLightThemeCSS) {
+        const css = e.matches ? runtime.getDarkThemeCSS() : runtime.getLightThemeCSS();
         injectCSS('wxrd-base-bg', css);
       } else {
         // Fallback to default theme
@@ -141,24 +143,24 @@ export class StyleManager {
       return;
     }
 
-    const adapter = this.siteContext.currentAdapter;
+    const runtime = this.siteContext.currentRuntime;
     const isDoubleColumn = this.siteContext.isDoubleColumn;
 
     log.debug('[StyleManager] Applying styles. isDoubleColumn:', isDoubleColumn);
 
-    if (adapter) {
+    if (runtime?.styleOwner === 'manager') {
       // Use adapter-specific CSS
-      const wideCSS = adapter.getWideModeCSS(this.isWide);
-      const toolbarCSS = adapter.getToolbarCSS(this.isHideToolbar);
+      const wideCSS = runtime.getWideModeCSS(this.isWide);
+      const toolbarCSS = runtime.getToolbarCSS(this.isHideToolbar);
       // 导航栏隐藏样式仅在双栏模式下应用
-      const navbarCSS = (isDoubleColumn && adapter.getNavbarCSS) ? adapter.getNavbarCSS(this.isHideNavbar) : '';
+      const navbarCSS = (isDoubleColumn && runtime.getNavbarCSS) ? runtime.getNavbarCSS(this.isHideNavbar) : '';
 
       injectCSS('wxrd-wide-mode', wideCSS);
       injectCSS('wxrd-hide-toolbar', toolbarCSS);
       injectCSS('wxrd-hide-navbar', navbarCSS);
-    } else {
+    } else if (!runtime) {
       // Fallback: no styles applied
-      log.warn('[StyleManager] No adapter found, styles not applied');
+      log.warn('[StyleManager] No site runtime found, styles not applied');
     }
 
     window.dispatchEvent(new Event('resize'));
@@ -190,6 +192,10 @@ export class StyleManager {
       this.darkModeQuery = null;
       this.darkModeHandler = null;
     }
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+    this.unsubscribeDoubleColumn?.();
+    this.unsubscribeDoubleColumn = null;
 
     // Clean up injected styles
     this.clearReaderStyles();

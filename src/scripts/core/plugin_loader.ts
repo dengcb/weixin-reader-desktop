@@ -9,17 +9,21 @@
  */
 
 import { log } from './logger';
-import { createPluginAPI } from './plugin_api';
+import { cleanupPluginAPI, createPluginAPI } from './plugin_api';
 import { getPluginRegistry } from './plugin_registry';
 import { settingsStore } from './settings_store';
 import { invoke } from './tauri';
 import type { ReaderPlugin } from './plugin_types';
+import {
+  createPluginSiteRuntime,
+  type ReaderSiteRuntime,
+} from './reader_site_runtime';
 
 export class PluginLoader {
   private static instance: PluginLoader;
   
   /** 内置插件工厂函数列表 */
-  private builtinFactories: Array<() => ReaderPlugin> = [];
+  private builtinFactories: Array<() => ReaderPlugin | ReaderSiteRuntime> = [];
   
   /** 是否已初始化 */
   private initialized = false;
@@ -40,8 +44,8 @@ export class PluginLoader {
    * 注册内置插件工厂
    * @param factory 创建插件实例的工厂函数
    */
-  registerBuiltin(factory: () => ReaderPlugin): void {
-    this.builtinFactories.push(factory);
+  registerBuiltin(factory: () => ReaderPlugin | ReaderSiteRuntime): void {
+    if (!this.builtinFactories.includes(factory)) this.builtinFactories.push(factory);
   }
   
   /**
@@ -66,6 +70,8 @@ export class PluginLoader {
         // 检查是否启用
         if (!settingsStore.isPluginEnabled(pluginId)) {
           log.info(`[PluginLoader] Skipping disabled builtin plugin: ${pluginId}`);
+          // 工厂可能在构造时建立了站点内部监听（WeRead 进度桥接器）。
+          plugin.onUnload();
           continue;
         }
         
@@ -135,6 +141,11 @@ export class PluginLoader {
       
       return true;
     } catch (e) {
+      // onLoad 可能在失败前已注册了事件或注入了样式。
+      try { plugin.onUnload(); } catch (unloadError) {
+        log.error(`[PluginLoader] Failed to roll back plugin '${pluginId}'`, unloadError);
+      }
+      cleanupPluginAPI(pluginId);
       const errorMsg = e instanceof Error ? e.message : String(e);
       registry.updateState(pluginId, 'error', errorMsg);
       log.error(`[PluginLoader] Failed to load plugin '${pluginId}'`, e);
@@ -162,15 +173,18 @@ export class PluginLoader {
     
     log.info(`[PluginLoader] Unloading plugin: ${pluginId}`);
     
+    let succeeded = true;
     try {
       registered.plugin.onUnload();
-      registry.updateState(pluginId, 'unloaded');
-      log.info(`[PluginLoader] Plugin unloaded: ${pluginId}`);
-      return true;
     } catch (e) {
+      succeeded = false;
       log.error(`[PluginLoader] Failed to unload plugin '${pluginId}'`, e);
-      return false;
+    } finally {
+      cleanupPluginAPI(pluginId);
+      registry.updateState(pluginId, 'unloaded');
     }
+    log.info(`[PluginLoader] Plugin unloaded: ${pluginId}`);
+    return succeeded;
   }
   
   /**
@@ -185,7 +199,7 @@ export class PluginLoader {
   /**
    * 获取当前活动的插件
    */
-  getActivePlugin(): ReaderPlugin | null {
+  getActivePlugin(): ReaderSiteRuntime | null {
     const registry = getPluginRegistry();
     const active = registry.getActivePlugin();
     return active?.plugin || null;
@@ -225,7 +239,7 @@ export class PluginLoader {
    * 执行插件方法（带安全检查）
    */
   invokePluginMethod<T>(
-    method: keyof ReaderPlugin,
+    method: keyof ReaderSiteRuntime,
     ...args: any[]
   ): T | null {
     const plugin = this.getActivePlugin();
@@ -313,15 +327,10 @@ export class PluginLoader {
     const registry = getPluginRegistry();
     
     // 1. 卸载所有已加载的插件
-    const allRegistered = registry.getAll();
+    const allRegistered = [...registry.getAll()];
     for (const registered of allRegistered) {
       if (registered.state === 'loaded') {
-        try {
-          registered.plugin.onUnload();
-          log.info(`[PluginLoader] Hot unloaded: ${registered.plugin.manifest.id}`);
-        } catch (e) {
-          log.error(`[PluginLoader] Failed to unload plugin during hot reload`, e);
-        }
+        await this.unloadPlugin(registered.plugin.manifest.id);
       }
     }
     
@@ -336,6 +345,7 @@ export class PluginLoader {
         
         if (!settingsStore.isPluginEnabled(pluginId)) {
           log.info(`[PluginLoader] Skipping disabled plugin during hot reload: ${pluginId}`);
+          plugin.onUnload();
           continue;
         }
         
@@ -369,30 +379,29 @@ export class PluginLoader {
    */
   private async loadExternalPlugins(): Promise<void> {
     const registry = getPluginRegistry();
-    let installed: Array<{ id: string }> = [];
+    let runtimePlugin: { plugin: { id: string }; code: string } | null = null;
     try {
-      installed = await invoke('get_installed_plugins');
+      runtimePlugin = await invoke('get_runtime_plugin');
     } catch (e) {
-      log.error('[PluginLoader] get_installed_plugins failed', e);
+      log.error('[PluginLoader] get_runtime_plugin failed', e);
       return;
     }
 
-    for (const info of installed) {
-      const pluginId = info.id;
-      if (!settingsStore.isPluginEnabled(pluginId)) continue; // 尊重启用/禁用
-      if (registry.get(pluginId)) continue;                   // 避免与内置重复注册
-      try {
-        const code: string = await invoke('get_plugin_code', { pluginId });
-        const instance = await this.instantiateFromCode(code);
-        if (instance) {
-          registry.register(instance);
-          log.info(`[PluginLoader] External plugin registered: ${pluginId}`);
-        } else {
-          log.warn(`[PluginLoader] External plugin '${pluginId}' has no default export`);
-        }
-      } catch (e) {
-        log.error(`[PluginLoader] Failed to load external plugin '${pluginId}'`, e);
+    if (!runtimePlugin?.plugin?.id || typeof runtimePlugin.code !== 'string') return;
+    const pluginId = runtimePlugin.plugin.id;
+    if (registry.get(pluginId)) return;
+    try {
+      const instance = await this.instantiateFromCode(runtimePlugin.code);
+      if (instance?.manifest.id === pluginId) {
+        registry.register(createPluginSiteRuntime(instance));
+        log.info(`[PluginLoader] External plugin registered: ${pluginId}`);
+      } else if (instance) {
+        log.error(`[PluginLoader] Runtime plugin ID mismatch: expected '${pluginId}'`);
+      } else {
+        log.warn(`[PluginLoader] External plugin '${pluginId}' has no default export`);
       }
+    } catch (e) {
+      log.error(`[PluginLoader] Failed to load external plugin '${pluginId}'`, e);
     }
   }
 
@@ -413,18 +422,18 @@ export class PluginLoader {
     }
   }
 
-  /**
-   * 获取所有内置插件 ID（用于初始化 enabledPlugins）
-   */
-  getAllBuiltinPluginIds(): string[] {
-    return this.builtinFactories.map(factory => {
-      try {
-        const plugin = factory();
-        return plugin.manifest.id;
-      } catch {
-        return null;
+  destroy(): void {
+    const registry = getPluginRegistry();
+    for (const registered of registry.getAll()) {
+      if (registered.state !== 'loaded') continue;
+      try { registered.plugin.onUnload(); } catch (error) {
+        log.error(`[PluginLoader] Failed to unload '${registered.plugin.id}' during destroy`, error);
       }
-    }).filter((id): id is string => id !== null);
+      cleanupPluginAPI(registered.plugin.id);
+      registry.updateState(registered.plugin.id, 'unloaded');
+    }
+    registry.clear();
+    this.initialized = false;
   }
 }
 

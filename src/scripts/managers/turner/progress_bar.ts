@@ -7,14 +7,14 @@ import { SiteContext } from '../../core/site_context';
 import { log } from '../../core/logger';
 
 export class ProgressBar extends BaseManager {
-  private siteContext: SiteContext;
   private progressBarElement: HTMLElement | null = null;
   private isVisible = false;
   private latestProgress: number = 0;  // 缓存最新进度值
+  private chapterTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(siteContext: SiteContext) {
     super();
-    this.siteContext = siteContext;
+    void siteContext;
     this.init();
   }
 
@@ -44,7 +44,9 @@ export class ProgressBar extends BaseManager {
     this.on(Events.CHAPTER_CHANGED, () => {
       if (this.isVisible) {
         // 延迟重建，等待微信读书 DOM 渲染完成
-        setTimeout(() => {
+        this.chapterTimer = setTimeout(() => {
+          this.chapterTimer = null;
+          if (this.isDestroyed()) return;
           if (!document.getElementById('wxrd-progress-bar-container')) {
             this.show();
           }
@@ -127,6 +129,8 @@ export class ProgressBar extends BaseManager {
   }
 
   destroy(): void {
+    if (this.chapterTimer) clearTimeout(this.chapterTimer);
+    this.chapterTimer = null;
     this.hide();
     super.destroy();
   }

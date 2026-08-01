@@ -47,6 +47,15 @@ class EventBusImpl {
   // 历史记录最大数量
   private readonly MAX_HISTORY = 10;
 
+  // 只有状态事件需要延迟订阅；翻页等瞬时事件不保留。
+  private readonly historyEvents = new Set([
+    'ipc:route-changed',
+    'ipc:title-changed',
+    'wxrd:progress-updated',
+    'wxrd:double-column-changed',
+    'settings-updated',
+  ]);
+
   // 当前模块 ID（用于自动关联监听器）
   private currentModuleId: string | null = null;
 
@@ -74,7 +83,7 @@ class EventBusImpl {
     callback: (data: T) => void,
     options: ListenerOptions & { moduleId?: string } = {}
   ): () => void {
-    const { once = false, signal, moduleId = null } = options;
+    const { once = false, signal, moduleId = this.currentModuleId } = options;
 
     // 🔧 修复漏洞 3：检查 signal 是否已经 aborted
     if (signal?.aborted) {
@@ -139,9 +148,9 @@ class EventBusImpl {
       const latest = history[history.length - 1];
       console.debug(`[EventBus] 回放历史事件: ${event}`, latest.data);
 
+      historyReplayed = true;
       try {
         callback(latest.data);
-        historyReplayed = true;
       } catch (error) {
         console.error(`[EventBus] 历史回放时回调执行出错:`, error);
       }
@@ -206,23 +215,23 @@ class EventBusImpl {
     const listeners = Array.from(eventListeners);
 
     for (const wrapper of listeners) {
+      // once 必须在回调前移除，回调抛错或重入 emit 也不会残留。
+      if (wrapper.once) eventListeners.delete(wrapper);
       try {
         wrapper.callback(data);
-
-        // 如果是一次性监听器，触发后移除
-        if (wrapper.once) {
-          eventListeners.delete(wrapper);
-        }
       } catch (error) {
         console.error(`[EventBus] 事件 ${event} 的监听器执行出错:`, error);
       }
     }
+
+    if (eventListeners.size === 0) this.listeners.delete(event);
   }
 
   /**
    * 记录事件历史
    */
   private recordHistory(event: string, data: any): void {
+    if (!this.historyEvents.has(event)) return;
     let history = this.eventHistory.get(event);
     if (!history) {
       history = [];
@@ -293,6 +302,12 @@ class EventBusImpl {
       this.eventHistory.delete(event);
     } else {
       this.eventHistory.clear();
+    }
+  }
+
+  clearHistoryByPrefix(prefix: string): void {
+    for (const event of this.eventHistory.keys()) {
+      if (event.startsWith(prefix)) this.eventHistory.delete(event);
     }
   }
 

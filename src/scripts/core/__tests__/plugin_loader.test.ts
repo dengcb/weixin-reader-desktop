@@ -9,12 +9,13 @@
  * - Method invocation with safety checks
  */
 
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, spyOn } from 'bun:test';
 import { PluginLoader } from '../plugin_loader';
 import { PluginRegistry, getPluginRegistry } from '../plugin_registry';
 import { settingsStore } from '../settings_store';
 import { log } from '../logger';
 import type { ReaderPlugin, PluginManifest } from '../plugin_types';
+import { createPluginSiteRuntime } from '../reader_site_runtime';
 
 // Mock plugin factory
 function createMockPlugin(id: string): ReaderPlugin {
@@ -79,7 +80,7 @@ describe('PluginLoader', () => {
       
       // Mock registry to return this plugin as active
       spyOn(registry, 'getActivePlugin').mockReturnValue({
-        plugin: mockPlugin,
+        plugin: createPluginSiteRuntime(mockPlugin),
         state: 'unloaded'
       });
 
@@ -90,13 +91,9 @@ describe('PluginLoader', () => {
     });
 
     it('should not initialize twice', async () => {
-      const infoSpy = spyOn(log, 'info');
       await loader.initialize();
       await loader.initialize();
-      
-      const warnSpy = spyOn(log, 'warn');
-      // The second call should trigger a warning
-      // Note: we need to reset the spy to check the second call if we didn't use separate spies
+      expect(log.warn).toHaveBeenCalled();
     });
   });
 
@@ -159,7 +156,7 @@ describe('PluginLoader', () => {
       
       registry.register(plugin);
       spyOn(registry, 'getActivePlugin').mockReturnValue({
-        plugin,
+        plugin: createPluginSiteRuntime(plugin),
         state: 'loaded'
       });
 
@@ -180,7 +177,7 @@ describe('PluginLoader', () => {
       
       registry.register(plugin);
       spyOn(registry, 'getActivePlugin').mockReturnValue({
-        plugin,
+        plugin: createPluginSiteRuntime(plugin),
         state: 'loaded'
       });
 

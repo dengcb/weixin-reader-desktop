@@ -9,23 +9,51 @@
  * Note: Route monitoring is now handled by IPCManager
  */
 
-import { invoke, waitForTauri, logToFile } from '../core/tauri';
+import { waitForTauri, logToFile } from '../core/tauri';
 import { settingsStore } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { ScrollState } from '../core/scroll_state';
 import { log } from '../core/logger';
+import { getReadingPosition } from '../core/reading_position';
 
 // Session storage key to track if we've already restored in this session
 const RESTORE_FLAG_KEY = 'wxrd_has_restored';
-const SCROLL_RESTORED_KEY = 'wxrd_scroll_restored';
+
+export const SCROLL_RESTORE_POLICY = Object.freeze({
+  maxStalledAttempts: 50,
+  retryDelayMs: 100,
+  initialDelayMs: 500,
+});
+
+export type ScrollRestoreStep =
+  | { kind: 'restore'; top: number }
+  | { kind: 'chase'; top: number }
+  | { kind: 'give-up'; top: number };
+
+export const determineScrollRestoreStep = (
+  currentHeight: number,
+  viewportHeight: number,
+  targetScroll: number,
+  stalledAttempts: number,
+): ScrollRestoreStep => {
+  if (currentHeight >= targetScroll + viewportHeight) {
+    return { kind: 'restore', top: targetScroll };
+  }
+  if (stalledAttempts < SCROLL_RESTORE_POLICY.maxStalledAttempts) {
+    return { kind: 'chase', top: currentHeight };
+  }
+  return { kind: 'give-up', top: targetScroll };
+};
 
 export class AppManager {
-  private appName: string = "艾特阅读";
   private siteContext: SiteContext;
 
   // Store references for cleanup
   private pagehideHandler: (() => void) | null = null;
   private visibilitychangeHandler: (() => void) | null = null;
+  private restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly initAbortController = new AbortController();
+  private destroyed = false;
 
   constructor() {
     this.siteContext = createSiteContext();
@@ -33,16 +61,12 @@ export class AppManager {
   }
 
   private async init() {
-    await waitForTauri();
-
-    try {
-      this.appName = await invoke<string>('get_app_name') || "艾特阅读";
-    } catch (e) {
-      log.error("Failed to get app name:", e);
-    }
+    await waitForTauri(this.initAbortController.signal);
+    if (this.destroyed) return;
 
     // Initialize Settings Store (if not already)
     await settingsStore.init();
+    if (this.destroyed) return;
 
     // Set up pagehide handler to clear autoFlip on exit
     // pagehide is more reliable than beforeunload for app exit
@@ -61,9 +85,10 @@ export class AppManager {
 
     // Restore last page only on app startup (first time init)
     await this.restoreLastPage();
+    if (this.destroyed) return;
 
     // Restore scroll position if on reader page
-    this.restoreScrollPosition();
+    await this.restoreScrollPosition();
   }
 
   private clearAutoFlipOnExit() {
@@ -106,7 +131,7 @@ export class AppManager {
     }
   }
 
-  private restoreScrollPosition() {
+  private async restoreScrollPosition() {
     // Check if we've already restored scroll in this session (memory only)
     if (ScrollState.isRestorationComplete()) {
       return;
@@ -117,8 +142,14 @@ export class AppManager {
 
     // Only restore if on reader page and has saved scroll position
     const currentUrl = window.location.href;
-    const progressMap = settings.readingProgress || {};
-    const targetScroll = progressMap[currentUrl] ?? settings.scrollPosition;
+    let targetScroll: number | null | undefined;
+    try {
+      targetScroll = await getReadingPosition(this.siteContext.siteId, currentUrl);
+    } catch (error) {
+      log.warn('[AppManager] Failed to read URL-specific position, using legacy value', error);
+    }
+    if (this.destroyed) return;
+    targetScroll ??= settings.scrollPosition;
 
     if (!isReader || !settings.lastPage || targetScroll === undefined || targetScroll === null) {
       ScrollState.markRestorationComplete();
@@ -137,15 +168,13 @@ export class AppManager {
 
     // Chase Mode: Aggressively scroll to bottom to trigger lazy loading until we reach target
     let attempts = 0;
-    const maxAttempts = 50; // 5 seconds of *no progress* timeout
     let lastHeight = 0;
 
     const chaseScroll = () => {
+      if (this.destroyed) return;
       try {
         const currentHeight = document.documentElement.scrollHeight;
         const viewportHeight = window.innerHeight;
-        // 需要的最小高度：目标位置 + 视口高度（这样滚动后目标位置才能在屏幕顶部）
-        const requiredHeight = targetScroll + viewportHeight;
 
         // Check for growth/progress
         if (currentHeight > lastHeight) {
@@ -155,19 +184,26 @@ export class AppManager {
            attempts++;
         }
 
+        const step = determineScrollRestoreStep(
+          currentHeight,
+          viewportHeight,
+          targetScroll,
+          attempts,
+        );
+
         // Case 1: Page is long enough, just go to target
-        if (currentHeight >= requiredHeight) {
-          log.debug(`[AppManager] Height sufficient (${currentHeight} >= ${requiredHeight}), restoring to ${targetScroll}`);
-          window.scrollTo({ top: targetScroll, behavior: 'instant' });
+        if (step.kind === 'restore') {
+          log.debug(`[AppManager] Height sufficient (${currentHeight} >= ${targetScroll + viewportHeight}), restoring to ${targetScroll}`);
+          window.scrollTo({ top: step.top, behavior: 'instant' });
           // Mark restore as complete so IPCManager can start saving
           ScrollState.markRestorationComplete();
           return;
         }
 
         // Case 2: Page is too short, scroll to bottom to trigger load
-        if (attempts < maxAttempts) {
+        if (step.kind === 'chase') {
           // Scroll to bottom
-          window.scrollTo({ top: currentHeight, behavior: 'instant' });
+          window.scrollTo({ top: step.top, behavior: 'instant' });
 
           // Dispatch fake user events to trigger lazy loading
           document.dispatchEvent(new Event('scroll'));
@@ -176,10 +212,10 @@ export class AppManager {
           } catch(e) {}
 
           // Check again quickly
-          setTimeout(chaseScroll, 100);
+          this.restoreTimer = setTimeout(chaseScroll, SCROLL_RESTORE_POLICY.retryDelayMs);
         } else {
           log.debug('[AppManager] Max restore attempts reached (stuck), giving up.');
-          window.scrollTo({ top: targetScroll, behavior: 'instant' }); // Try one last time
+          window.scrollTo({ top: step.top, behavior: 'instant' }); // Try one last time
           ScrollState.markRestorationComplete();
         }
       } catch (e) {
@@ -190,10 +226,16 @@ export class AppManager {
     };
 
     // Start the chase after initial load
-    setTimeout(chaseScroll, 500);
+    this.restoreTimer = setTimeout(chaseScroll, SCROLL_RESTORE_POLICY.initialDelayMs);
   }
 
   public destroy() {
+    if (this.destroyed) return;
+    // AppRuntime 的 pagehide 监听器可能先执行并移除本 Manager 的监听器；
+    // 销毁入口本身也必须保持“离开页面即关闭自动翻页”的既有语义。
+    this.clearAutoFlipOnExit();
+    this.destroyed = true;
+    this.initAbortController.abort();
     // Remove event listeners
     if (this.pagehideHandler) {
       window.removeEventListener('pagehide', this.pagehideHandler);
@@ -202,6 +244,10 @@ export class AppManager {
     if (this.visibilitychangeHandler) {
       document.removeEventListener('visibilitychange', this.visibilitychangeHandler);
       this.visibilitychangeHandler = null;
+    }
+    if (this.restoreTimer) {
+      clearTimeout(this.restoreTimer);
+      this.restoreTimer = null;
     }
   }
 }

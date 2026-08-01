@@ -13,26 +13,43 @@ export interface ChapterData {
   maxPages: number;
 }
 
+export const CHAPTER_CACHE_LIMIT = 20;
+
+interface ChapterApiItem {
+  chapterUid: number;
+  chapterIdx: number;
+  title?: string;
+  wordCount?: number;
+}
+
+interface ChapterLoad {
+  promise: Promise<ChapterData[] | null>;
+  controller: AbortController;
+}
+
 /**
- * ChapterManager - 极简章节数据管理器
+ * ChapterManager - 章节数据管理器
  *
  * 核心原则：
- * 1. 第一次进入阅读页时，URL 路径就是 bookId，直接缓存
- * 2. 数字型 ID 只在调用 API 时从页面读取，不缓存
- * 3. 后续全部本地计算
- * 4. 登录状态实时检测
+ * 1. URL 中的书籍 token 是缓存键，数字型 ID 只用于当次 API 请求
+ * 2. 同一本书的并发初始化共用一个请求
+ * 3. 保留最近书籍的章节缓存和已校准页数，同时限制内存上限
+ * 4. 登录状态实时检测，失败可重试，过期请求不会覆盖当前书籍
  */
 class ChapterManager {
   private static instance: ChapterManager | null = null;
 
-  // 缓存的 bookId（URL 路径，23-24 位字符串）
+  // 当前活跃的 bookId（URL 路径 token）
   private bookId: string | null = null;
 
-  // 章节数据
+  // 当前活跃书籍的章节数据
   private chapters: ChapterData[] = [];
 
-  // 初始化失败标记（防止重复尝试）
-  private initFailed: boolean = false;
+  // Map 的插入顺序同时用作 LRU 顺序。
+  private chapterCache = new Map<string, ChapterData[]>();
+  private inFlightLoads = new Map<string, ChapterLoad>();
+  private latestRequestedBookId: string | null = null;
+  private lifecycleGeneration = 0;
 
   private constructor() {}
 
@@ -48,15 +65,17 @@ class ChapterManager {
    * @param bookId URL 路径中的 bookId（23-24 位字符串）
    */
   async initialize(bookId: string): Promise<boolean> {
-    // 如果已初始化同一本书，跳过
-    if (this.bookId === bookId && this.chapters.length > 0) {
-      log.info('[ChapterManager] 已初始化，跳过');
-      return true;
-    }
+    if (!bookId) return false;
 
-    // 如果之前初始化失败且 bookId 相同，跳过重复尝试
-    if (this.bookId === bookId && this.initFailed) {
-      return false;
+    this.latestRequestedBookId = bookId;
+    const generation = this.lifecycleGeneration;
+
+    const cached = this.chapterCache.get(bookId);
+    if (cached?.length) {
+      this.activateBook(bookId, cached);
+      this.touchCache(bookId, cached);
+      log.info('[ChapterManager] 使用已缓存章节数据');
+      return true;
     }
 
     // 检查登录状态，未登录时静默返回
@@ -64,24 +83,48 @@ class ChapterManager {
       return false;
     }
 
-    // 1. 缓存 bookId，重置失败标记
-    this.bookId = bookId;
-    this.initFailed = false;
-    log.info(`[ChapterManager] 缓存 bookId: ${bookId}`);
+    let load = this.inFlightLoads.get(bookId);
+    if (!load) {
+      const numericId = this.readNumericBookId();
+      if (!numericId) {
+        log.warn('[ChapterManager] 无法获取数字型 ID，可能页面未完全加载');
+        return false;
+      }
 
-    // 2. 从页面获取数字型 ID（用于 API 调用）
-    const numericId = this.readNumericBookId();
-    if (!numericId) {
-      log.warn('[ChapterManager] 无法获取数字型 ID，可能页面未完全加载');
-      this.initFailed = true;
+      const controller = new AbortController();
+      const promise = this.loadChapters(numericId, controller.signal);
+      load = { promise, controller };
+      this.inFlightLoads.set(bookId, load);
+      void promise.finally(() => {
+        if (this.inFlightLoads.get(bookId)?.promise === promise) {
+          this.inFlightLoads.delete(bookId);
+        }
+      });
+    }
+
+    const loadedChapters = await load.promise;
+    if (generation !== this.lifecycleGeneration || !loadedChapters?.length) {
       return false;
     }
 
-    // 3. 调用 API 获取章节数据
+    this.cacheBook(bookId, loadedChapters);
+
+    // 请求期间如果已经进入另一本书，只保留缓存，不激活旧书。
+    if (this.latestRequestedBookId !== bookId) {
+      return false;
+    }
+
+    this.activateBook(bookId, loadedChapters);
+    log.info(`[ChapterManager] 初始化成功，${loadedChapters.length} 章`);
+    return true;
+  }
+
+  private async loadChapters(numericId: string, signal: AbortSignal): Promise<ChapterData[] | null> {
     try {
       const response = await fetch(`https://weread.qq.com/web/book/chapterInfos?_=${Date.now()}`, {
         method: 'POST',
         credentials: 'include',
+        signal,
         headers: {
           'Accept': 'application/json, text/plain, */*',
           'Content-Type': 'application/json;charset=UTF-8',
@@ -91,8 +134,7 @@ class ChapterManager {
 
       if (!response.ok) {
         log.warn(`[ChapterManager] API 失败: ${response.status}`);
-        this.initFailed = true;
-        return false;
+        return null;
       }
 
       const result = await response.json();
@@ -100,19 +142,17 @@ class ChapterManager {
       // 检查 API 错误（可能未登录或权限问题）
       if (result.errCode && result.errCode !== 0) {
         // 静默处理常见错误码（-2010: 未登录, -2012: 权限不足）
-        this.initFailed = true;
-        return false;
+        return null;
       }
 
       const bookData = result?.data?.[0];
       if (!bookData?.updated?.length) {
-        this.initFailed = true;
-        return false;
+        return null;
       }
 
-      // 4. 处理章节数据，按 chapterIdx 排序
-      this.chapters = bookData.updated
-        .map((c: any): ChapterData => ({
+      // 按 chapterIdx 排序。下面两个经验公式是阅读进度协议，不得改变。
+      return (bookData.updated as ChapterApiItem[])
+        .map((c): ChapterData => ({
           chapterUid: c.chapterUid,
           chapterIdx: c.chapterIdx,
           title: c.title || '',
@@ -121,13 +161,35 @@ class ChapterManager {
           maxPages: Math.floor(((c.wordCount || 0) * 1.5 + 1000) / 800),
         }))
         .sort((a: ChapterData, b: ChapterData) => a.chapterIdx - b.chapterIdx);
-
-      log.info(`[ChapterManager] 初始化成功，${this.chapters.length} 章`);
-      return true;
-
     } catch (e) {
+      if (signal.aborted) return null;
       log.error('[ChapterManager] 初始化失败', e);
-      return false;
+      return null;
+    }
+  }
+
+  private activateBook(bookId: string, chapters: ChapterData[]): void {
+    this.bookId = bookId;
+    this.chapters = chapters;
+  }
+
+  private touchCache(bookId: string, chapters: ChapterData[]): void {
+    this.chapterCache.delete(bookId);
+    this.chapterCache.set(bookId, chapters);
+  }
+
+  private cacheBook(bookId: string, chapters: ChapterData[]): void {
+    this.touchCache(bookId, chapters);
+    while (this.chapterCache.size > CHAPTER_CACHE_LIMIT) {
+      let oldestEvictable: string | null = null;
+      for (const key of this.chapterCache.keys()) {
+        if (key !== this.bookId) {
+          oldestEvictable = key;
+          break;
+        }
+      }
+      if (!oldestEvictable) break;
+      this.chapterCache.delete(oldestEvictable);
     }
   }
 
@@ -207,6 +269,18 @@ class ChapterManager {
       }
     }
     return count;
+  }
+
+  reset(): void {
+    this.lifecycleGeneration++;
+    for (const load of this.inFlightLoads.values()) {
+      load.controller.abort();
+    }
+    this.inFlightLoads.clear();
+    this.chapterCache.clear();
+    this.latestRequestedBookId = null;
+    this.bookId = null;
+    this.chapters = [];
   }
 }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-reading-position"
+description = "Enables the get_reading_position command without any pre-configured scope."
+commands.allow = ["get_reading_position"]
+
+[[permission]]
+identifier = "deny-get-reading-position"
+description = "Denies the get_reading_position command without any pre-configured scope."
+commands.deny = ["get_reading_position"]

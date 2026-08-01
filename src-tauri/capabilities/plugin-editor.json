@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin-editor",
+  "description": "Trusted local plugin editor window",
+  "windows": ["plugin-editor"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "allow-load-plugin-for-edit",
+    "allow-save-plugin",
+    "allow-export-plugin",
+    "allow-install-plugin-from-editor"
+  ]
+}

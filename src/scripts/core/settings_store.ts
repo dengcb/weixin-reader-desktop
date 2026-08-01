@@ -1,464 +1,351 @@
-import { invoke, listen } from './tauri';
-import { OptimisticLock } from './optimistic_lock';
+import { listen, invoke } from './tauri';
 import { log } from './logger';
 import { createSiteContext } from './site_context';
 
-/**
- * 站点特定设置
- * 每个网站独立存储，互不干扰
- */
 export interface SiteSettings {
-  zoom?: number;  // 每个站点独立缩放比例
+  zoom?: number;
   readerWide?: boolean;
   hideToolbar?: boolean;
   hideNavbar?: boolean;
   lastReaderUrl?: string | null;
-  scrollPosition?: number;  // Y scroll position for single-column mode
-  readingProgress?: Record<string, number>; // URL-based scroll position storage
+  scrollPosition?: number;
 }
 
-/**
- * 应用设置总结构
- * - global: 全局设置（所有网站共享）
- * - sites: 站点特定设置（按 siteId 隔离）
- * - pluginConfigs: 插件配置（按 pluginId 隔离）
- */
+export interface GlobalSettings {
+  autoUpdate?: boolean;
+  lastPage?: boolean;
+  rememberSite?: boolean;
+  lastSiteId?: string;
+  hideCursor?: boolean;
+  enableRemoteController?: boolean;
+  enabledPlugins?: string[];
+  autoFlip?: {
+    active: boolean;
+    interval: number;
+    keepAwake: boolean;
+  };
+}
+
 export interface AppSettings {
-  _version?: number;  // Managed by OptimisticLock
-  global?: {
-    autoUpdate?: boolean;
-    lastPage?: boolean;  // 「阅读不停，自动记录」
-    rememberSite?: boolean;  // 「记住书店，好看再来」
-    lastSiteId?: string;
-    hideCursor?: boolean;
-    enabledPlugins?: string[];
-    autoFlip?: {
-      active: boolean;
-      interval: number;
-      keepAwake: boolean;
-    };
-  };
-  sites?: {
-    [siteId: string]: SiteSettings;
-  };
-  pluginConfigs?: {  // 插件配置（按 pluginId 隔离）
-    [pluginId: string]: Record<string, any>;
-  };
+  schemaVersion: 2;
+  _version: number;
+  global: GlobalSettings;
+  sites: Record<string, SiteSettings>;
+  pluginConfigs: Record<string, Record<string, any>>;
 }
 
-export type GlobalSettings = NonNullable<AppSettings['global']>;
 export type MergedSettings = AppSettings & SiteSettings & GlobalSettings;
 
+interface SettingsPatch {
+  global?: Partial<GlobalSettings>;
+  sites?: Record<string, Partial<SiteSettings>>;
+  pluginConfigs?: Record<string, Record<string, any>>;
+}
+
+type PatchOutcome =
+  | { status: 'applied'; settings: AppSettings }
+  | { status: 'conflict'; latest: AppSettings };
 
 type SettingsListener = (settings: MergedSettings) => void;
 
+const defaultDocument = (): AppSettings => ({
+  schemaVersion: 2,
+  _version: 0,
+  global: {
+    autoUpdate: true,
+    lastPage: true,
+    rememberSite: true,
+    hideCursor: false,
+    autoFlip: { active: false, interval: 15, keepAwake: true },
+  },
+  sites: {},
+  pluginConfigs: {},
+});
+
+const normalizeDocument = (value: AppSettings | null | undefined): AppSettings => ({
+  ...defaultDocument(),
+  ...value,
+  schemaVersion: 2,
+  _version: value?._version ?? 0,
+  global: { ...defaultDocument().global, ...(value?.global ?? {}) },
+  sites: value?.sites ?? {},
+  pluginConfigs: value?.pluginConfigs ?? {},
+});
+
+const applyPatch = (document: AppSettings, patch: SettingsPatch): AppSettings => {
+  const sites = { ...document.sites };
+  for (const [siteId, value] of Object.entries(patch.sites ?? {})) {
+    sites[siteId] = { ...sites[siteId], ...value };
+  }
+
+  const pluginConfigs = { ...document.pluginConfigs };
+  for (const [pluginId, value] of Object.entries(patch.pluginConfigs ?? {})) {
+    pluginConfigs[pluginId] = { ...pluginConfigs[pluginId], ...value };
+  }
+
+  return {
+    ...document,
+    global: { ...document.global, ...patch.global },
+    sites,
+    pluginConfigs,
+  };
+};
+
 export class SettingsStore {
   private static instance: SettingsStore;
-  private lock: OptimisticLock<AppSettings> | null = null;
-  private listeners: Set<SettingsListener> = new Set();
+  private document: AppSettings = defaultDocument();
+  private listeners = new Set<SettingsListener>();
   private initialized = false;
+  private initializePromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
+  private unlistenSettings: (() => void) | null = null;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor() {}
 
-  /**
-   * 迁移旧的扁平设置结构到新的嵌套结构
-   * 检测旧格式（有 readerWide, hideToolbar 等顶层字段）并迁移到 sites.weread
-   */
-  private static migrateOldSettings(loaded: any): AppSettings {
-    // 检测是否是旧格式（存在顶层的 readerWide 等字段）
-    const isOldFormat = 'readerWide' in loaded || 'hideToolbar' in loaded || 'autoFlip' in loaded;
-
-    if (!isOldFormat) {
-      // 已经是新格式，直接返回
-      return loaded as AppSettings;
-    }
-
-    log.info('[SettingsStore] Detected old settings format, migrating to new structure...');
-
-    // 将旧的顶层设置迁移到 sites.weread
-    const migratedSiteSettings: SiteSettings = {
-      zoom: loaded.zoom,  // zoom 现在按站点存储
-      readerWide: loaded.readerWide,
-      hideToolbar: loaded.hideToolbar,
-      lastReaderUrl: loaded.lastReaderUrl,
-      scrollPosition: loaded.scrollPosition,
-      readingProgress: loaded.readingProgress,
-    };
-
-    // 构建新格式（autoFlip 现在是全局）
-    const migrated: AppSettings = {
-      _version: loaded._version || 0,
-      global: {
-        autoUpdate: loaded.autoUpdate,
-        lastPage: loaded.lastPage,
-        autoFlip: loaded.autoFlip
-      },
-      sites: {
-        weread: migratedSiteSettings
-      }
-    };
-
-    log.info('[SettingsStore] Migration complete');
-    return migrated;
-  }
-
   public static getInstance(): SettingsStore {
-    if (!SettingsStore.instance) {
-      SettingsStore.instance = new SettingsStore();
-    }
+    if (!SettingsStore.instance) SettingsStore.instance = new SettingsStore();
     return SettingsStore.instance;
   }
 
-  public async init() {
-    if (this.initialized) return;
+  public init(): Promise<void> {
+    if (this.initialized) return Promise.resolve();
+    if (this.initializePromise) return this.initializePromise;
 
-    // Load initial settings
+    const generation = this.lifecycleGeneration;
+    const operation = this.initialize(generation);
+    this.initializePromise = operation;
+    const clearOperation = () => {
+      if (this.initializePromise === operation) this.initializePromise = null;
+    };
+    void operation.then(clearOperation, clearOperation);
+    return operation;
+  }
+
+  private async initialize(generation: number): Promise<void> {
+    await this.writeQueue;
+    if (generation !== this.lifecycleGeneration) return;
     try {
-      const loaded = (await invoke<AppSettings>('get_settings')) || {};
-
-      // Migrate old settings format if needed
-      const migrated = SettingsStore.migrateOldSettings(loaded);
-      const loadedVersion = migrated._version || 0;
-
-      // Apply defaults for new nested structure
-      const initialSettings: AppSettings = {
-        _version: loadedVersion,
-        global: {
-          autoUpdate: true,
-          lastPage: true,
-          ...migrated.global
-        },
-        sites: migrated.sites || {}
-      };
-
-      // Initialize optimistic lock
-      this.lock = new OptimisticLock<AppSettings>(initialSettings, loadedVersion);
-      log.debug('[SettingsStore] Initialized optimistic lock with version:', loadedVersion);
-    } catch (e) {
-      log.error('SettingsStore: Failed to load settings', e);
-      const fallbackSettings: AppSettings = {
-        _version: 0,
-        global: {
-          autoUpdate: true,
-          lastPage: true
-        },
-        sites: {}
-      };
-      this.lock = new OptimisticLock<AppSettings>(fallbackSettings, 0);
+      const document = normalizeDocument(await invoke<AppSettings>('get_settings'));
+      if (generation !== this.lifecycleGeneration) return;
+      this.document = document;
+    } catch (error) {
+      if (generation !== this.lifecycleGeneration) return;
+      log.error('[SettingsStore] Failed to load settings', error);
+      this.document = defaultDocument();
     }
 
-    // Listen for updates from other windows (e.g. settings window)
-    listen('settings-updated', async () => {
-      if (!this.lock) return;
-
-      // Reload fresh settings from backend
-      const newSettings = (await invoke<AppSettings>('get_settings')) || {};
-      const backendVersion = newSettings._version || 0;
-
-      log.debug('[SettingsStore] Received settings-updated event, backend version:', backendVersion, 'local version:', this.lock.getVersion());
-
-      // Use optimistic lock to load external data
-      const loaded = this.lock.loadFromExternal(newSettings, backendVersion);
-
-      if (loaded) {
-        log.debug('[SettingsStore] Loaded newer version from backend:', backendVersion);
+    const unlisten = await listen<AppSettings>('settings-updated', ({ payload }) => {
+      if (generation !== this.lifecycleGeneration) return;
+      const incoming = normalizeDocument(payload);
+      if (incoming._version > this.document._version) {
+        this.document = incoming;
         this.notify();
-      } else {
-        log.debug('[SettingsStore] Ignoring older version from backend:', backendVersion, '<', this.lock.getVersion());
       }
     });
-
+    if (generation !== this.lifecycleGeneration) {
+      unlisten();
+      return;
+    }
+    this.unlistenSettings = unlisten;
     this.initialized = true;
     this.notify();
   }
 
-  /**
-   * 获取设置
-   * 为了向后兼容，返回一个包含扁平化站点设置的对象
-   * 这样旧代码可以继续访问 settings.readerWide 等属性
-   */
   public get(): MergedSettings {
-    const rawSettings = this.lock ? this.lock.getData() : {};
-    // 动态获取当前站点设置
-    const siteId = createSiteContext().siteId;
-    const siteSettings = rawSettings.sites?.[siteId] || {};
-
-    // 合并全局设置和当前站点设置到顶层（向后兼容）
+    const siteSettings = this.document.sites[createSiteContext().siteId] ?? {};
     return {
-      ...rawSettings,
-      ...rawSettings.global,
-      ...siteSettings
-    } as MergedSettings;
+      ...this.document,
+      ...this.document.global,
+      ...siteSettings,
+    };
   }
 
-  /**
-   * 获取全局设置
-   */
-  public getGlobal(): NonNullable<AppSettings['global']> {
-    const rawSettings = this.lock ? this.lock.getData() : {};
-    return rawSettings.global || {};
+  public getGlobal(): GlobalSettings {
+    return this.document.global;
   }
 
-  /**
-   * 获取指定站点的设置
-   * @param siteId 站点 ID（如 'weread'）
-   */
   public getSite(siteId: string): SiteSettings {
-    const rawSettings = this.lock ? this.lock.getData() : {};
-    return rawSettings.sites?.[siteId] || {};
+    return this.document.sites[siteId] ?? {};
   }
 
-  /**
-   * 更新全局设置
-   */
-  public async updateGlobal(partial: Partial<NonNullable<AppSettings['global']>>) {
-    const current = this.get();
-    await this.update({
-      global: {
-        ...current.global,
-        ...partial
-      }
-    });
+  public getPluginConfig(pluginId: string): Record<string, any> {
+    return this.document.pluginConfigs[pluginId] ?? {};
   }
 
-  /**
-   * 更新指定站点的设置
-   * @param siteId 站点 ID（如 'weread'）
-   * @param partial 部分设置更新
-   */
-  public async updateSite(siteId: string, partial: Partial<SiteSettings>) {
-    const current = this.get();
-    await this.update({
-      sites: {
-        ...current.sites,
-        [siteId]: {
-          ...current.sites?.[siteId],
-          ...partial
-        }
-      }
-    });
+  public async updateGlobal(partial: Partial<GlobalSettings>): Promise<void> {
+    return this.enqueuePatch({ global: partial });
   }
 
-  /**
-   * 向后兼容：获取当前站点设置（默认 weread）
-   * 这个方法帮助旧代码无缝过渡到新的站点隔离结构
-   * @deprecated 建议使用 getSite(siteId) 并传入具体的站点 ID
-   */
+  public async updateSite(siteId: string, partial: Partial<SiteSettings>): Promise<void> {
+    return this.enqueuePatch({ sites: { [siteId]: partial } });
+  }
+
+  public async updatePluginConfig(
+    pluginId: string,
+    partial: Record<string, any>,
+  ): Promise<void> {
+    return this.enqueuePatch({ pluginConfigs: { [pluginId]: partial } });
+  }
+
   public getCurrentSiteSettings(): SiteSettings {
-    return this.getSite('weread');
+    return this.getSite(createSiteContext().siteId);
   }
 
-  /**
-   * 向后兼容：更新当前站点设置（默认 weread）
-   * 这个方法帮助旧代码无缝过渡到新的站点隔离结构
-   * @deprecated 建议使用 updateSite(siteId, partial) 并传入具体的站点 ID
-   */
-  public async updateCurrentSite(partial: Partial<SiteSettings>) {
-    return this.updateSite('weread', partial);
+  public async updateCurrentSite(partial: Partial<SiteSettings>): Promise<void> {
+    return this.updateSite(createSiteContext().siteId, partial);
   }
 
-  public async update(partial: Partial<AppSettings> & Partial<SiteSettings>) {
-    if (!this.lock) {
-      log.error('[SettingsStore] Lock not initialized');
-      return;
-    }
+  public async update(
+    partial: Partial<AppSettings> & Partial<SiteSettings> & Partial<GlobalSettings>,
+  ): Promise<void> {
+    const globalKeys: (keyof GlobalSettings)[] = [
+      'autoUpdate',
+      'lastPage',
+      'rememberSite',
+      'lastSiteId',
+      'hideCursor',
+      'enableRemoteController',
+      'enabledPlugins',
+      'autoFlip',
+    ];
+    const siteKeys: (keyof SiteSettings)[] = [
+      'zoom',
+      'readerWide',
+      'hideToolbar',
+      'hideNavbar',
+      'lastReaderUrl',
+      'scrollPosition',
+    ];
+    const patch: SettingsPatch = {};
 
-    // Remove _version from partial (managed by lock)
-    const { _version, ...partialWithoutVersion } = partial as any;
+    if (partial.global) patch.global = partial.global;
+    if (partial.sites) patch.sites = partial.sites;
+    if (partial.pluginConfigs) patch.pluginConfigs = partial.pluginConfigs;
 
-    // 智能路由：区分全局设置和站点设置
-    const globalFields = ['autoUpdate', 'lastPage', 'rememberSite', 'lastSiteId', 'hideCursor', 'autoFlip'];
-    const siteFields = ['zoom', 'readerWide', 'hideToolbar', 'hideNavbar', 'lastReaderUrl', 'scrollPosition', 'readingProgress'];
-
-    const current = this.lock.getData();
-    let needsUpdate = false;
-    let updatedSettings = { ...current };
-
-    // 处理嵌套的 global 和 sites 更新
-    if ('global' in partialWithoutVersion) {
-      updatedSettings.global = {
-        ...current.global,
-        ...partialWithoutVersion.global
-      };
-      needsUpdate = true;
-    }
-
-    if ('sites' in partialWithoutVersion) {
-      updatedSettings.sites = {
-        ...current.sites,
-        ...partialWithoutVersion.sites
-      };
-      needsUpdate = true;
-    }
-
-    // 处理扁平字段（向后兼容）- 自动路由到正确的嵌套位置
-    const flatUpdates: Record<string, any> = {};
-    for (const key in partialWithoutVersion) {
-      if (key !== 'global' && key !== 'sites') {
-        flatUpdates[key] = partialWithoutVersion[key];
+    for (const key of globalKeys) {
+      const value = partial[key];
+      if (value !== undefined) {
+        patch.global = { ...patch.global, [key]: value };
       }
     }
 
-    if (Object.keys(flatUpdates).length > 0) {
-      const globalUpdates: any = {};
-      const siteUpdates: any = {};
-
-      for (const key in flatUpdates) {
-        if (globalFields.includes(key)) {
-          globalUpdates[key] = flatUpdates[key];
-        } else if (siteFields.includes(key)) {
-          siteUpdates[key] = flatUpdates[key];
-        }
-      }
-
-      if (Object.keys(globalUpdates).length > 0) {
-        updatedSettings.global = {
-          ...current.global,
-          ...globalUpdates
-        };
-        needsUpdate = true;
-      }
-
-      if (Object.keys(siteUpdates).length > 0) {
+    for (const key of siteKeys) {
+      const value = partial[key];
+      if (value !== undefined) {
         const siteId = createSiteContext().siteId;
-        updatedSettings.sites = {
-          ...current.sites,
-          [siteId]: {
-            ...current.sites?.[siteId],
-            ...siteUpdates
-          }
+        patch.sites = {
+          ...patch.sites,
+          [siteId]: { ...patch.sites?.[siteId], [key]: value },
         };
-        needsUpdate = true;
       }
     }
 
-    if (!needsUpdate) return;
+    return this.enqueuePatch(patch);
+  }
 
-    // Use optimistic lock to perform update
-    const result = this.lock.tryUpdate(updatedSettings);
+  private enqueuePatch(patch: SettingsPatch): Promise<void> {
+    const operation = this.writeQueue.then(() => this.persistPatch(patch));
+    this.writeQueue = operation.catch(() => undefined);
+    return operation;
+  }
 
-    log.debug('[SettingsStore] Update: version', result.version - 1, '->', result.version, 'partial:', partialWithoutVersion);
-
-    // Notify listeners immediately (optimistic UI update)
+  private async persistPatch(patch: SettingsPatch): Promise<void> {
+    let stable = this.document;
+    this.document = applyPatch(stable, patch);
     this.notify();
 
-    // Persist to backend with new version
-    // IMPORTANT: Only save the clean nested structure (global, sites, _version)
-    // Do NOT save flattened fields to prevent data pollution
-    const cleanSettings: AppSettings = {
-      _version: result.version,
-      global: result.data.global,
-      sites: result.data.sites
-    };
-
     try {
-      await invoke('save_settings', {
-        settings: cleanSettings,  // Send only clean nested structure
-        version: result.version
-      });
-      log.debug('[SettingsStore] Saved successfully with version:', result.version);
-    } catch (e) {
-      log.error('[SettingsStore] Failed to save settings', e);
-      // Revert version on error
-      this.lock.forceSet(result.data, result.version - 1);
-      // Notify listeners of revert
+      let outcome = await this.sendPatch(stable._version, patch);
+      if (outcome.status === 'conflict') {
+        stable = normalizeDocument(outcome.latest);
+        this.document = applyPatch(stable, patch);
+        this.notify();
+        outcome = await this.sendPatch(stable._version, patch);
+      }
+
+      if (outcome.status === 'conflict') {
+        stable = normalizeDocument(outcome.latest);
+        this.document = stable;
+        this.notify();
+        throw new Error('Settings changed again while retrying patch');
+      }
+
+      this.document = normalizeDocument(outcome.settings);
       this.notify();
+    } catch (error) {
+      this.document = stable;
+      this.notify();
+      log.error('[SettingsStore] Failed to persist settings patch', error);
+      throw error;
     }
   }
 
-  public subscribe(listener: SettingsListener) {
+  private sendPatch(expectedVersion: number, patch: SettingsPatch): Promise<PatchOutcome> {
+    return invoke<PatchOutcome>('patch_settings', { expectedVersion, patch });
+  }
+
+  public subscribe(listener: SettingsListener): () => void {
     this.listeners.add(listener);
-    // Notify immediately with current settings
-    if (this.initialized && this.lock) {
+    if (this.initialized) {
+      try {
         listener(this.get());
+      } catch (error) {
+        log.error('[SettingsStore] Listener failed during initial delivery', error);
+      }
     }
     return () => this.listeners.delete(listener);
   }
 
-  // ==================== 插件管理方法 ====================
-
-  /**
-   * 检查插件是否启用
-   * undefined 表示全部启用（向后兼容旧版本）
-   */
   public isPluginEnabled(pluginId: string): boolean {
     const enabledPlugins = this.getGlobal().enabledPlugins;
-    if (enabledPlugins === undefined) return true;  // 兼容旧版：undefined = 全部启用
-    return enabledPlugins.includes(pluginId);
+    return enabledPlugins === undefined || enabledPlugins.includes(pluginId);
   }
 
-  /**
-   * 获取启用的插件列表
-   * @returns undefined 表示全部启用，数组表示只启用列表中的插件
-   */
   public getEnabledPlugins(): string[] | undefined {
     return this.getGlobal().enabledPlugins;
   }
 
-  /**
-   * 启用插件
-   * @param pluginId 插件 ID
-   */
   public async enablePlugin(pluginId: string): Promise<void> {
-    const global = this.getGlobal();
-    const currentList = global.enabledPlugins;
-    
-    // 如果 undefined（全部启用），不需要操作
-    if (currentList === undefined) return;
-    
-    if (!currentList.includes(pluginId)) {
-      await this.updateGlobal({
-        enabledPlugins: [...currentList, pluginId]
-      });
+    const current = this.getGlobal().enabledPlugins;
+    if (current !== undefined && !current.includes(pluginId)) {
+      await this.updateGlobal({ enabledPlugins: [...current, pluginId] });
     }
   }
 
-  /**
-   * 禁用插件
-   * @param pluginId 插件 ID
-   * @param allPluginIds 所有已注册的插件 ID 列表（当 enabledPlugins 为 undefined 时需要）
-   */
   public async disablePlugin(pluginId: string, allPluginIds?: string[]): Promise<void> {
-    const global = this.getGlobal();
-    let currentList = global.enabledPlugins;
-    
-    // 如果 undefined，需要先初始化为所有插件 ID（排除要禁用的）
-    if (currentList === undefined) {
-      if (!allPluginIds) {
-        log.warn('[SettingsStore] disablePlugin: allPluginIds required when enabledPlugins is undefined');
-        // 如果没有提供 allPluginIds，只能设置为空数组（禁用所有）
-        currentList = [];
-      } else {
-        currentList = allPluginIds;
-      }
+    const current = this.getGlobal().enabledPlugins ?? allPluginIds;
+    if (!current) {
+      log.warn('[SettingsStore] Cannot initialize enabled plugins without registry IDs');
+      return;
     }
-    
-    await this.updateGlobal({
-      enabledPlugins: currentList.filter(id => id !== pluginId)
-    });
+    await this.updateGlobal({ enabledPlugins: current.filter((id) => id !== pluginId) });
   }
 
-  /**
-   * 强制刷新设置（从后端重新加载）
-   * 用于热重载场景，确保获取最新的设置状态
-   */
   public async refresh(): Promise<void> {
-    if (!this.lock) return;
-    
-    const newSettings = (await invoke<AppSettings>('get_settings')) || {};
-    const backendVersion = newSettings._version || 0;
-    
-    log.debug('[SettingsStore] Manual refresh, backend version:', backendVersion);
-    
-    // 强制加载后端数据
-    this.lock.loadFromExternal(newSettings, backendVersion);
+    await this.writeQueue;
+    this.document = normalizeDocument(await invoke<AppSettings>('get_settings'));
     this.notify();
   }
 
-  private notify() {
-    if (!this.lock) return;
+  public destroy(): void {
+    this.lifecycleGeneration++;
+    this.unlistenSettings?.();
+    this.unlistenSettings = null;
+    this.listeners.clear();
+    this.initialized = false;
+    this.initializePromise = null;
+  }
+
+  private notify(): void {
     const current = this.get();
-    this.listeners.forEach(l => l(current));
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(current);
+      } catch (error) {
+        log.error('[SettingsStore] Listener failed', error);
+      }
+    }
   }
 }
 

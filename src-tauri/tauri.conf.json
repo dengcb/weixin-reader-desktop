@@ -25,7 +25,10 @@
     "security": {
       "csp": null,
       "capabilities": [
-        "default"
+        "main-runtime",
+        "settings",
+        "plugin-editor",
+        "legal-documents"
       ]
     }
   },

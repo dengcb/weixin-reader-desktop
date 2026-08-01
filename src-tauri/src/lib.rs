@@ -1,40 +1,80 @@
 #![allow(unexpected_cfgs)]
 
-use tauri::{WebviewUrl, WebviewWindowBuilder, Manager};
 use tauri::window::Color;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
-use std::path::PathBuf;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
+mod commands;
 mod menu;
 pub mod monitor;
-mod settings;
-mod commands;
-mod update;
-mod sites;
 pub mod plugin_manager;
+mod reading_progress;
+mod settings;
+mod sites;
 mod tracker_blocker;
+mod update;
 
-fn check_network_connection() -> bool {
-    let addr_str = sites::DEFAULT_SITE.network_check_addr();
-    if let Ok(mut addrs) = addr_str.to_socket_addrs() {
-        if let Some(addr) = addrs.next() {
-            return TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok();
-        }
+fn selected_startup_site_id(settings: &serde_json::Value) -> &str {
+    let remember_site = settings
+        .get("global")
+        .and_then(|global| global.get("rememberSite"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    if !remember_site {
+        return sites::WEREAD.id;
     }
-    false
+    settings
+        .get("global")
+        .and_then(|global| global.get("lastSiteId"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(sites::WEREAD.id)
+}
+
+fn resolve_startup_url<F>(settings: &serde_json::Value, mut resolve_home: F) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let remember_page = settings
+        .get("global")
+        .and_then(|global| global.get("lastPage"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let site_id = selected_startup_site_id(settings);
+
+    if remember_page {
+        settings
+            .get("sites")
+            .and_then(|sites| sites.get(site_id))
+            .and_then(|site| site.get("lastReaderUrl"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| resolve_home(site_id))
+    } else {
+        resolve_home(site_id)
+    }
 }
 
 /// 清理 autoFlip.active 状态
 /// 当窗口关闭或应用退出时，确保自动翻页状态被正确保存为 false
 fn clear_auto_flip_active(app_handle: tauri::AppHandle, _event_name: &str) {
-    let settings = settings::get_settings(app_handle.clone());
+    let settings =
+        settings::read_settings(&app_handle).unwrap_or_else(|_| settings::default_settings());
 
-    if let Some(auto_flip) = settings.get("global").and_then(|g| g.get("autoFlip")).and_then(|v| v.as_object()) {
-        let is_active = auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+    if let Some(auto_flip) = settings
+        .get("global")
+        .and_then(|g| g.get("autoFlip"))
+        .and_then(|v| v.as_object())
+    {
+        let is_active = auto_flip
+            .get("active")
+            .and_then(|a| a.as_bool())
+            .unwrap_or(false);
 
         if is_active {
-            settings::update_setting(&app_handle, "global.autoFlip.active", serde_json::json!(false));
+            let _ = settings::update_setting(
+                &app_handle,
+                "global.autoFlip.active",
+                serde_json::json!(false),
+            );
         }
     }
 }
@@ -45,18 +85,17 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&["about", "update", "settings", "plugin-editor"]).build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_log::Builder::new().targets([
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-        ]).build())
+        ])
+        .max_file_size(2 * 1024 * 1024)
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(2))
+        .build())
         .plugin(tauri_plugin_updater::Builder::default().build())
-        .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
             // Register cleanup callback using app.manage() + listen for exit events
             // Tauri v2 doesn't have cleanup(), use window close event instead
@@ -69,10 +108,9 @@ pub fn run() {
             // Check if we should restore the last reader page directly (to avoid flash of homepage)
             println!("[Init] App starting... Inject script size: {} bytes", inject_script.len());
 
-            let url = if check_network_connection() {
-                let settings_opt: Option<String> = app.handle().path().app_config_dir()
-                    .ok()
-                    .and_then(|dir: PathBuf| std::fs::read_to_string(dir.join("settings.json")).ok());
+            let url = {
+                let settings = settings::read_settings(app.handle())
+                    .unwrap_or_else(|_| settings::default_settings());
 
                 // 启动 URL 解析（多站点，两个正交开关）：
                 // - 「记住书店，好看再来」(global.rememberSite) 决定回哪个站点：
@@ -80,42 +118,9 @@ pub fn run() {
                 // - 「阅读不停，自动记录」(global.lastPage) 决定回页还是回首页：
                 //     开 → 该站点上次阅读页 sites[siteId].lastReaderUrl（无则站点首页）；关 → 站点首页
                 // 两个开关互不为前提，默认均为开（向后兼容）。
-                let resolved_url: Option<String> = settings_opt
-                    .as_ref()
-                    .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
-                    .and_then(|json| {
-                        let remember_site = json.get("global")
-                            .and_then(|g| g.get("rememberSite"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-                        let remember_page = json.get("global")
-                            .and_then(|g| g.get("lastPage"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-
-                        let site_id = if remember_site {
-                            json.get("global")
-                                .and_then(|g| g.get("lastSiteId"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(sites::WEREAD.id)
-                                .to_string()
-                        } else {
-                            sites::WEREAD.id.to_string()
-                        };
-
-                        if remember_page {
-                            // 优先该站点上次阅读页，其次站点首页
-                            json.get("sites")
-                                .and_then(|s| s.get(&site_id))
-                                .and_then(|s| s.get("lastReaderUrl"))
-                                .and_then(|u| u.as_str())
-                                .map(|s| s.to_string())
-                                .or_else(|| sites::resolve_home_url(&app.handle(), &site_id))
-                        } else {
-                            // 不恢复阅读页，直接站点首页
-                            sites::resolve_home_url(&app.handle(), &site_id)
-                        }
-                    });
+                let resolved_url = resolve_startup_url(&settings, |site_id| {
+                    sites::resolve_home_url(&app.handle(), site_id)
+                });
 
                 match resolved_url {
                     Some(url_str) => {
@@ -127,119 +132,9 @@ pub fn run() {
                         WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
                     }
                 }
-            } else {
-                println!("[Init] No network connection, using local error page");
-                WebviewUrl::App("index.html".into())
             };
 
             let app_name = app.config().product_name.clone().unwrap_or("艾特阅读".to_string());
-
-            // Console filter and HTTPS to HTTP conversion script
-            // Must be injected BEFORE the main inject script
-            // DISABLED: Temporarily disabled for debugging
-            #[allow(unused_variables)]
-            let console_filter_script = r#"
-              (function() {
-                // Console filtering
-                const originalWarn = console.warn;
-                const originalError = console.error;
-                const filterPatterns = [
-                  /ipc:\/\/localhost/,
-                  /requested insecure content from/,
-                  /IPC custom protocol failed/,
-                  /Tauri will now use the postMessage interface/,
-                  /Not allowed to request resource/,
-                  /Fetch API cannot load ipc:\/\//,
-                  /DIN-Bold\.woff/,
-                  /Source Map loading errors?/,
-                  /XMLHttpRequest cannot load.*localhost\.weixin\.qq\.com/,
-                  /check-login.*access control checks/,
-                  /SSL error has occurred/
-                ];
-                console.warn = function(...args) {
-                  const msg = String(args);
-                  if (!filterPatterns.some(p => p.test(msg))) originalWarn.apply(console, args);
-                };
-                console.error = function(...args) {
-                  const msg = String(args);
-                  if (!filterPatterns.some(p => p.test(msg))) originalError.apply(console, args);
-                };
-
-                // HTTPS to HTTP conversion function
-                function convertToHttp(url) {
-                  if (typeof url === 'string' && url.includes('https://localhost.weixin.qq.com')) {
-                    return url.replace('https://localhost.weixin.qq.com', 'http://localhost.weixin.qq.com');
-                  }
-                  return url;
-                }
-
-                // Intercept fetch and XMLHttpRequest in main window
-                const originalFetch = window.fetch;
-                window.fetch = function(url, options) {
-                  return originalFetch.apply(this, [convertToHttp(url), options]);
-                };
-
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                  return originalOpen.apply(this, [method, convertToHttp(url)]);
-                };
-
-                // Forward console logs to Tauri backend (only in dev mode)
-                const isDev = !window.__TAURI__.__currentWindow.label.includes('app.');
-                const originalLog = console.log;
-                console.log = function(...args) {
-                  originalLog.apply(console, args);
-                  if (isDev) {
-                    try {
-                      if (window.__TAURI__ && window.__TAURI__.core) {
-                        window.__TAURI__.core.invoke('log_frontend', { message: args.map(a => String(a)).join(' ') });
-                      }
-                    } catch(e) {}
-                  }
-                };
-
-                // Intercept in iframes as they load
-                const observer = new MutationObserver((mutations) => {
-                  document.querySelectorAll('iframe').forEach(iframe => {
-                    try {
-                      // Skip same-origin iframes (they share the window object)
-                      if (iframe.contentWindow && iframe.contentWindow !== window) {
-                        const injectIntoIframe = () => {
-                          try {
-                            // Intercept fetch and XHR in iframe
-                            if (iframe.contentWindow.fetch) {
-                              iframe.contentWindow.fetch = new Proxy(iframe.contentWindow.fetch, {
-                                apply: (target, thisArg, args) => {
-                                  if (args.length > 0) args[0] = convertToHttp(args[0]);
-                                  return Reflect.apply(target, thisArg, args);
-                                }
-                              });
-                            }
-                            if (iframe.contentWindow.XMLHttpRequest) {
-                              iframe.contentWindow.XMLHttpRequest.prototype.open = new Proxy(iframe.contentWindow.XMLHttpRequest.prototype.open, {
-                                apply: (target, thisArg, args) => {
-                                  if (args.length > 1) args[1] = convertToHttp(args[1]);
-                                  return Reflect.apply(target, thisArg, args);
-                                }
-                              });
-                            }
-                          } catch (e) {
-                            // Cross-origin iframe, can't inject
-                          }
-                        };
-                        // Try to inject immediately and on load
-                        injectIntoIframe();
-                        iframe.addEventListener('load', injectIntoIframe);
-                      } catch (e) {}
-                    }
-                  });
-                });
-                observer.observe(document.documentElement, { childList: true, subtree: true });
-              })();
-            "#;
-
-            // Debug: Temporarily disable console filter script to ensure logs are visible
-            // let app_handle = app.handle().clone();
 
             // IMPORTANT: Single Window Architecture
             // This application uses a single main window (label = "main") for all navigation.
@@ -280,11 +175,9 @@ pub fn run() {
             // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置）
             // zoom 按站点独立存储，从 sites[lastSiteId].zoom 读取
             {
-                let settings = settings::get_settings(app.handle().clone());
-                let site_id = settings.get("global")
-                    .and_then(|g| g.get("lastSiteId"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("weread");
+                let settings = settings::read_settings(app.handle())
+                    .unwrap_or_else(|_| settings::default_settings());
+                let site_id = selected_startup_site_id(&settings);
                 let zoom = settings.get("sites")
                     .and_then(|s| s.get(site_id))
                     .and_then(|s| s.get("zoom"))
@@ -309,63 +202,28 @@ pub fn run() {
             // Menu Init - AFTER main window is created
             menu::init(app)?;
 
-            // 诊断：5 秒后在番茄页面上检查布局参数
-            let diag_win = win.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                let js = r#"
-                    (function() {
-                        var data = {
-                            clientWidth: document.documentElement.clientWidth,
-                            clientHeight: document.documentElement.clientHeight,
-                            innerWidth: window.innerWidth,
-                            innerHeight: window.innerHeight,
-                            devicePixelRatio: window.devicePixelRatio,
-                            fontSize: getComputedStyle(document.documentElement).fontSize,
-                            viewport: document.querySelector('meta[name=viewport]') ? document.querySelector('meta[name=viewport]').content : 'NONE',
-                            htmlStyle: document.documentElement.getAttribute('style'),
-                            innerMaxWidth: (function(){ var el = document.querySelector('.muye-reader-inner'); return el ? getComputedStyle(el).maxWidth : 'NOT FOUND'; })(),
-                            innerOffsetWidth: (function(){ var el = document.querySelector('.muye-reader-inner'); return el ? el.offsetWidth : 'NOT FOUND'; })(),
-                            bodyOffsetWidth: document.body ? document.body.offsetWidth : 'NO BODY',
-                            styles: Array.from(document.querySelectorAll('style[id]')).map(function(s){ return s.id + ': ' + s.textContent.substring(0, 100); })
-                        };
-                        console.log('[DIAG] ' + JSON.stringify(data, null, 2));
-                    })();
-                "#;
-                let _ = diag_win.eval(js);
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::log_frontend,
             commands::log_to_file,
             commands::update_menu_state,
             commands::set_menu_item_enabled,
             commands::set_active_bookstore,
             settings::get_settings,
-            settings::save_settings,
-            commands::set_zoom,
-            commands::close_window,
+            settings::patch_settings,
+            reading_progress::get_reading_position,
+            reading_progress::save_reading_position,
             commands::set_title,
             commands::apply_site_zoom,
             commands::get_app_name,
             commands::get_app_version,
-            commands::get_available_monitors,
-            commands::move_window_to_monitor,
-            commands::get_current_monitor,
-            commands::navigate_to_url,
-            commands::set_cursor_visible,
-            commands::get_weread_book_progress,
             commands::install_plugin,
             commands::uninstall_plugin,
             commands::get_installed_plugins,
-            commands::get_plugin_config,
-            commands::save_plugin_config,
-            commands::get_plugin_code,
+            commands::get_runtime_plugin,
             commands::load_plugin_for_edit,
             commands::save_plugin,
-            commands::save_plugin_dialog,
+            commands::export_plugin,
             commands::install_plugin_from_editor,
             update::check_update_manual,
             update::install_update_now,
@@ -389,8 +247,112 @@ pub fn run() {
                         println!("[WindowEvent] Window '{}' destroyed", label);
                         clear_auto_flip_active(app_handle.clone(), "WindowEvent");
                     }
+                    // 编辑器窗口获得焦点时显示编辑菜单，失去焦点时隐藏
+                    if let tauri::WindowEvent::Focused(focused) = event {
+                        if focused {
+                            menu::set_edit_menu_visible(&app_handle, label == "plugin-editor");
+                        }
+                    }
                 }
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn home(site_id: &str) -> Option<String> {
+        match site_id {
+            "weread" => Some("https://weread.qq.com/".to_string()),
+            "fanqie" => Some("https://fanqienovel.com/".to_string()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn startup_url_restores_the_selected_sites_last_reader_page() {
+        let settings = json!({
+            "global": {
+                "rememberSite": true,
+                "lastPage": true,
+                "lastSiteId": "fanqie"
+            },
+            "sites": {
+                "fanqie": { "lastReaderUrl": "https://fanqienovel.com/reader/123" }
+            }
+        });
+        assert_eq!(
+            resolve_startup_url(&settings, home),
+            Some("https://fanqienovel.com/reader/123".to_string())
+        );
+    }
+
+    #[test]
+    fn startup_url_uses_site_home_when_page_restore_is_disabled_or_missing() {
+        let disabled = json!({
+            "global": {
+                "rememberSite": true,
+                "lastPage": false,
+                "lastSiteId": "fanqie"
+            },
+            "sites": {
+                "fanqie": { "lastReaderUrl": "https://fanqienovel.com/reader/123" }
+            }
+        });
+        assert_eq!(
+            resolve_startup_url(&disabled, home),
+            Some("https://fanqienovel.com/".to_string())
+        );
+
+        let missing = json!({
+            "global": {
+                "rememberSite": true,
+                "lastPage": true,
+                "lastSiteId": "fanqie"
+            },
+            "sites": {}
+        });
+        assert_eq!(
+            resolve_startup_url(&missing, home),
+            Some("https://fanqienovel.com/".to_string())
+        );
+    }
+
+    #[test]
+    fn startup_url_forces_weread_when_site_memory_is_disabled() {
+        let settings = json!({
+            "global": {
+                "rememberSite": false,
+                "lastPage": true,
+                "lastSiteId": "fanqie"
+            },
+            "sites": {
+                "weread": { "lastReaderUrl": "https://weread.qq.com/web/reader/book" },
+                "fanqie": { "lastReaderUrl": "https://fanqienovel.com/reader/123" }
+            }
+        });
+        assert_eq!(
+            resolve_startup_url(&settings, home),
+            Some("https://weread.qq.com/web/reader/book".to_string())
+        );
+        assert_eq!(selected_startup_site_id(&settings), "weread");
+    }
+
+    #[test]
+    fn startup_url_defaults_both_flags_and_handles_unknown_sites() {
+        assert_eq!(
+            resolve_startup_url(&json!({}), home),
+            Some("https://weread.qq.com/".to_string())
+        );
+        let unknown = json!({
+            "global": { "lastSiteId": "missing" },
+            "sites": {}
+        });
+        assert_eq!(resolve_startup_url(&unknown, home), None);
+        assert_eq!(selected_startup_site_id(&json!({})), "weread");
+        assert_eq!(selected_startup_site_id(&unknown), "missing");
+    }
 }

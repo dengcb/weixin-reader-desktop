@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-reading-position"
+description = "Enables the save_reading_position command without any pre-configured scope."
+commands.allow = ["save_reading_position"]
+
+[[permission]]
+identifier = "deny-save-reading-position"
+description = "Denies the save_reading_position command without any pre-configured scope."
+commands.deny = ["save_reading_position"]

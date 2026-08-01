@@ -1,74 +1,41 @@
-# 测试说明
+# Rust 测试说明
 
-本目录包含微信读书桌面客户端的集成测试。
+Rust 测试以源码内单元测试为主，另保留 `src-tauri/tests/plugin_test.rs` 集成测试。
 
-## 运行测试
+## 运行
 
-### 运行所有测试
+从仓库根目录执行：
+
 ```bash
-cd src-tauri
-cargo test
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --test plugin_test
+cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
 ```
 
-### 运行特定测试文件
-```bash
-# 多显示器功能测试
-cargo test --test monitor_test
+当前结果（2026-08-01）：58 个单元测试、6 个集成测试通过；1 个真实 macOS 显示会话测试 ignored。
 
-# 核心功能测试
-cargo test --test core_test
+## 覆盖
+
+- `settings.rs`：schema v2、并发版本 patch、原子写入与失败恢复。
+- `reading_progress.rs`：按 URL 独立存储、siteId、数量上限、原子失败和真实 Tauri 窗口/域名 scope。
+- `plugin_manager.rs`：路径、ZIP、symlink、异常包限制、替换回滚和卸载保留进度。
+- `commands.rs`：运行时域名/窗口边界、编辑器写入防护和真实 Tauri IPC metadata 分发。
+- `lib.rs` / `sites.rs`：启动站点、启动 URL、站点缩放归属和插件首页解析。
+- `menu.rs`：schema v2 菜单初值、缩放邻级和 mock App 菜单。
+- `update.rs`：自动更新设置、周期/超时、前端返回结构和 managed state。
+- `monitor.rs`：纯坐标计算；真实显示器名称单独作为真机测试。
+- `plugin_test.rs`：插件 manifest、站点配置和基础结构反序列化。
+
+旧的 `commands_test.rs`、`core_test.rs`、`menu_test.rs` 等大量“复制生产逻辑再测试副本”的测试已经删除。新的测试应尽量放在被测模块内，直接验证生产私有函数和持久化边界。
+
+## 真机测试
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml \
+  monitor::tests::test_get_macos_display_names_not_empty \
+  -- --ignored --nocapture
 ```
 
-### 运行测试并显示输出
-```bash
-cargo test -- --nocapture
-```
+无头 CI 不应运行该测试。普通单元测试不能证明实际显示器、窗口、远程 ACL、更新安装或原生菜单行为。
 
-## 测试文件说明
-
-### monitor_test.rs
-多显示器功能测试，包括：
-- 显示器名称检索
-- 坐标转换逻辑（物理像素 ↔ 逻辑点）
-- 窗口居中计算
-- 菜单项 ID 格式
-- 中文字符引号格式化
-- 显示器索引比较逻辑
-
-### core_test.rs
-核心功能测试，包括：
-- 设置序列化/反序列化
-- 自动翻页设置结构
-- 菜单项 ID 模式
-- 版本字符串格式
-- 边界检查逻辑
-- 显示器索引追踪
-
-## 注意事项
-
-1. **硬件依赖**：某些测试（如实际显示器检测）需要真实的多显示器硬件环境
-2. **平台限制**：macOS 特定功能（如 `NSScreen.localizedName`）只在 macOS 上可用
-3. **集成测试**：完整的集成测试需要运行 Tauri 应用
-
-## 添加新测试
-
-添加新测试时，请遵循以下准则：
-
-1. **测试一个功能点**：每个测试应该只测试一个具体功能
-2. **使用描述性名称**：测试名称应该清楚地描述测试的内容
-3. **独立运行**：测试应该可以独立运行，不依赖其他测试的状态
-4. **快速执行**：单元测试应该快速执行（毫秒级）
-
-## 测试覆盖范围
-
-当前测试覆盖：
-- ✅ 坐标转换逻辑
-- ✅ 窗口居中计算
-- ✅ 设置序列化
-- ✅ 菜单 ID 格式验证
-
-待补充测试：
-- ⏳ 实际多显示器环境下的集成测试
-- ⏳ Tauri 命令处理器测试
-- ⏳ 菜单状态管理测试
-- ⏳ 窗口移动端到端测试
+完整门禁见 [测试与验收指南](../../docs/TESTING.md)。

@@ -1,8 +1,12 @@
 
-import { invoke } from '../../core/tauri';
 import { injectCSS, removeCSS } from '../../core/utils';
 import { SiteContext } from '../../core/site_context';
 import { log } from '../../core/logger';
+
+export const CURSOR_POLICY = Object.freeze({
+  hideDelayMs: 3000,
+  defaultScrollLockMs: 200,
+});
 
 export class CursorHider {
   private mouseHideTimer: number | null = null;
@@ -14,6 +18,7 @@ export class CursorHider {
   private siteContext: SiteContext;
   private timerStarted = false; // 跟踪定时器是否已启动
   private enabled = false; // 功能开关，默认关闭
+  private destroyed = false;
 
   // Store bound handlers for cleanup
   private onMouseMove: ((e: MouseEvent) => void) | null = null;
@@ -27,6 +32,7 @@ export class CursorHider {
    * 设置启用状态
    */
   public setEnabled(enabled: boolean) {
+    if (this.destroyed) return;
     this.enabled = enabled;
     if (enabled) {
       if (!this.onMouseMove) {
@@ -68,7 +74,7 @@ export class CursorHider {
       if (this.enabled && this.siteContext.isReaderPage) {
         this.mouseHideTimer = window.setTimeout(() => {
           this.hideCursor();
-        }, 3000);
+        }, CURSOR_POLICY.hideDelayMs);
         this.timerStarted = true;
       }
     };
@@ -127,12 +133,13 @@ export class CursorHider {
     if (this.siteContext.isReaderPage) {
       this.mouseHideTimer = window.setTimeout(() => {
         this.hideCursor();
-      }, 3000);
+      }, CURSOR_POLICY.hideDelayMs);
       this.timerStarted = true;
     }
   }
 
-  public setScrollLock(duration = 200) {
+  public setScrollLock(duration: number = CURSOR_POLICY.defaultScrollLockMs) {
+    if (this.destroyed) return;
     this.isScrollingOrSwiping = true;
     if (this.scrollLockTimer) {
       clearTimeout(this.scrollLockTimer);
@@ -143,6 +150,7 @@ export class CursorHider {
   }
 
   public hideCursor() {
+    if (this.destroyed) return;
     if (this.isMouseHidden) return;
     if (!this.siteContext.isReaderPage) return;
 
@@ -166,6 +174,8 @@ export class CursorHider {
   }
 
   public destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.showCursor();
     this.enabled = false;
     if (this.mouseHideTimer) {
@@ -179,9 +189,12 @@ export class CursorHider {
 
     if (this.onMouseMove) {
       document.removeEventListener('mousemove', this.onMouseMove, false);
+      this.onMouseMove = null;
     }
     if (this.onMouseDown) {
       document.removeEventListener('mousedown', this.onMouseDown, false);
+      this.onMouseDown = null;
     }
+    this.timerStarted = false;
   }
 }

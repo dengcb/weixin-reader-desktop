@@ -13,23 +13,16 @@
  */
 
 import { invoke, listen, waitForTauriReady } from '../core/tauri';
-import { settingsStore, AppSettings, MergedSettings, SiteSettings } from '../core/settings_store';
+import { settingsStore, MergedSettings, SiteSettings } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { log } from '../core/logger';
 import { showToast } from '../core/toast';
-
-type RouteChangedEvent = {
-  isReader: boolean;
-  url: string;
-  pathname: string;
-};
 
 type TitleChangedEvent = {
   title: string;
 };
 
 export class MenuManager {
-  private isReader = false;
   private initialized = false;
   private siteContext: SiteContext;
 
@@ -38,6 +31,12 @@ export class MenuManager {
   private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
   private titleChangedHandler: ((e: Event) => void) | null = null;
   private unlistenMenuAction: (() => void) | null = null;
+  private unlistenShowToast: (() => void) | null = null;
+  private unlistenMenuRebuilt: (() => void) | null = null;
+  private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeDoubleColumn: (() => void) | null = null;
+  private destroyed = false;
+  private readonly initAbortController = new AbortController();
 
   constructor() {
     this.siteContext = createSiteContext();
@@ -49,19 +48,27 @@ export class MenuManager {
     this.unlistenMenuAction = await listen<string>('menu-action', (event) => {
       this.handleMenuAction(event.payload);
     });
+    if (this.destroyed) {
+      this.unlistenMenuAction();
+      this.unlistenMenuAction = null;
+      return;
+    }
 
     // 监听 Rust 端发来的 toast 事件（zoom 百分比提示）
-    listen<string>('show-toast', (event) => {
+    this.unlistenShowToast = await listen<string>('show-toast', (event) => {
       showToast(event.payload);
     });
+    if (this.destroyed) {
+      this.unlistenShowToast();
+      this.unlistenShowToast = null;
+      return;
+    }
 
-    this.routeChangedHandler = ((e: CustomEvent<RouteChangedEvent>) => {
-      this.isReader = e.detail.isReader;
+    this.routeChangedHandler = (() => {
       this.updateMenuEnabledStatus('route-changed');
     }) as EventListener;
 
-    this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
-      this.isReader = e.detail.isReader;
+    this.legacyRouteChangedHandler = (() => {
       this.updateMenuEnabledStatus('route-changed-legacy');
     }) as EventListener;
 
@@ -74,27 +81,30 @@ export class MenuManager {
     window.addEventListener('ipc:title-changed', this.titleChangedHandler);
 
     // 监听菜单重建事件
-    listen('menu-rebuilt', () => {
+    this.unlistenMenuRebuilt = await listen('menu-rebuilt', () => {
       log.info('[MenuManager] Menu rebuilt, resyncing state');
       this.syncMenuState();
     });
+    if (this.destroyed) {
+      this.unlistenMenuRebuilt();
+      this.unlistenMenuRebuilt = null;
+      return;
+    }
 
     // 监听双栏模式变化
-    this.siteContext.onDoubleColumnChange(async (isDoubleColumn) => {
+    this.unsubscribeDoubleColumn = this.siteContext.onDoubleColumnChange(async () => {
       await this.updateMenuEnabledStatus('double-column-change');
     });
 
     // 2. 等待 Tauri IPC 就绪
-    await waitForTauriReady();
+    await waitForTauriReady(this.initAbortController.signal);
+    if (this.destroyed) return;
 
-    // 3. 初始化 isReader 状态
-    this.isReader = this.siteContext.isReaderPage;
-
-    // 4. 标记为已初始化
+    // 3. 标记为已初始化
     this.initialized = true;
 
     // 5. 订阅设置变化
-    settingsStore.subscribe(async (settings) => {
+    this.unsubscribeSettings = settingsStore.subscribe(async (settings) => {
       // zoom 由 Rust 端菜单直接控制（按站点存储），前端不再 invoke set_zoom
       // 避免站点切换时前端用旧 siteId 的 zoom 覆盖新站点的缩放
       await this.syncMenuState(settings);
@@ -113,19 +123,38 @@ export class MenuManager {
     return this.siteContext.isReaderPage;
   }
 
-  // Only update enabled status based on reader mode
-  private async updateMenuEnabledStatus(source: string = 'unknown') {
+  // Only update enabled status based on reader mode AND capabilities
+  private async updateMenuEnabledStatus(_source: string = 'unknown') {
     if (!window.__TAURI__) return;
 
     const isReader = this.checkIsReader();
 
+    // 读取当前站点的 capabilities
+    // 微信读书（weread）是根站点，全部可用；外部插件从已安装副本读取（非构建时内联值）
+    const siteId = this.siteContext.currentRuntime?.id ?? 'weread';
+    const isWeread = siteId === 'weread';
+    let capWide = true;
+    let capToolbar = true;
+    let capNavbar = true;
+    if (!isWeread) {
+      try {
+        const plugins = await invoke<any[]>('get_installed_plugins');
+        const plugin = plugins?.find((p) => p.id === siteId);
+        const caps = plugin?.capabilities ?? {};
+        capWide = !!(caps.wideMode);
+        capToolbar = !!(caps.hideToolbar);
+        capNavbar = !!(caps.hideNavbar);
+      } catch {
+        // invoke 失败时默认全可用（不阻塞菜单）
+      }
+    }
+
     try {
-      // Reader-specific items
-      await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: isReader });
+      // Reader-specific items: enabled = isReader AND capability allows it
+      await invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: isReader && capWide });
       await invoke('set_menu_item_enabled', { id: 'hide_cursor', enabled: isReader });
-      await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: isReader });
-      // hide_navbar 和 hide_toolbar 一样，只在阅读器页面启用
-      await invoke('set_menu_item_enabled', { id: 'hide_navbar', enabled: isReader });
+      await invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: isReader && capToolbar });
+      await invoke('set_menu_item_enabled', { id: 'hide_navbar', enabled: isReader && capNavbar });
       await invoke('set_menu_item_enabled', { id: 'auto_flip', enabled: isReader });
 
       // Zoom items - always enabled
@@ -236,54 +265,13 @@ export class MenuManager {
         }
         break;
 
-      case 'zoom_in':
-        {
-          // Chrome 缩放级别: 0.5 → 0.67 → 0.75 → 0.8 → 0.9 → 1.0 → 1.1 → 1.25 → 1.5 → 1.75 → 2.0
-          const zoomLevels = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
-          const current = settings.zoom || 0.75;
-
-          // 找到下一个更大的级别
-          let nextZoom = zoomLevels[zoomLevels.length - 1]; // 默认最大值
-          for (const level of zoomLevels) {
-            if (level > current) {
-              nextZoom = level;
-              break;
-            }
-          }
-
-          settingsStore.updateSite(siteId, { zoom: nextZoom });
-          showToast(Math.round(nextZoom * 100) + '%');
-        }
-        break;
-
-      case 'zoom_out':
-        {
-          // Chrome 缩放级别: 0.5 → 0.67 → 0.75 → 0.8 → 0.9 → 1.0 → 1.1 → 1.25 → 1.5 → 1.75 → 2.0
-          const zoomLevels = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
-          const current = settings.zoom || 0.75;
-
-          // 找到下一个更小的级别
-          let nextZoom = zoomLevels[0]; // 默认最小值
-          for (let i = zoomLevels.length - 1; i >= 0; i--) {
-            if (zoomLevels[i] < current) {
-              nextZoom = zoomLevels[i];
-              break;
-            }
-          }
-
-          settingsStore.updateSite(siteId, { zoom: nextZoom });
-          showToast(Math.round(nextZoom * 100) + '%');
-        }
-        break;
-
-      case 'zoom_reset':
-        settingsStore.updateSite(siteId, { zoom: 1.0 });
-        showToast('100%');
-        break;
     }
   }
 
   public destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.initAbortController.abort();
     // Remove window event listeners
     if (this.routeChangedHandler) {
       window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
@@ -303,5 +291,13 @@ export class MenuManager {
       this.unlistenMenuAction();
       this.unlistenMenuAction = null;
     }
+    this.unlistenShowToast?.();
+    this.unlistenShowToast = null;
+    this.unlistenMenuRebuilt?.();
+    this.unlistenMenuRebuilt = null;
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+    this.unsubscribeDoubleColumn?.();
+    this.unsubscribeDoubleColumn = null;
   }
 }

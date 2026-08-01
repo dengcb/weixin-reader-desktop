@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "Trusted local settings and plugin-management window",
+  "windows": ["settings"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:webview:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:default",
+    "core:window:allow-create",
+    "dialog:default",
+    "opener:default",
+    "allow-get-app-name",
+    "allow-get-app-version",
+    "allow-get-settings",
+    "allow-patch-settings",
+    "allow-install-plugin",
+    "allow-uninstall-plugin",
+    "allow-get-installed-plugins",
+    "allow-load-plugin-for-edit",
+    "allow-check-update-manual",
+    "allow-install-update-now",
+    "allow-is-update-downloaded"
+  ]
+}

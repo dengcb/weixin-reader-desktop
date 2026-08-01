@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-runtime",
+  "description": "Minimal reading runtime permissions for the remote main window",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://*", "http://*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "allow-log-to-file",
+    "allow-update-menu-state",
+    "allow-set-menu-item-enabled",
+    "allow-set-active-bookstore",
+    "allow-set-title",
+    "allow-apply-site-zoom",
+    "allow-get-app-name",
+    "allow-get-settings",
+    "allow-patch-settings",
+    "allow-get-reading-position",
+    "allow-save-reading-position",
+    "allow-get-runtime-plugin",
+    "allow-get-installed-plugins"
+  ]
+}

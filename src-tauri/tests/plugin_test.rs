@@ -9,7 +9,7 @@
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use weixin_reader_lib::plugin_manager::{PluginInfo, PluginSiteConfig, InstalledPluginRecord};
+    use weixin_reader_lib::plugin_manager::{PluginInfo, PluginSiteConfig};
 
     #[test]
     fn test_plugin_info_deserialization() {
@@ -29,7 +29,7 @@ mod tests {
         let info: PluginInfo = serde_json::from_str(manifest_json).unwrap();
         assert_eq!(info.id, "test-plugin");
         assert_eq!(info.source_type, "script");
-        
+
         let site = info.site.unwrap();
         assert_eq!(site.home_url, "https://example.com/");
     }
@@ -56,20 +56,20 @@ mod tests {
     }
 
     #[test]
-    fn test_installed_plugin_record_serialization() {
-        // Test real InstalledPluginRecord struct
+    fn test_installed_plugin_fields_deserialization() {
         let record_json = r#"{
             "id": "test-plugin",
+            "name": "Test Plugin",
             "version": "1.0.0",
-            "installedAt": 1609459200,
+            "sourceType": "script",
             "enabled": true,
             "builtin": false
         }"#;
 
-        let record: InstalledPluginRecord = serde_json::from_str(record_json).unwrap();
+        let record: PluginInfo = serde_json::from_str(record_json).unwrap();
         assert_eq!(record.id, "test-plugin");
-        assert_eq!(record.installed_at, 1609459200);
         assert!(record.enabled);
+        assert!(!record.builtin);
     }
 
     #[test]
@@ -90,7 +90,10 @@ mod tests {
         });
 
         assert!(settings["pluginConfigs"].is_object());
-        assert_eq!(settings["pluginConfigs"]["test-plugin"]["enableExtra"], true);
+        assert_eq!(
+            settings["pluginConfigs"]["test-plugin"]["enableExtra"],
+            true
+        );
         assert_eq!(settings["pluginConfigs"]["another-plugin"]["theme"], "dark");
     }
 
@@ -121,7 +124,13 @@ mod tests {
         let manifest_path = plugin_path.join("manifest.json");
 
         assert_eq!(plugins_dir.to_str().unwrap(), "/mock/config/plugins");
-        assert_eq!(plugin_path.to_str().unwrap(), "/mock/config/plugins/my-plugin");
-        assert_eq!(manifest_path.to_str().unwrap(), "/mock/config/plugins/my-plugin/manifest.json");
+        assert_eq!(
+            plugin_path.to_str().unwrap(),
+            "/mock/config/plugins/my-plugin"
+        );
+        assert_eq!(
+            manifest_path.to_str().unwrap(),
+            "/mock/config/plugins/my-plugin/manifest.json"
+        );
     }
 }

@@ -1,658 +1,205 @@
-# 事件系统重构说明
+# 事件与生命周期架构
 
-## 问题分析
+本文描述现行的 `EventBus`、`BaseManager` 和资源释放规则。它们服务于 `AppRuntime` 的统一生命周期，而不是独立的“事件总线重构实验”。
 
-原有监听架构存在以下根本性问题：
+## 文件与职责
 
-1. **多次监听漏洞**：模块重复初始化时，监听器会叠加
-2. **清理依赖人工**：每个模块都要手动管理 `destroy()`，容易遗漏
-3. **初始化顺序问题**：A 监听 B，但 B 先发事件了，A 就收不到
-4. **事件名称散落**：字符串分散在各处，容易拼写错误
-5. **时序竞态问题**：多个监听器同时修改状态时，执行顺序不确定
-6. **历史状态丢失**：无法主动查询过去发生的事件
+| 文件 | 职责 |
+|---|---|
+| `src/scripts/core/event_bus.ts` | 事件订阅、有限历史、错误隔离、模块清理 |
+| `src/scripts/core/base_manager.ts` | 为 Manager 提供 AbortSignal、moduleId 和自动订阅清理 |
+| `src/scripts/core/app_runtime.ts` | 创建 Managers，页面销毁时逆序释放整个注入层 |
+| `src/scripts/core/plugin_api.ts` | 登记并释放插件样式、插件事件和订阅 |
+| `src/scripts/core/site_context.ts` | 管理可重启的 MutationObserver 和双栏订阅 |
 
-## 新架构设计
+## 事件分类
 
-### 核心文件
+`Events` 中的核心事件：
 
-```
-src/scripts/core/
-├── event_bus.ts      # 事件总线（单例）
-└── base_manager.ts   # 基础管理器类
-```
+| 事件 | 类型 | 是否保存历史 | 主要消费者 |
+|---|---|---:|---|
+| `ROUTE_CHANGED` | 状态 | 是 | Managers、ProgressTracker |
+| `TITLE_CHANGED` | 状态 | 是 | 标题相关模块 |
+| `PROGRESS_UPDATED` | 状态 | 是 | ProgressBar |
+| `DOUBLE_COLUMN_CHANGED` | 状态 | 是 | 布局相关模块 |
+| `SETTINGS_UPDATED` | 状态 | 是 | 设置同步 |
+| `CHAPTER_CHANGED` | 瞬时 | 否 | ProgressTracker、ProgressBar |
+| `PAGE_TURN_DIRECTION` | 瞬时 | 否 | ProgressTracker |
+| `TAURI_WINDOW_EVENT` | 瞬时 | 否 | 窗口事件消费者 |
 
-### 1. EventBus（事件总线）
+每个状态事件最多保留 10 条历史。瞬时翻页事件不保存历史，避免长时间阅读时积累无价值对象。
 
-**职责**：统一的事件分发中心
+初始路由必须发布一次带历史的 `ROUTE_CHANGED`。这样应用启动时已经位于阅读页，晚创建的 Manager 也能立即进入正确状态。
 
-**核心特性**：
-
-- **自动去重**：同一回调只会注册一次（基于 callback 引用相等性）
-- **自动清理**：模块销毁时自动清理其所有监听器
-- **延迟订阅**：支持订阅"过去的事件"，解决初始化顺序问题
-- **AbortSignal 支持**：信号取消时自动清理监听器
-- **异常隔离**：单个监听器抛错不影响其他监听器
-- **历史记录**：保留最近 10 次事件数据，支持主动查询
-- **原子性保证**：先记录历史，再触发监听器，确保时序正确
-
-**关键方法**：
+## API
 
 ```typescript
-// 订阅事件
-EventBus.on(event, callback, options): () => void
-
-// 订阅事件（带历史回放）
-EventBus.onWithHistory(event, callback, options): () => void
-
-// 一次性订阅
+EventBus.on(event, callback, options?): () => void
+EventBus.onWithHistory(event, callback, options?): () => void
 EventBus.once(event, callback): () => void
-
-// 触发事件
 EventBus.emit(event, data)
-
-// 获取最新历史数据
-EventBus.getLatestEvent(event): T | null
-
-// 获取所有历史记录
-EventBus.getEventHistory(event): Array<{ data: T; timestamp: number }>
-
-// 获取已知事件列表
-EventBus.getKnownEvents(): string[]
-
-// 清理模块的所有监听器
+EventBus.getLatestEvent(event)
+EventBus.getEventHistory(event)
 EventBus.cleanup(moduleId)
-
-// 清除事件历史
 EventBus.clearHistory(event?)
+EventBus.clearHistoryByPrefix(prefix)
+EventBus.getListenerCount()
+EventBus.getStats()
 ```
 
-### 2. Events（事件名称常量）
+### onWithHistory
 
-所有事件名称统一定义，避免拼写错误：
+`onWithHistory` 会先同步回放最近状态，再订阅未来事件。历史回调抛错会被隔离，不影响订阅流程。
 
-```typescript
-export const Events = {
-  // 路由相关
-  ROUTE_CHANGED: 'ipc:route-changed',
-  CHAPTER_CHANGED: 'ipc:chapter-changed',
+若同时指定 `once`，并且历史已经回放，则不会再注册未来监听器。
 
-  // 标题相关
-  TITLE_CHANGED: 'ipc:title-changed',
+### once
 
-  // 进度相关
-  PROGRESS_UPDATED: 'wxrd:progress-updated',
-  PAGE_TURN_DIRECTION: 'wxrd:page-turn-direction',
+once 监听器在调用用户回调之前从集合中移除。因此即使回调抛错或在回调中重入 `emit`，也只会执行一次。
 
-  // 样式相关
-  DOUBLE_COLUMN_CHANGED: 'wxrd:double-column-changed',
+### emit
 
-  // 设置相关
-  SETTINGS_UPDATED: 'settings-updated',
+`emit` 的顺序是：
 
-  // Tauri 事件
-  TAURI_WINDOW_EVENT: 'tauri://window-event',
-} as const;
-```
+1. 若属于状态事件，先记录有限历史。
+2. 复制当前监听器集合。
+3. 在回调前移除 once 监听器。
+4. 分别执行回调并隔离异常。
+5. 清除空监听器集合。
 
-### 3. BaseManager（基础管理器）
+一个监听器抛错不会阻断同事件的其他监听器。
 
-**职责**：所有管理器的基类
+## BaseManager 用法
 
-**核心特性**：
-
-- 自动生成唯一 `moduleId`（基于时间戳和随机数）
-- 自动关联监听器到模块
-- `destroy()` 时自动清理所有监听器
-- 提供便捷的 `on()`, `onWithHistory()`, `once()`, `emit()` 方法
-
-**使用示例**：
+继承 `BaseManager` 的模块应优先使用辅助方法：
 
 ```typescript
-class MyManager extends BaseManager {
+class ExampleManager extends BaseManager {
   constructor() {
     super();
-    this.init();
+    this.onWithHistory(Events.ROUTE_CHANGED, route => {
+      // 初始化时可立即收到最后一次路由状态
+    });
   }
 
-  private init() {
-    // 监听事件（自动关联到当前模块）
-    this.on(Events.ROUTE_CHANGED, (data) => {
-      console.log('路由变化:', data);
-    });
-
-    // 监听事件（带历史回放，解决初始化顺序问题）
-    this.onWithHistory(Events.PROGRESS_UPDATED, (data) => {
-      console.log('当前进度:', data);
-    });
-
-    // 一次性监听
-    this.once(Events.CHAPTER_CHANGED, (data) => {
-      console.log('章节首次切换:', data);
-    });
-
-    // 触发事件
-    this.emit(Events.CUSTOM_EVENT, { foo: 'bar' });
-  }
-
-  destroy() {
-    // super.destroy() 会自动清理所有监听器
+  destroy(): void {
+    // 先释放本类拥有的 DOM、timer、observer 等资源
     super.destroy();
   }
 }
 ```
 
-## 已修复的漏洞
+`BaseManager` 为每个实例创建唯一 moduleId 和 AbortController。`destroy()` 会 abort 并调用 `EventBus.cleanup(moduleId)`。
 
-EventBus 在实战中发现并修复了 7 个时序和健壮性漏洞：
+## 非 EventBus 资源
 
-### 漏洞 1：历史回放时回调抛错导致订阅失败
+EventBus 只能清理自己登记的监听器。以下资源仍必须由所有者保存句柄并释放：
 
-**问题**：`onWithHistory()` 回放历史时，如果回调抛异常，会导致订阅流程中断
+- `window` / `document` / DOM `addEventListener`。
+- Tauri `listen()` 返回的取消函数。
+- `MutationObserver`。
+- `setTimeout` / `setInterval`。
+- `requestAnimationFrame`。
+- `SettingsStore.subscribe()`。
+- 动态模块的 Blob URL。
+- 注入的 style 节点。
+- 临时覆盖的 `window.open`、`matchMedia` 等原生钩子。
 
-**修复**：用 try-catch 包裹历史回放逻辑
+如果异步注册可能在销毁后才完成，必须使用 generation 或 destroyed 检查，并立即执行迟到的取消函数。
 
-```typescript
-try {
-  callback(latest.data);
-  historyReplayed = true;
-} catch (error) {
-  console.error(`[EventBus] 历史回放时回调执行出错:`, error);
-}
-```
+## AppRuntime 的释放顺序
 
-### 漏洞 2：once + onWithHistory 导致重复触发
+`AppRuntime` 保存所有 Manager 的 `destroy()` 句柄，并在 `pagehide` 时：
 
-**问题**：使用 `onWithHistory({ once: true })` 时，历史回放触发一次，未来事件再触发一次
+1. 使热重载 generation 失效。
+2. 移除 pagehide、性能采样和 Tauri 插件更新监听。
+3. 逆序销毁 Managers。
+4. 销毁 PluginLoader，触发活动插件 `onUnload()`。
+5. 销毁 SiteContext。
+6. 销毁 SettingsStore。
+7. 清除可丢弃事件历史和调试全局。
 
-**修复**：如果历史已回放且 `once = true`，跳过未来订阅
+销毁过程幂等；任一子模块销毁失败会记录错误，但不会阻止其他资源继续释放。
 
-```typescript
-if (once && historyReplayed) {
-  console.debug(`[EventBus] once + onWithHistory 且历史已回放，跳过订阅: ${event}`);
-  return () => {}; // 返回空的取消函数
-}
-```
+## 插件资源
 
-### 漏洞 3：已 aborted 的 signal 导致内存泄漏
+插件通过 Plugin API 创建的资源由宿主登记：
 
-**问题**：传入已经 `aborted` 的 `AbortSignal`，监听器仍会注册但永远不会被清理
+- 样式 ID 自动加 `plugin-<id>-` 前缀。
+- 事件自动加 `plugin:<id>:` 前缀。
+- settings 订阅和事件取消函数进入插件清理集合。
+- once 回调执行后会同时移除自己的清理记录。
+- 卸载时清理全部登记资源和对应可丢弃历史。
 
-**修复**：订阅时检查 signal 状态
+插件自行直接创建的 DOM 监听器、Observer 或 timer 仍应在 `onUnload()` 中释放。
 
-```typescript
-if (signal?.aborted) {
-  console.debug(`[EventBus] Signal already aborted, skip subscription: ${event}`);
-  return () => {}; // 返回空函数，避免后续调用出错
-}
-```
+## SiteContext Observer
 
-### 漏洞 4：监听器执行出错影响其他监听器
+双栏观察器遵循以下不变量：
 
-**问题**：一个监听器抛异常，后续监听器无法执行
+- 同时最多存在一个 `MutationObserver` 实例。
+- `startObserving()` 重复调用不会重复绑定。
+- `stopObserving()` 会 disconnect 并清掉 throttle timer，但保留可重新绑定能力。
+- DOM 尚未准备好时只登记一个 `DOMContentLoaded` 回调。
+- 插件热重载后 `invalidate()` 清除缓存并重新检测。
+- 页面销毁时清空所有双栏订阅和单例引用。
 
-**修复**：每个监听器用 try-catch 隔离
+## 翻页与进度事件
 
-```typescript
-for (const wrapper of listeners) {
-  try {
-    wrapper.callback(data);
-  } catch (error) {
-    console.error(`[EventBus] 事件 ${event} 的监听器执行出错:`, error);
-  }
-}
-```
-
-### 漏洞 5：emit 后立即 onWithHistory 拿不到数据
-
-**问题**：触发事件后，在监听器内同步调用 `onWithHistory` 拿不到当前事件
-
-**修复**：先记录历史，再触发监听器
+手动滑动、遥控/键盘和自动翻页都必须在执行站点翻页前发布：
 
 ```typescript
-emit(event: string, data?: T): void {
-  // 先记录历史
-  this.recordHistory(event, data);
-
-  // 再触发监听器
-  const eventListeners = this.listeners.get(event);
-  // ...
-}
+EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
+runtime.nextPage();
 ```
 
-### 漏洞 6：无法主动查询历史状态
+这条事件是 ProgressTracker 与底部进度条同步的公共契约。自动翻页曾只调用 `nextPage()`，导致隐藏导航栏时底部进度不刷新；现已统一到同一事件路径。不要把它改成历史事件。
 
-**问题**：只能被动等待事件触发，无法主动查询过去的状态
+## ProgressBar 的 DOM 自恢复
 
-**修复**：新增公共 API
+ProgressBar 使用 `onWithHistory(PROGRESS_UPDATED)` 缓存最近进度。微信读书重绘章节 DOM 后：
 
-```typescript
-// 获取最新事件数据
-getLatestEvent<T = any>(event: string): T | null
+- 若进度条仍应显示但节点已丢失，重新创建。
+- 新节点直接使用缓存值，不会先回到 0。
+- 章节变化后使用既有 200 ms 延迟等待页面重绘。
+- 销毁时取消 timer 并移除进度条节点。
 
-// 获取所有历史记录
-getEventHistory<T = any>(event: string): Array<{ data: T; timestamp: number }>
+这些只属于生命周期和 DOM 容错，不修改阅读进度算法。
 
-// 获取已知事件列表
-getKnownEvents(): string[]
+## 性能规则
+
+- 状态历史上限固定为 10；不要为高频瞬时事件开启历史。
+- 回调去重依赖函数引用；需要取消订阅时保存稳定引用或返回的取消函数。
+- 不在 EventBus 中保存大 DOM 节点、Response、完整资源列表等对象。
+- 插件卸载时清理自己的事件前缀历史。
+- AppRuntime 的性能诊断只采样一次，保留最慢五项，采样后立即移除错误监听器。
+
+## 回归测试
+
+相关测试：
+
+- `event_bus.test.ts`：once 异常、历史回放、有限历史、瞬时事件、moduleId 和 AbortSignal。
+- `plugin_lifecycle.test.ts`：样式、事件、Blob URL 和热重载残留。
+- `site_runtime.test.ts`：初始站点、统一上下文、Observer 停止/恢复。
+- `ipc_manager.test.ts`：初始阅读页历史路由。
+- `manager_behavior.test.ts`：翻页、自动翻页进度事件、滚动、光标和主题生命周期。
+
+运行：
+
+```bash
+bun test
+bun run typecheck
+bun run check:frozen
 ```
 
-### 漏洞 7：重复订阅导致监听器叠加
-
-**问题**：同一个 callback 可能被注册多次（例如模块重新初始化）
-
-**修复**：只检查 callback 引用相等性，自动去重
-
-```typescript
-// 同一个回调函数只能注册一次，无论 moduleId 是什么
-for (const existing of eventListeners) {
-  if (existing.callback === callback) {
-    console.debug(`[EventBus] 监听器已存在，跳过: ${event}`);
-    return () => this.off(event, callback);
-  }
-}
-```
-
-## 解决的问题
-
-### 1. 多次监听漏洞
-
-**问题**：模块重复初始化时，监听器叠加
-
-**解决**：EventBus 基于 callback 引用自动去重
-
-```typescript
-// 即使多次调用，只会注册一次
-this.on(Events.ROUTE_CHANGED, this.handleRouteChange);
-this.on(Events.ROUTE_CHANGED, this.handleRouteChange); // 自动跳过
-```
-
-### 2. 清理依赖人工
-
-**问题**：每个模块都要手动管理 `destroy()`
-
-**解决**：BaseManager 使用 `AbortSignal` 自动清理
-
-```typescript
-// 订阅时自动关联 signal
-this.on(event, callback, {
-  signal: this.abortController.signal,
-});
-
-// destroy 时自动触发 abort，取消所有监听器
-this.abortController.abort();
-```
-
-### 3. 初始化顺序问题
-
-**问题**：A 监听 B，但 B 先发事件了
-
-**解决**：`onWithHistory()` 回放最近的事件
-
-```typescript
-// 订阅时立即收到最近的事件数据
-this.onWithHistory(Events.ROUTE_CHANGED, (data) => {
-  // 如果 ROUTE_CHANGED 已触发过，会立即用最近的数据调用
-});
-```
-
-**典型场景**：ProgressBar 订阅进度更新
-
-```typescript
-// ProgressBar 初始化晚于 ProgressTracker
-// 使用 onWithHistory 确保拿到最新进度
-this.onWithHistory(Events.PROGRESS_UPDATED, (data: { progress: number }) => {
-  this.latestProgress = data.progress;
-
-  if (this.isVisible && this.progressBarElement) {
-    this.progressBarElement.style.width = `${data.progress}%`;
-  }
-});
-```
-
-### 4. 事件名称拼写错误
-
-**问题**：字符串分散在各处
-
-**解决**：统一在 `Events` 中定义
-
-```typescript
-// 编译时检查，避免拼写错误
-this.on(Events.ROUTE_CHANGED, handler);
-
-// 而不是
-window.addEventListener('ipc:route-changed', handler); // 容易拼写错误
-```
-
-### 5. 时序竞态问题
-
-**问题**：监听器执行顺序不确定，可能读取到过期状态
-
-**解决**：先记录历史，再触发监听器，保证原子性
-
-```typescript
-// emit() 的执行顺序：
-// 1. 先记录历史
-this.recordHistory(event, data);
-
-// 2. 再触发监听器
-for (const wrapper of listeners) {
-  wrapper.callback(data);
-}
-
-// 这样监听器内调用 getLatestEvent() 一定能拿到当前事件
-```
-
-### 6. 历史状态丢失
-
-**问题**：无法查询过去发生的事件
-
-**解决**：保留最近 10 次历史，提供查询 API
-
-```typescript
-// 主动查询最新进度
-const latestProgress = EventBus.getLatestEvent(Events.PROGRESS_UPDATED);
-
-// 查询所有历史记录
-const history = EventBus.getEventHistory(Events.PROGRESS_UPDATED);
-console.log(`最近 ${history.length} 次进度更新:`, history);
-
-// 查询所有已知事件
-const knownEvents = EventBus.getKnownEvents();
-console.log('已触发的事件:', knownEvents);
-```
-
-## 迁移指南
-
-### 旧代码
-
-```typescript
-class OldManager {
-  private handler: ((e: Event) => void) | null = null;
-
-  constructor() {
-    this.handler = (e) => console.log(e.detail);
-    window.addEventListener('ipc:route-changed', this.handler);
-  }
-
-  destroy() {
-    if (this.handler) {
-      window.removeEventListener('ipc:route-changed', this.handler);
-    }
-  }
-}
-```
-
-### 新代码
-
-```typescript
-class NewManager extends BaseManager {
-  constructor() {
-    super();
-    this.on(Events.ROUTE_CHANGED, (data) => {
-      console.log(data);
-    });
-  }
-
-  // destroy() 自动继承，无需手动实现
-}
-```
-
-## 已重构的模块
-
-- ✅ `IPCManager` - 路由、标题、滚动监听
-- ✅ `ProgressTracker` - 进度跟踪（三级事件系统）
-- ✅ `ProgressBar` - 进度条显示（onWithHistory 解决初始化问题）
-- ✅ `SwipeHandler` - 手势翻页（emit 翻页方向事件）
-
-## 待重构的模块
-
-- `AppManager`
-- `MenuManager`
-- `ThemeManager`
-- `StyleManager`
-- `TurnerManager`
-
-## 实战案例：ProgressBar 的 DOM 自恢复
-
-ProgressBar 在章节切换时会被微信读书清理 DOM，需要自动重建：
-
-```typescript
-class ProgressBar extends BaseManager {
-  private latestProgress: number = 0;
-
-  private init() {
-    // 使用 onWithHistory 确保拿到最新进度
-    this.onWithHistory(Events.PROGRESS_UPDATED, (data: { progress: number }) => {
-      this.latestProgress = data.progress;
-
-      if (this.isVisible) {
-        const existsInDom = document.getElementById('wxrd-progress-bar-container');
-
-        if (!existsInDom) {
-          // DOM 不存在，重新创建
-          this.show();
-        } else if (this.progressBarElement) {
-          // DOM 存在，直接更新
-          this.progressBarElement.style.width = `${data.progress}%`;
-        }
-      }
-    });
-
-    // 章节切换后延迟重建（等待微信读书 DOM 渲染）
-    this.on(Events.CHAPTER_CHANGED, () => {
-      if (this.isVisible) {
-        setTimeout(() => {
-          if (!document.getElementById('wxrd-progress-bar-container')) {
-            this.show();
-          }
-        }, 200);
-      }
-    });
-  }
-
-  private show() {
-    // 使用缓存的 latestProgress 创建进度条
-    progressBar.style.width = `${this.latestProgress}%`;
-  }
-}
-```
-
-**关键点**：
-1. 用 `latestProgress` 缓存最新值
-2. 每次更新都检查 DOM 是否存在
-3. 章节切换后延迟 200ms 重建（等待微信读书 DOM 渲染完成）
-
-## 实战案例：ProgressTracker 的方向检测
-
-ProgressTracker 需要知道翻页方向来修正进度，但不能依赖异步 API：
-
-```typescript
-class ProgressTracker extends BaseManager {
-  private lastPageDirection: PageDirection | null = null;
-
-  private init() {
-    // 监听来自 SwipeHandler 和 KeyboardHandler 的方向事件
-    this.on(Events.PAGE_TURN_DIRECTION, (data: { direction: 'forward' | 'backward' }) => {
-      const pageDirection = data.direction === 'forward' ? PageDirection.FORWARD : PageDirection.BACKWARD;
-      this.recordPageDirection(pageDirection);
-    });
-  }
-
-  private recordPageDirection(direction: PageDirection): void {
-    this.lastPageDirection = direction;
-
-    // 500ms 后重置（防抖）
-    if (this.directionResetTimer) {
-      clearTimeout(this.directionResetTimer);
-    }
-    this.directionResetTimer = setTimeout(() => {
-      this.lastPageDirection = null;
-    }, 500);
-  }
-
-  private async onChapterChange(bookId: string, newUrl: string): Promise<void> {
-    if (this.lastPageDirection === null) {
-      // 没有方向 → 用户通过目录跳转
-      await this.reinitializeAfterJump(bookId);
-    } else {
-      // 有方向 → 顺序翻页
-      const isForward = this.lastPageDirection === PageDirection.FORWARD;
-      const newChapterIdx = isForward ? this.currentChapterIdx + 1 : this.currentChapterIdx - 1;
-      // ...
-    }
-  }
-}
-```
-
-**关键点**：
-1. 监听 `PAGE_TURN_DIRECTION` 事件（来自手势和键盘）
-2. 用 500ms 防抖记录最后一次方向
-3. 章节切换时，根据方向判断是顺序翻页还是目录跳转
-4. **绝不调用异步 API**（"异步信息有毒"）
-
-## 注意事项
-
-### 1. DOM 事件仍需手动清理
-
-EventBus 只管理自己的监听器，`window.addEventListener` 和 `document.addEventListener` 需要在 `destroy()` 中手动移除：
-
-```typescript
-class MyManager extends BaseManager {
-  private wheelHandler = (e: WheelEvent) => { /* ... */ };
-
-  constructor() {
-    super();
-    window.addEventListener('wheel', this.wheelHandler, { passive: false });
-  }
-
-  destroy() {
-    window.removeEventListener('wheel', this.wheelHandler);
-    super.destroy(); // 清理 EventBus 监听器
-  }
-}
-```
-
-### 2. MutationObserver 需手动断开
-
-```typescript
-class MyManager extends BaseManager {
-  private observer: MutationObserver;
-
-  constructor() {
-    super();
-    this.observer = new MutationObserver(() => { /* ... */ });
-    this.observer.observe(document.body, { childList: true });
-  }
-
-  destroy() {
-    this.observer.disconnect();
-    super.destroy();
-  }
-}
-```
-
-### 3. 定时器需手动清理
-
-```typescript
-class MyManager extends BaseManager {
-  private timer: ReturnType<typeof setTimeout> | null = null;
-
-  constructor() {
-    super();
-    this.timer = setTimeout(() => { /* ... */ }, 1000);
-  }
-
-  destroy() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    super.destroy();
-  }
-}
-```
-
-### 4. 避免在监听器内修改 EventBus 状态
-
-不要在监听器内调用 `off()` 或 `cleanup()`，这会导致迭代器失效。如果需要自动移除，使用 `once: true`：
-
-```typescript
-// ❌ 错误：会导致迭代器失效
-this.on(Events.SOME_EVENT, (data) => {
-  this.off(Events.SOME_EVENT, callback); // 不要这样做
-});
-
-// ✅ 正确：使用 once
-this.once(Events.SOME_EVENT, (data) => {
-  // 自动移除
-});
-```
-
-### 5. 回调函数引用要稳定
-
-去重机制基于 callback 引用相等性，每次都创建新函数会导致重复注册：
-
-```typescript
-// ❌ 错误：每次都创建新函数
-this.on(Events.SOME_EVENT, (data) => console.log(data));
-this.on(Events.SOME_EVENT, (data) => console.log(data)); // 会重复注册
-
-// ✅ 正确：使用稳定的引用
-private handler = (data) => console.log(data);
-
-this.on(Events.SOME_EVENT, this.handler);
-this.on(Events.SOME_EVENT, this.handler); // 自动跳过
-```
-
-## 调试工具
-
-```typescript
-// 获取当前监听器统计
-EventBus.getStats();
-// { 'ipc:route-changed': 2, 'wxrd:progress-updated': 1 }
-
-// 获取监听器总数
-EventBus.getListenerCount();
-// 3
-
-// 获取所有已知事件
-EventBus.getKnownEvents();
-// ['ipc:route-changed', 'wxrd:progress-updated', 'wxrd:page-turn-direction']
-
-// 获取最新事件数据
-EventBus.getLatestEvent(Events.PROGRESS_UPDATED);
-// { progress: 42 }
-
-// 获取事件历史
-EventBus.getEventHistory(Events.PROGRESS_UPDATED);
-// [{ data: { progress: 30 }, timestamp: 1234567890 }, ...]
-```
-
-## 性能考虑
-
-- **历史记录限制**：每个事件最多保留 10 条历史，防止内存泄漏
-- **Set 自动去重**：使用 `Set` 存储监听器，查找和去重都是 O(1)
-- **防抖机制**：`onWithHistory` 只回放一次，不会重复触发
-- **复制数组**：`emit` 时复制监听器数组，允许在回调中修改订阅
-
-## 设计哲学
-
-1. **"异步信息有毒"**：永远不要依赖异步 API 的实时数据做判断，用本地状态 + 事件驱动
-2. **"霸王硬上弓"**：当没有完美方案时，用启发式算法（如标题匹配）兜底
-3. **健壮性优先**：所有边界情况都要处理，宁可多一层防御也不要让用户看到报错
-4. **自动化优先**：能自动化的绝不依赖人工，能声明式的绝不写命令式代码
-5. **向后兼容**：新增功能不影响旧代码，漏洞修复不改变公开 API
-
-## 总结
-
-EventBus 从一个简单的发布订阅模式演化成了一个健壮的事件系统，经过实战检验修复了 7 个漏洞，具备了：
-
-- ✅ 自动去重
-- ✅ 自动清理
-- ✅ 历史回放
-- ✅ 异常隔离
-- ✅ 时序保证
-- ✅ 主动查询
-- ✅ 完整的类型安全
-
-它是整个前端架构的基石，所有模块都应该迁移到 BaseManager + EventBus 模式。
+## 维护检查表
+
+新增或修改 Manager 时确认：
+
+- 是否只通过 `SiteContext` 访问站点。
+- 所有订阅是否保存取消函数或继承 BaseManager。
+- 所有 timer、RAF、Observer 和 DOM listener 是否可释放。
+- 异步初始化是否处理“注册完成前已经销毁”。
+- 瞬时事件是否误加历史。
+- once 回调抛错或重入时是否仍只执行一次。
+- 热重载后旧插件样式、监听器和实例是否全部消失。

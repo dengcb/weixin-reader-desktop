@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { $ } from 'bun';
 
 const BUILTIN_PLUGINS_DIR = 'src/plugins/builtin';

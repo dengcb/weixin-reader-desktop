@@ -835,6 +835,30 @@
       }
       const invoke = tauri.core.invoke;
       const emit = tauri.event ? tauri.event.emit : (name) => console.warn("Emit not available:", name);
+      let settingsWriteQueue = Promise.resolve();
+
+      function patchSettings(patch) {
+        const operation = settingsWriteQueue.then(async () => {
+          let current = await invoke('get_settings');
+          let result = await invoke('patch_settings', {
+            expectedVersion: current._version,
+            patch
+          });
+          if (result.status === 'conflict') {
+            current = result.latest;
+            result = await invoke('patch_settings', {
+              expectedVersion: current._version,
+              patch
+            });
+          }
+          if (result.status !== 'applied') {
+            throw new Error('设置在重试时再次发生冲突');
+          }
+          return result.settings;
+        });
+        settingsWriteQueue = operation.catch(() => undefined);
+        return operation;
+      }
 
       // ==================== 导航切换 ====================
       const navItems = document.querySelectorAll('.nav-item');
@@ -921,11 +945,9 @@
           const global = current.global || {};
           const existingAutoFlip = global.autoFlip || { active: false, interval: 30, keepAwake: true };
 
-          const update = {
-            global: { ...global, autoFlip: { ...existingAutoFlip, interval: val } }
-          };
-
-          invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
+          patchSettings({
+            global: { autoFlip: { ...existingAutoFlip, interval: val } }
+          }).catch(e => console.error('Failed to save settings:', e));
         });
       });
 
@@ -937,42 +959,24 @@
           const global = current.global || {};
           const existingAutoFlip = global.autoFlip || { active: false, interval: 30, keepAwake: true };
 
-          const update = {
-            global: { ...global, autoFlip: { ...existingAutoFlip, keepAwake: val } }
-          };
-
-          invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
+          patchSettings({
+            global: { autoFlip: { ...existingAutoFlip, keepAwake: val } }
+          }).catch(e => console.error('Failed to save settings:', e));
         });
       });
 
       // 保存记录进度
       lastPageCheckbox.addEventListener('change', () => {
         const val = lastPageCheckbox.checked;
-        invoke('get_settings').then((current) => {
-          current = current || {};
-          const global = current.global || {};
-          
-          const update = {
-            global: { ...global, lastPage: val }
-          };
-
-          invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
-        });
+        patchSettings({ global: { lastPage: val } })
+          .catch(e => console.error('Failed to save settings:', e));
       });
 
       // 保存记住书店
       rememberSiteCheckbox.addEventListener('change', () => {
         const val = rememberSiteCheckbox.checked;
-        invoke('get_settings').then((current) => {
-          current = current || {};
-          const global = current.global || {};
-
-          const update = {
-            global: { ...global, rememberSite: val }
-          };
-
-          invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
-        });
+        patchSettings({ global: { rememberSite: val } })
+          .catch(e => console.error('Failed to save settings:', e));
       });
 
       // ==================== 插件管理 ====================
@@ -986,7 +990,7 @@
           enabled: true,
           homeUrl: 'https://weread.qq.com/',
           configSchema: {
-            autoFlip: { type: 'boolean', label: '自动翻页', settingsKey: 'sites.weread.autoFlip.active' },
+            autoFlip: { type: 'boolean', label: '自动翻页', settingsKey: 'global.autoFlip.active' },
             wideMode: { type: 'boolean', label: '阅读变宽', settingsKey: 'sites.weread.readerWide' },
             hideCursor: { type: 'boolean', label: '隐藏光标', settingsKey: 'global.hideCursor' },
             hideToolbar: { type: 'boolean', label: '隐藏工具栏', settingsKey: 'sites.weread.hideToolbar' },
@@ -1070,7 +1074,6 @@
       // 渲染插件列表
       async function renderPluginList(settings) {
         settings = settings || {};
-        const enabledPlugins = settings.global?.enabledPlugins;
         pluginConfigs = settings.pluginConfigs || {};
         const pluginList = document.getElementById('pluginList');
         
@@ -1087,73 +1090,71 @@
         
         await loadPluginList();
         
-        pluginList.innerHTML = allPlugins.map(p => {
-          const isEnabled = enabledPlugins === undefined || enabledPlugins.includes(p.id);
+        pluginList.replaceChildren();
+        allPlugins.forEach(p => {
           const config = pluginConfigs[p.id] || {};
           const isExpanded = expandedPluginId === p.id;
-          
-          // 生成配置面板
-          let configHtml = '';
+          const create = (tag, className, text) => {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined) node.textContent = String(text);
+            return node;
+          };
+          const makeButton = (className, action, text) => {
+            const button = create('button', `plugin-btn ${className}`, text);
+            button.dataset.pluginId = p.id;
+            button.dataset.action = action;
+            return button;
+          };
+
+          const card = create('div', 'plugin-card');
+          const header = create('div', 'plugin-header');
+          const info = create('div', 'plugin-info');
+          info.append(
+            create('span', 'plugin-name', p.name),
+            create('span', 'plugin-version', `v${p.version}`)
+          );
+          if (p.builtin) info.append(create('span', 'plugin-badge', '内置'));
+          info.append(create('div', 'plugin-desc', p.description || ''));
+
+          const actions = create('div', 'plugin-actions');
           if (p.configSchema) {
-            const items = Object.entries(p.configSchema).map(([key, def]) => {
-              if (def.condition && !config[def.condition]) return '';
-              // 优先从应用设置读取，其次从插件配置读取
-              let checked = '';
-              if (def.settingsKey) {
-                checked = getSettingValue(def.settingsKey) ? 'checked' : '';
-              } else {
-                checked = config[key] ?? def.default ? 'checked' : '';
-              }
-              return `
-                <div class="config-item">
-                  <div>
-                    <div class="config-item-label">${def.label}</div>
-                    ${def.description ? `<div class="config-item-desc">${def.description}</div>` : ''}
-                  </div>
-                  <label class="toggle">
-                    <input type="checkbox" data-plugin="${p.id}" data-config-key="${key}" data-settings-key="${def.settingsKey || ''}" ${checked}>
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
-              `;
-            }).filter(Boolean).join('');
-            
-            configHtml = `
-              <div class="plugin-config ${isExpanded ? 'expanded' : ''}" data-config-panel="${p.id}">
-                ${items}
-              </div>
-            `;
+            actions.append(makeButton('config', 'config', `配置${isExpanded ? ' ▲' : ' ▼'}`));
           }
-          
-          return `
-            <div class="plugin-card">
-              <div class="plugin-header">
-                <div class="plugin-info">
-                  <span class="plugin-name">${p.name}</span>
-                  <span class="plugin-version">v${p.version}</span>
-                  ${p.builtin ? '<span class="plugin-badge">内置</span>' : ''}
-                  <div class="plugin-desc">${p.description || ''}</div>
-                </div>
-                <div class="plugin-actions">
-                  ${p.configSchema ? `
-                    <button class="plugin-btn config" data-plugin-id="${p.id}" data-action="config">
-                      配置${isExpanded ? ' ▲' : ' ▼'}
-                    </button>
-                  ` : ''}
-                  ${!p.builtin ? `
-                    <button class="plugin-btn edit" data-plugin-id="${p.id}" data-action="edit">
-                      编辑
-                    </button>
-                  ` : ''}
-                  <button class="plugin-btn uninstall" data-plugin-id="${p.id}" data-action="uninstall" data-builtin="${p.builtin}">
-                    卸载
-                  </button>
-                </div>
-              </div>
-              ${configHtml}
-            </div>
-          `;
-        }).join('');
+          if (!p.builtin) actions.append(makeButton('edit', 'edit', '编辑'));
+          const uninstall = makeButton('uninstall', 'uninstall', '卸载');
+          uninstall.dataset.builtin = String(!!p.builtin);
+          actions.append(uninstall);
+          header.append(info, actions);
+          card.append(header);
+
+          if (p.configSchema) {
+            const panel = create('div', `plugin-config ${isExpanded ? 'expanded' : ''}`);
+            panel.dataset.configPanel = p.id;
+            Object.entries(p.configSchema).forEach(([key, def]) => {
+              if (def.condition && !config[def.condition]) return;
+              const item = create('div', 'config-item');
+              const copy = create('div');
+              copy.append(create('div', 'config-item-label', def.label));
+              if (def.description) copy.append(create('div', 'config-item-desc', def.description));
+              const toggle = create('label', 'toggle');
+              const input = create('input');
+              input.type = 'checkbox';
+              input.dataset.plugin = p.id;
+              input.dataset.configKey = key;
+              input.dataset.settingsKey = def.settingsKey || '';
+              input.checked = def.settingsKey
+                ? !!getSettingValue(def.settingsKey)
+                : !!(config[key] ?? def.default);
+              toggle.append(input, create('span', 'toggle-slider'));
+              item.append(copy, toggle);
+              panel.append(item);
+            });
+            card.append(panel);
+          }
+
+          pluginList.append(card);
+        });
 
         // 绑定事件
         pluginList.querySelectorAll('.plugin-btn').forEach(btn => {
@@ -1212,13 +1213,9 @@
             }
             
             // 保存更新后的设置
-            const update = {
-              global: { ...settings?.global, enabledPlugins }
-            };
-            await invoke('save_settings', { settings: update });
-            
+            await patchSettings({ global: { enabledPlugins } });
+
             // 触发事件通知主窗口
-            emit('settings-updated');
             emit('plugins-updated');
             
             expandedPluginId = null;
@@ -1241,30 +1238,24 @@
         try {
           // 如果有 settingsKey，更新应用设置
           if (settingsKey) {
-            const current = await invoke('get_settings') || {};
             const parts = settingsKey.split('.');
-            
-            // 构建更新对象
-            const update = {};
-            let target = update;
-            let source = current;
-            
-            for (let i = 0; i < parts.length - 1; i++) {
-              const part = parts[i];
-              source = source[part] || {};
-              target[part] = { ...source };
-              target = target[part];
+
+            const [section, id, field] = parts;
+            if (section === 'global' && field) {
+              await patchSettings({ global: { [id]: { [field]: value } } });
+            } else if (section === 'global') {
+              await patchSettings({ global: { [id]: value } });
+            } else if (section === 'sites' && field) {
+              await patchSettings({ sites: { [id]: { [field]: value } } });
+            } else {
+              throw new Error('不支持的设置路径');
             }
-            target[parts[parts.length - 1]] = value;
-            
-            await invoke('save_settings', { settings: update });
-            emit('settings-updated');
           } else {
             // 普通插件配置
-            const currentConfig = await invoke('get_plugin_config', { pluginId });
-            const newConfig = { ...currentConfig, [key]: value };
-            await invoke('save_plugin_config', { pluginId, config: newConfig });
-            pluginConfigs[pluginId] = newConfig;
+            const applied = await patchSettings({
+              pluginConfigs: { [pluginId]: { [key]: value } }
+            });
+            pluginConfigs = applied.pluginConfigs || {};
           }
         } catch (e) {
           console.error('Failed to save config:', e);
@@ -1291,14 +1282,10 @@
             // 如果有明确的列表，添加新插件
             if (enabledPlugins !== undefined && !enabledPlugins.includes(pluginInfo.id)) {
               enabledPlugins = [...enabledPlugins, pluginInfo.id];
-              const update = {
-                global: { ...settings?.global, enabledPlugins }
-              };
-              await invoke('save_settings', { settings: update });
+              await patchSettings({ global: { enabledPlugins } });
             }
             
             // 触发事件通知主窗口
-            emit('settings-updated');
             emit('plugins-updated');
             
             invoke('get_settings').then(renderPluginList);

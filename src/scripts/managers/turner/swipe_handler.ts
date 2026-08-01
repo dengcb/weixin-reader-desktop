@@ -3,9 +3,16 @@ import { SiteContext } from '../../core/site_context';
 import { log } from '../../core/logger';
 import { EventBus, Events } from '../../core/event_bus';
 
+export const SWIPE_POLICY = Object.freeze({
+  threshold: 50,
+  resetDelayMs: 250,
+  cooldownMs: 800,
+});
+
 export class SwipeHandler {
   private swipeAccumulator = 0;
   private swipeResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private swipeCooldown = false;
   private siteContext: SiteContext;
   private onScrollLock: (duration?: number) => void;
@@ -33,8 +40,8 @@ export class SwipeHandler {
     // 仅在双栏模式下启用滚轮翻页
     if (!this.siteContext.isDoubleColumn) return;
 
-    const adapter = this.siteContext.currentAdapter;
-    if (!adapter) return;
+    const runtime = this.siteContext.currentRuntime;
+    if (!runtime) return;
 
     const deltaX = e.deltaX;
     const deltaY = e.deltaY;
@@ -56,25 +63,24 @@ export class SwipeHandler {
     }
     this.swipeResetTimer = setTimeout(() => {
       this.swipeAccumulator = 0;
-    }, 250);
+    }, SWIPE_POLICY.resetDelayMs);
 
-    const THRESHOLD = 50;
-    if (this.swipeAccumulator >= THRESHOLD) {
+    if (this.swipeAccumulator >= SWIPE_POLICY.threshold) {
       log.debug('[SwipeHandler] Swipe left detected, next page');
 
       // 发送翻页方向事件（向前）
       EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
 
-      adapter.nextPage(); // 不再 await，让它在后台执行
+      runtime.nextPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;
       this.startCooldown();
-    } else if (this.swipeAccumulator <= -THRESHOLD) {
+    } else if (this.swipeAccumulator <= -SWIPE_POLICY.threshold) {
       log.debug('[SwipeHandler] Swipe right detected, prev page');
 
       // 发送翻页方向事件（向后）
       EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'backward' });
 
-      adapter.prevPage(); // 不再 await，让它在后台执行
+      runtime.prevPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;
       this.startCooldown();
     }
@@ -82,10 +88,12 @@ export class SwipeHandler {
 
   private startCooldown() {
     this.swipeCooldown = true;
-    setTimeout(() => {
+    if (this.cooldownTimer) clearTimeout(this.cooldownTimer);
+    this.cooldownTimer = setTimeout(() => {
       this.swipeCooldown = false;
       this.swipeAccumulator = 0;
-    }, 800);
+      this.cooldownTimer = null;
+    }, SWIPE_POLICY.cooldownMs);
   }
 
   public destroy() {
@@ -93,6 +101,11 @@ export class SwipeHandler {
       clearTimeout(this.swipeResetTimer);
       this.swipeResetTimer = null;
     }
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
+    }
+    this.swipeCooldown = false;
 
     // Remove the wheel event listener
     window.removeEventListener('wheel', this.handler, { capture: true });

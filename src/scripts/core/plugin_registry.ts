@@ -14,15 +14,24 @@ import type {
   RegisteredPlugin,
   PluginState,
 } from './plugin_types';
+import {
+  createPluginSiteRuntime,
+  isReaderSiteRuntime,
+  type ReaderSiteRuntime,
+} from './reader_site_runtime';
+
+export type RegisteredSiteRuntime = Omit<RegisteredPlugin, 'plugin'> & {
+  plugin: ReaderSiteRuntime;
+};
 
 export class PluginRegistry {
   private static instance: PluginRegistry;
   
   /** 已注册的插件 Map<pluginId, RegisteredPlugin> */
-  private plugins: Map<string, RegisteredPlugin> = new Map();
+  private plugins: Map<string, RegisteredSiteRuntime> = new Map();
   
   /** 当前活动的插件（匹配当前页面的插件） */
-  private activePlugin: RegisteredPlugin | null = null;
+  private activePlugin: RegisteredSiteRuntime | null = null;
   
   private constructor() {}
   
@@ -40,21 +49,22 @@ export class PluginRegistry {
    * 注册插件
    * @param plugin 插件实例
    */
-  register(plugin: ReaderPlugin): void {
-    const id = plugin.manifest.id;
+  register(plugin: ReaderPlugin | ReaderSiteRuntime): void {
+    const runtime = isReaderSiteRuntime(plugin) ? plugin : createPluginSiteRuntime(plugin);
+    const id = runtime.manifest.id;
     
     if (this.plugins.has(id)) {
       log.warn(`[PluginRegistry] Plugin '${id}' already registered, skipping`);
       return;
     }
     
-    const registered: RegisteredPlugin = {
-      plugin,
+    const registered: RegisteredSiteRuntime = {
+      plugin: runtime,
       state: 'unloaded',
     };
     
     this.plugins.set(id, registered);
-    log.info(`[PluginRegistry] Plugin registered: ${id} (${plugin.manifest.name})`);
+    log.info(`[PluginRegistry] Plugin registered: ${id} (${runtime.manifest.name})`);
   }
   
   /**
@@ -93,35 +103,35 @@ export class PluginRegistry {
    * 获取插件
    * @param pluginId 插件 ID
    */
-  get(pluginId: string): RegisteredPlugin | undefined {
+  get(pluginId: string): RegisteredSiteRuntime | undefined {
     return this.plugins.get(pluginId);
   }
   
   /**
    * 获取所有已注册的插件
    */
-  getAll(): RegisteredPlugin[] {
+  getAll(): RegisteredSiteRuntime[] {
     return Array.from(this.plugins.values());
   }
   
   /**
    * 获取所有 Web 类型插件
    */
-  getWebPlugins(): RegisteredPlugin[] {
+  getWebPlugins(): RegisteredSiteRuntime[] {
     return this.getAll().filter(p => p.plugin.manifest.sourceType === 'web');
   }
   
   /**
    * 获取所有 Local 类型插件
    */
-  getLocalPlugins(): RegisteredPlugin[] {
+  getLocalPlugins(): RegisteredSiteRuntime[] {
     return this.getAll().filter(p => p.plugin.manifest.sourceType === 'local');
   }
   
   /**
    * 根据当前域名查找匹配的 Web 插件
    */
-  findByDomain(): RegisteredPlugin | null {
+  findByDomain(): RegisteredSiteRuntime | null {
     for (const registered of this.plugins.values()) {
       const { plugin } = registered;
       
@@ -141,7 +151,7 @@ export class PluginRegistry {
    * 根据文件扩展名查找匹配的 Local 插件
    * @param extension 文件扩展名（如 '.epub'）
    */
-  findByExtension(extension: string): RegisteredPlugin | null {
+  findByExtension(extension: string): RegisteredSiteRuntime | null {
     const ext = extension.toLowerCase();
     
     for (const registered of this.plugins.values()) {
@@ -163,7 +173,7 @@ export class PluginRegistry {
    * 获取当前活动的插件
    * 如果没有缓存，则尝试根据当前域名查找
    */
-  getActivePlugin(): RegisteredPlugin | null {
+  getActivePlugin(): RegisteredSiteRuntime | null {
     // 如果有缓存且仍然匹配，返回缓存
     if (this.activePlugin) {
       const plugin = this.activePlugin.plugin;

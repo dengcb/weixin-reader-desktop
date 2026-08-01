@@ -40,8 +40,14 @@ function createMockPlugin(
     name: `Mock Plugin ${id}`,
     version: '1.0.0',
     sourceType,
+    renderMode: 'webview',
+    capabilities: {},
     builtin,
-    site: sourceType === 'web' ? { domain: [domain] } : undefined,
+    site: sourceType === 'web' ? {
+      domain: [domain],
+      homeUrl: `https://${domain}/`,
+      readerPattern: '/reader/',
+    } : undefined,
     fileTypes: sourceType === 'local' ? { extensions } : undefined,
   };
 
@@ -54,6 +60,7 @@ function createMockPlugin(
     isHomePage: () => isHome,
     nextPage: () => {},
     prevPage: () => {},
+    getStyles: () => ({}),
   };
 }
 
@@ -84,7 +91,8 @@ describe('PluginRegistry', () => {
       registry.register(plugin);
 
       expect(registry.get('test-plugin')).toBeDefined();
-      expect(registry.get('test-plugin')?.plugin).toBe(plugin);
+      expect(registry.get('test-plugin')?.plugin.id).toBe(plugin.manifest.id);
+      expect(registry.get('test-plugin')?.plugin.styleOwner).toBe('plugin');
     });
 
     it('should not register duplicate plugins', () => {

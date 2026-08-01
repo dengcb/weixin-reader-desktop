@@ -120,7 +120,7 @@ CPU 占用低
 ```
 ✓ 支持 .atrd 插件包安装/卸载     ✓ 微信读书作为内置默认插件
 ✓ 标准化插件开发接口             ✓ 预留本地阅读(EPUB/TXT)能力
-✓ 插件级命名空间隔离             ✓ 独立配置与存储系统
+✓ 插件级命名空间隔离             ✓ 配置命名空间与独立阅读位置
 ```
 
 ### 🛠️ 可视化插件编辑器 <sup>v0.9.0 新增</sup>
@@ -297,7 +297,7 @@ bun release:clear  # 清理发布文件
 
 **Rust 后端测试**
 ```bash
-cd src-tauri && cargo test
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 </td>
@@ -311,6 +311,23 @@ bun test
 </td>
 </tr>
 </table>
+
+完整质量门禁：
+
+```bash
+bun run check:frozen  # 受保护的站点实现与样式
+bun run typecheck     # 严格 TypeScript 检查
+bun test              # Bun + happy-dom
+bun run check:ipc     # Rust handler / capability / permission 一致性
+bun run build         # 重新生成 inject.js 与 dist
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+bun run test:e2e      # Playwright 模拟 E2E
+git diff --check
+```
+
+截至 2026-08-02：Bun 242 项通过；Rust 64 项通过、1 项真机显示器测试显式忽略；模拟 E2E 6 项通过。
 
 ---
 
@@ -331,8 +348,8 @@ bun test
 </tr>
 <tr>
 <td><b>前端</b></td>
-<td>TypeScript + Vite</td>
-<td>注入脚本开发与构建&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
+<td>TypeScript + Bun</td>
+<td>注入脚本开发、打包与 DOM 测试&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 <tr>
 <td><b>后端</b></td>
@@ -347,7 +364,7 @@ bun test
 <tr>
 <td><b>测试</b></td>
 <td>Cargo + Bun Test</td>
-<td>双层测试覆盖（332+ 测试用例）&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
+<td>Rust、Bun DOM 与 Playwright 三层回归&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;</td>
 </tr>
 </table>
 
@@ -363,7 +380,7 @@ bun test
 │  │  Rust 后端   │                    │  WebView 前端   │  │
 │  │             │                    │                 │  │
 │  │  • 原生菜单  │                    │  • inject.js    │  │
-│  │  • 设置持久  │                    │  • 六大管理器     │  │
+│  │  • 设置仓储  │                    │  • AppRuntime     │  │
 │  │  • 多显示器  │                    │  • 状态同步      │  │
 │  │  • 自动更新  │                    │                 │  │
 │  │             │                    │                 │ │
@@ -372,11 +389,15 @@ bun test
 └──────────────────────────────────────────────│──────────┘
                                                │
                               ┌────────────────▼──────────────┐
-                              │   weread.qq.com (官方网站)     │
+                              │ 当前匹配的阅读网站（WeRead / 插件）│
                               └───────────────────────────────┘
 ```
 
-### 🧩 前端模块（六大管理器）
+### 🧩 前端运行时
+
+`inject.ts` 只负责防重复注入并创建 `AppRuntime`。`AppRuntime` 是注入层唯一生命周期所有者，依次初始化设置、注册/加载插件、应用站点缩放、创建 Managers、监听插件热重载；页面销毁时按逆序释放资源。
+
+站点能力统一为 `ReaderSiteRuntime`：微信读书通过桥接器委托给既有 `WeReadAdapter`，外部插件通过包装器接入。`PluginRegistry` / `PluginLoader` 是唯一站点来源，所有 Manager 只能经 `SiteContext` 获取当前运行时。
 
 位于 `src/scripts/managers/` 目录：
 
@@ -387,11 +408,11 @@ bun test
 </tr>
 <tr>
 <td><code>IPCManager</code></td>
-<td>🎯 中央事件总线，路由/标题监控</td>
+<td>🎯 发布初始及后续路由、章节和标题状态</td>
 </tr>
 <tr>
 <td><code>AppManager</code></td>
-<td>🚀 应用初始化，恢复阅读进度</td>
+<td>🚀 恢复当前 URL 滚动位置，处理离开阅读页时的状态收口</td>
 </tr>
 <tr>
 <td><code>MenuManager</code></td>
@@ -403,13 +424,25 @@ bun test
 </tr>
 <tr>
 <td><code>ThemeManager</code></td>
-<td>🌓 深色模式，链接处理，缩放控制</td>
+<td>🌓 深色模式与外部链接处理</td>
 </tr>
 <tr>
 <td><code>TurnerManager</code></td>
 <td>📖 翻页控制器（含子模块：自动翻页、滑动翻页、鼠标隐藏）</td>
 </tr>
+<tr>
+<td><code>RemoteManager</code></td>
+<td>🎮 遥控器与键盘输入，统一发布翻页方向事件</td>
+</tr>
 </table>
+
+核心层还包括：
+
+- `AppRuntime`：初始化、热重载和逆序销毁。
+- `PluginRegistry` / `PluginLoader`：唯一站点注册与生命周期入口。
+- `SiteContext`：当前 `ReaderSiteRuntime` 与可重启的双栏观察器。
+- `SettingsStore`：前端合并视图、串行 patch、订阅与冲突重试；不直接读写文件。
+- `EventBus` / `BaseManager`：有限状态历史和资源自动清理；瞬时翻页事件不保留历史。
 
 ### 🦀 Rust 后端
 
@@ -446,11 +479,15 @@ bun test
 </tr>
 <tr>
 <td><code>plugin_manager.rs</code></td>
-<td>🔌 插件生命周期管理（安装、卸载、代码注入）</td>
+<td>🔌 插件校验、安装、卸载与运行时代码读取</td>
 </tr>
 <tr>
 <td><code>settings.rs</code></td>
-<td>💾 设置文件读写，浅合并策略</td>
+<td>💾 schema v2 设置仓储、版本 patch、统一锁与原子替换</td>
+</tr>
+<tr>
+<td><code>reading_progress.rs</code></td>
+<td>📍 按站点/URL 独立保存滚动位置，每站点最多 10,000 条</td>
 </tr>
 <tr>
 <td><code>update.rs</code></td>
@@ -462,19 +499,21 @@ bun test
 
 ```
 tauri-plugin-opener        → 外部链接处理
-tauri-plugin-store         → 前端数据存储
-tauri-plugin-window-state  → 窗口状态持久化
-tauri-plugin-log           → 日志记录
-tauri-plugin-updater       → 自动更新
-tauri-plugin-shell         → Shell 命令执行
+tauri-plugin-dialog        → 插件选择、导出与原生确认对话框
+tauri-plugin-window-state  → 各窗口位置与尺寸持久化
+tauri-plugin-log           → 2 MiB 单文件、最多 3 份日志
+tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安装
 ```
 
 ---
 
 ## 📖 文档
 
-- 📝 [测试文档](docs/TESTING.md) - 详细的测试指南（Rust + TypeScript，332+ 测试用例）
-- 🔌 [插件架构](docs/PLUGIN_ARCHITECTURE.md) - 插件系统设计与开发指南
+- 🏗️ [插件与站点架构](docs/PLUGIN_ARCHITECTURE.md) - `ReaderSiteRuntime`、插件运行时与开发约束
+- 🔁 [事件与生命周期](docs/EVENT_BUS_REFACTOR.md) - EventBus、BaseManager 与资源清理规范
+- 🔐 [Tauri 2.11 与 IPC](docs/TAURI_2_11_UPGRADE.md) - Capability 拆分和命令一致性规则
+- 🧪 [测试指南](docs/TESTING.md) - 当前测试结构与完整质量门禁
+- 📘 [2026 架构重构记录](docs/ARCHITECTURE_REFACTOR_2026.md) - 本次重构的动机、改动和兼容边界
 
 ---
 

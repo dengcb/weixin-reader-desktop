@@ -5,6 +5,7 @@ export class ThemeManager {
   private clickHandler: ((e: Event) => void) | null = null;
   private darkModeQuery: MediaQueryList | null = null;
   private darkModeChangeHandler: ((e: MediaQueryListEvent) => void) | null = null;
+  private originalWindowOpen: typeof window.open | null = null;
 
   constructor() {
     this.init();
@@ -13,7 +14,8 @@ export class ThemeManager {
   // --- Link Logic ---
   private initLinks() {
     // 代理 window.open
-    window.open = function(url: string | URL | undefined, target?: string | undefined, features?: string | undefined) {
+    this.originalWindowOpen = window.open;
+    window.open = function(url: string | URL | undefined, _target?: string | undefined, _features?: string | undefined) {
       if (url) {
         window.location.href = url.toString();
       }
@@ -100,6 +102,10 @@ export class ThemeManager {
     if (this.clickHandler) {
       document.removeEventListener('click', this.clickHandler, true);
       this.clickHandler = null;
+    }
+    if (this.originalWindowOpen) {
+      window.open = this.originalWindowOpen;
+      this.originalWindowOpen = null;
     }
 
     // Remove dark mode change listener

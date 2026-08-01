@@ -1,10 +1,24 @@
-use tauri::{AppHandle, Manager, Runtime};
-use tauri_plugin_updater::UpdaterExt;
-use std::time::Duration;
 use crate::settings;
 use serde::Serialize;
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::menu::MenuItem;
+use tauri::{AppHandle, Manager, Runtime};
+use tauri_plugin_updater::UpdaterExt;
+
+const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(10);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const SILENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+const SILENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+const MANUAL_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn auto_update_enabled(settings: &serde_json::Value) -> bool {
+    settings
+        .get("global")
+        .and_then(|global| global.get("autoUpdate"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
+}
 
 // State to hold the menu item for updating text
 pub struct MenuState<R: Runtime> {
@@ -34,12 +48,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         // Wait longer for menu to be fully initialized
         // MenuManager needs ~3 seconds, so we wait 10 seconds to be safe
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(INITIAL_CHECK_DELAY).await;
 
         loop {
             check_silent(&app_handle).await;
             // Check every 24 hours
-            tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+            tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
         }
     });
 }
@@ -47,8 +61,8 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
 // Silent check (Background)
 async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
     // 1. Check settings
-    let settings = settings::get_settings(app.clone());
-    let auto_update = settings.get("autoUpdate").and_then(|v| v.as_bool()).unwrap_or(true);
+    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
+    let auto_update = auto_update_enabled(&settings);
 
     if !auto_update {
         return;
@@ -57,10 +71,7 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
     // 2. Check update with timeout protection
     if let Ok(updater) = app.updater_builder().build() {
         // Add 10 second timeout to prevent hanging on network issues
-        let check_result = tokio::time::timeout(
-            Duration::from_secs(10),
-            updater.check()
-        ).await;
+        let check_result = tokio::time::timeout(SILENT_CHECK_TIMEOUT, updater.check()).await;
 
         match check_result {
             Ok(Ok(Some(update))) => {
@@ -76,9 +87,10 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
                 }
                 // Found update, download it with timeout
                 let download_result = tokio::time::timeout(
-                    Duration::from_secs(30), // 30 seconds for 3MB file
-                    update.download_and_install(|_, _| {}, || {})
-                ).await;
+                    SILENT_DOWNLOAD_TIMEOUT, // 30 seconds for 3MB file
+                    update.download_and_install(|_, _| {}, || {}),
+                )
+                .await;
 
                 match download_result {
                     Ok(Ok(())) => {
@@ -147,10 +159,7 @@ pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<Update
     let updater = app.updater_builder().build().map_err(|e| e.to_string())?;
 
     // Add 15 second timeout for manual check
-    let check_result = tokio::time::timeout(
-        Duration::from_secs(15),
-        updater.check()
-    ).await;
+    let check_result = tokio::time::timeout(MANUAL_CHECK_TIMEOUT, updater.check()).await;
 
     match check_result {
         Ok(Ok(Some(update))) => {
@@ -229,10 +238,7 @@ pub async fn install_update_now<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
 
             if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
                 update
-                    .download_and_install(
-                        |_, _| {},
-                        || {},
-                    )
+                    .download_and_install(|_, _| {}, || {})
                     .await
                     .map_err(|e| e.to_string())?;
 
@@ -246,10 +252,7 @@ pub async fn install_update_now<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
 
         if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
             update
-                .download_and_install(
-                    |_, _| {},
-                    || {},
-                )
+                .download_and_install(|_, _| {}, || {})
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -268,5 +271,63 @@ pub fn is_update_downloaded<R: Runtime>(app: AppHandle<R>) -> bool {
         *state.downloaded.lock().unwrap()
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn auto_update_reads_schema_v2_global_setting_and_defaults_to_enabled() {
+        assert!(auto_update_enabled(&json!({})));
+        assert!(auto_update_enabled(&json!({ "global": {} })));
+        assert!(auto_update_enabled(
+            &json!({ "global": { "autoUpdate": true } })
+        ));
+        assert!(!auto_update_enabled(
+            &json!({ "global": { "autoUpdate": false } })
+        ));
+        assert!(auto_update_enabled(&json!({ "autoUpdate": false })));
+        assert!(auto_update_enabled(
+            &json!({ "global": { "autoUpdate": "false" } })
+        ));
+    }
+
+    #[test]
+    fn update_timing_policy_matches_runtime_contract() {
+        assert_eq!(INITIAL_CHECK_DELAY, Duration::from_secs(10));
+        assert_eq!(UPDATE_CHECK_INTERVAL, Duration::from_secs(24 * 60 * 60));
+        assert_eq!(SILENT_CHECK_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(SILENT_DOWNLOAD_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(MANUAL_CHECK_TIMEOUT, Duration::from_secs(15));
+        assert!(SILENT_DOWNLOAD_TIMEOUT > SILENT_CHECK_TIMEOUT);
+    }
+
+    #[test]
+    fn update_info_serializes_the_frontend_contract() {
+        let value = serde_json::to_value(UpdateInfo {
+            has_update: true,
+            version: "2.0.0".to_string(),
+            body: "Changes".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value["has_update"], true);
+        assert_eq!(value["version"], "2.0.0");
+        assert_eq!(value["body"], "Changes");
+    }
+
+    #[test]
+    fn downloaded_state_is_shared_through_tauri_managed_state() {
+        let app = tauri::test::mock_app();
+        assert!(!is_update_downloaded(app.handle().clone()));
+
+        app.manage(UpdateState {
+            downloaded: Mutex::new(false),
+        });
+        assert!(!is_update_downloaded(app.handle().clone()));
+        *app.state::<UpdateState>().downloaded.lock().unwrap() = true;
+        assert!(is_update_downloaded(app.handle().clone()));
     }
 }

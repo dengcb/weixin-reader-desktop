@@ -15,6 +15,11 @@ export class RemoteManager {
   private enabled = false;
   private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
   private menuKeyDebouncing = false;
+  private menuDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private initializationGeneration = 0;
+  private unsubscribeSettings: (() => void) | null = null;
+  private routeChangedHandler: (() => void) | null = null;
 
   // 当前章节索引（从 URL 或 API 获取）
   private currentChapterIdx: number = -1;
@@ -26,7 +31,7 @@ export class RemoteManager {
 
   private init() {
     // 订阅设置
-    settingsStore.subscribe((settings) => {
+    this.unsubscribeSettings = settingsStore.subscribe((settings) => {
       const shouldEnable = settings.enableRemoteController !== false;
       if (shouldEnable && !this.enabled) this.enable();
       else if (!shouldEnable && this.enabled) this.disable();
@@ -37,7 +42,8 @@ export class RemoteManager {
     if (settings.enableRemoteController !== false) this.enable();
 
     // 路由变化时初始化
-    window.addEventListener('ipc:route-changed', () => this.tryInitialize());
+    this.routeChangedHandler = () => this.tryInitialize();
+    window.addEventListener('ipc:route-changed', this.routeChangedHandler);
 
     // 首次加载
     if (this.siteContext.isReaderPage) {
@@ -51,6 +57,11 @@ export class RemoteManager {
    * 尝试初始化章节数据
    */
   private async tryInitialize() {
+    const generation = ++this.initializationGeneration;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     if (!this.siteContext.isReaderPage) return;
 
     // 等待页面加载
@@ -58,10 +69,11 @@ export class RemoteManager {
     const maxRetries = 20;
 
     const check = async () => {
+      if (generation !== this.initializationGeneration) return;
       // 提取 URL 路径作为 bookId
       const pathMatch = window.location.pathname.match(/\/web\/reader\/([^?#]+)/);
       if (!pathMatch) {
-        if (++retries < maxRetries) setTimeout(check, 500);
+        if (++retries < maxRetries) this.retryTimer = setTimeout(check, 500);
         return;
       }
 
@@ -72,9 +84,10 @@ export class RemoteManager {
 
       // 初始化 ChapterManager
       const success = await chapterManager.initialize(bookIdSegment);
+      if (generation !== this.initializationGeneration) return;
       if (!success) {
         // 可能未登录或页面未加载完成，静默重试
-        if (++retries < maxRetries) setTimeout(check, 500);
+        if (++retries < maxRetries) this.retryTimer = setTimeout(check, 500);
         return;
       }
 
@@ -182,7 +195,7 @@ export class RemoteManager {
   private disable() {
     if (!this.enabled) return;
     if (this.keyboardHandler) {
-      window.removeEventListener('keydown', this.keyboardHandler);
+      window.removeEventListener('keydown', this.keyboardHandler, true);
       this.keyboardHandler = null;
     }
     this.enabled = false;
@@ -190,12 +203,12 @@ export class RemoteManager {
   }
 
   private performPageTurn(direction: 'forward' | 'backward') {
-    const adapter = this.siteContext.currentAdapter;
-    if (!adapter) return;
+    const runtime = this.siteContext.currentRuntime;
+    if (!runtime) return;
 
     EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction });
-    if (direction === 'forward') adapter.nextPage();
-    else adapter.prevPage();
+    if (direction === 'forward') runtime.nextPage();
+    else runtime.prevPage();
   }
 
   private setupKeyboardListener() {
@@ -245,7 +258,10 @@ export class RemoteManager {
           const current = settingsStore.get();
           settingsStore.update({ hideToolbar: !current.hideToolbar });
           this.menuKeyDebouncing = true;
-          setTimeout(() => { this.menuKeyDebouncing = false; }, 1000);
+          this.menuDebounceTimer = setTimeout(() => {
+            this.menuKeyDebouncing = false;
+            this.menuDebounceTimer = null;
+          }, 1000);
           handled = true;
         }
       }
@@ -260,7 +276,19 @@ export class RemoteManager {
   }
 
   destroy() {
+    this.initializationGeneration++;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (this.menuDebounceTimer) clearTimeout(this.menuDebounceTimer);
+    this.menuDebounceTimer = null;
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+    if (this.routeChangedHandler) {
+      window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
+      this.routeChangedHandler = null;
+    }
     this.disable();
+    chapterManager.reset();
     log.info('[RemoteManager] 已销毁');
   }
 }

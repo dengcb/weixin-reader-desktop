@@ -1,10 +1,17 @@
 
 import { invoke } from '../../core/tauri';
-import { AppSettings, MergedSettings } from '../../core/settings_store';
+import { MergedSettings } from '../../core/settings_store';
 import { SiteContext } from '../../core/site_context';
 import { ScrollState } from '../../core/scroll_state';
-import { ReadingSiteAdapter } from '../../adapters/reading_site_adapter';
+import type { ReaderSiteRuntime } from '../../core/reader_site_runtime';
+import { EventBus, Events } from '../../core/event_bus';
 import { log } from '../../core/logger';
+
+export const AUTO_FLIP_POLICY = Object.freeze({
+  doubleColumnTickMs: 1000,
+  restorationRetryMs: 200,
+  bottomResumeMs: 10000,
+});
 
 export class AutoFlipper {
   private isActive = false;
@@ -12,6 +19,9 @@ export class AutoFlipper {
   private keepAwake = false;
   private doubleTimer: ReturnType<typeof setInterval> | null = null;
   private singleRafId: number | null = null;
+  private restorationRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private bottomResumeTimer: ReturnType<typeof setTimeout> | null = null;
+  private visibilityResumeHandler: (() => void) | null = null;
   private lastFrameTime = 0;
   private lastScrollTime = 0;
   private accumulatedMove = 0;
@@ -64,44 +74,69 @@ export class AutoFlipper {
 
   public stopAll() {
     this.isActive = false;
+    this.clearScheduledWork(true);
+  }
+
+  private clearScheduledWork(restoreTitle: boolean) {
     this.generation++; // Invalidate all pending loops
     if (this.doubleTimer) { clearInterval(this.doubleTimer); this.doubleTimer = null; }
     if (this.singleRafId) { cancelAnimationFrame(this.singleRafId); this.singleRafId = null; }
-    if (this.originalTitle !== null) {
+    if (this.restorationRetryTimer) {
+      clearTimeout(this.restorationRetryTimer);
+      this.restorationRetryTimer = null;
+    }
+    if (this.bottomResumeTimer) {
+      clearTimeout(this.bottomResumeTimer);
+      this.bottomResumeTimer = null;
+    }
+    if (this.visibilityResumeHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityResumeHandler);
+      this.visibilityResumeHandler = null;
+    }
+    if (restoreTitle && this.originalTitle !== null) {
       // 恢复原生窗口标题为当前页面标题
       // document.title 从未被修改，始终是真实页面标题
       invoke('set_title', { title: document.title }).catch(() => {});
       this.originalTitle = null;
     }
+    this.bottomTriggered = false;
+    this.accumulatedMove = 0;
     this.elapsedTime = 0;
   }
 
+  private switchMode(startNextMode: () => void) {
+    // 模式切换只替换循环，不改变用户的“自动翻页已开启”状态。
+    this.clearScheduledWork(false);
+    startNextMode();
+  }
+
   private start() {
-    const adapter = this.siteContext.currentAdapter;
-    if (!adapter) {
-      log.warn('[AutoFlipper] No adapter found');
+    const runtime = this.siteContext.currentRuntime;
+    if (!runtime) {
+      log.warn('[AutoFlipper] No site runtime found');
       return;
     }
 
     if (this.siteContext.isDoubleColumn) {
-      this.startDoubleColumnLogic(adapter);
+      this.startDoubleColumnLogic(runtime);
     } else {
-      this.startSingleColumnLogic(adapter);
+      this.startSingleColumnLogic(runtime);
     }
   }
 
-  private startDoubleColumnLogic(adapter: ReadingSiteAdapter) {
+  private startDoubleColumnLogic(adapter: ReaderSiteRuntime) {
     if (this.doubleTimer) return;
     if (this.singleRafId) { cancelAnimationFrame(this.singleRafId); this.singleRafId = null; }
 
     this.countdown = this.intervalSeconds;
     if (!this.originalTitle) this.originalTitle = document.title;
+    const currentGeneration = this.generation;
 
     this.doubleTimer = setInterval(() => {
+      if (!this.isActive || currentGeneration !== this.generation) return;
       // 检测是否切换到单栏模式
       if (!this.siteContext.isDoubleColumn) {
-        this.stopAll();
-        this.startSingleColumnLogic(adapter);
+        this.switchMode(() => this.startSingleColumnLogic(adapter));
         return;
       }
       if (document.hidden && !this.keepAwake) return;
@@ -113,22 +148,25 @@ export class AutoFlipper {
 
       if (this.countdown <= 0) {
         this.onScrollLock(); // Lock mouse input during page turn
+        EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
         adapter.nextPage();
         this.countdown = this.intervalSeconds;
       }
-    }, 1000);
+    }, AUTO_FLIP_POLICY.doubleColumnTickMs);
   }
 
-  private startSingleColumnLogic(adapter: ReadingSiteAdapter) {
+  private startSingleColumnLogic(adapter: ReaderSiteRuntime) {
     if (this.singleRafId) return;
     if (this.doubleTimer) { clearInterval(this.doubleTimer); this.doubleTimer = null; }
 
     if (!ScrollState.isRestorationComplete()) {
-      setTimeout(() => {
+      if (this.restorationRetryTimer) clearTimeout(this.restorationRetryTimer);
+      this.restorationRetryTimer = setTimeout(() => {
+        this.restorationRetryTimer = null;
         if (this.isActive) {
           this.startSingleColumnLogic(adapter);
         }
-      }, 200);
+      }, AUTO_FLIP_POLICY.restorationRetryMs);
       return;
     }
 
@@ -143,7 +181,7 @@ export class AutoFlipper {
     this.singleRafId = requestAnimationFrame((time) => this.singleColumnLoop(time, adapter, currentGen));
   }
 
-  private singleColumnLoop(time: number, adapter: ReadingSiteAdapter, gen: number) {
+  private singleColumnLoop(time: number, adapter: ReaderSiteRuntime, gen: number) {
     // 1. Check generation first - if generation changed, this loop is a zombie
     if (gen !== this.generation) {
       return;
@@ -156,8 +194,7 @@ export class AutoFlipper {
 
     // 检测是否切换到双栏模式
     if (this.siteContext.isDoubleColumn) {
-      this.stopAll();
-      this.startDoubleColumnLogic(adapter);
+      this.switchMode(() => this.startDoubleColumnLogic(adapter));
       return;
     }
 
@@ -188,13 +225,18 @@ export class AutoFlipper {
     if (document.hidden && !this.keepAwake) {
       this.singleRafId = null;
       // 监听 visibilitychange 事件，页面恢复时重新启动循环
-      const resumeHandler = () => {
-        if (!document.hidden && this.isActive && gen === this.generation) {
-          document.removeEventListener('visibilitychange', resumeHandler);
+      this.visibilityResumeHandler = () => {
+        if (!document.hidden) {
+          if (this.visibilityResumeHandler) {
+            document.removeEventListener('visibilitychange', this.visibilityResumeHandler);
+            this.visibilityResumeHandler = null;
+          }
+          if (this.isActive && gen === this.generation) {
           this.startSingleColumnLogic(adapter);
+          }
         }
       };
-      document.addEventListener('visibilitychange', resumeHandler);
+      document.addEventListener('visibilitychange', this.visibilityResumeHandler);
       return;
     }
 
@@ -217,11 +259,12 @@ export class AutoFlipper {
       window.scrollBy(0, pixelsToScroll);
       this.accumulatedMove -= pixelsToScroll;
 
-      const isAtBottom = adapter.isAtBottom();
+      const isAtBottom = adapter.isAtBottom?.() ?? false;
       if (isAtBottom && !this.bottomTriggered) {
         log.debug('[AutoFlipper] Reached bottom, triggering next page');
         this.bottomTriggered = true;
 
+        EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
         adapter.nextPage();
         if (adapter.clickNextChapter) {
           adapter.clickNextChapter();
@@ -232,13 +275,14 @@ export class AutoFlipper {
             this.singleRafId = null;
         }
 
-        setTimeout(() => {
+        this.bottomResumeTimer = setTimeout(() => {
+            this.bottomResumeTimer = null;
             this.bottomTriggered = false;
             // Only resume if still active and generation matches
             if (this.isActive && this.generation === gen) {
                 this.startSingleColumnLogic(adapter);
             }
-        }, 10000);
+        }, AUTO_FLIP_POLICY.bottomResumeMs);
         return;
       } else if (!isAtBottom) {
         this.bottomTriggered = false;

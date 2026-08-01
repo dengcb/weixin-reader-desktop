@@ -207,6 +207,8 @@
       color: var(--text-color);
       font-size: 13px;
       transition: border-color 0.15s;
+      user-select: text;
+      -webkit-user-select: text;
     }
 
     input:focus,
@@ -624,17 +626,13 @@
             <select id="sourceType">
               <option value="web">Web 网页</option>
               <option value="local">本地文件</option>
-              <option value="cloud">云存储</option>
             </select>
             <div class="form-hint">插件适配的内容来源类型</div>
           </div>
           <div class="form-group">
-            <label class="form-label">渲染模式 *</label>
-            <select id="renderMode">
-              <option value="webview">WebView 渲染</option>
-              <option value="custom">自定义渲染</option>
-            </select>
-            <div class="form-hint">内容渲染方式</div>
+            <label class="form-label">渲染模式</label>
+            <input type="text" id="renderMode" value="webview" readonly class="form-input-readonly">
+            <div class="form-hint">固定为 WebView 渲染</div>
           </div>
           <div class="form-group">
             <label class="form-label">域名 *</label>
@@ -674,13 +672,6 @@
                 </label>
               </div>
               <div class="toggle-item">
-                <span class="toggle-label">深色模式</span>
-                <label class="toggle">
-                  <input type="checkbox" id="capDarkMode">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="toggle-item">
                 <span class="toggle-label">隐藏工具栏</span>
                 <label class="toggle">
                   <input type="checkbox" id="capHideToolbar" checked>
@@ -691,13 +682,6 @@
                 <span class="toggle-label">隐藏导航栏</span>
                 <label class="toggle">
                   <input type="checkbox" id="capHideNavbar">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="toggle-item">
-                <span class="toggle-label">自动翻页</span>
-                <label class="toggle">
-                  <input type="checkbox" id="capAutoFlip" checked>
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -719,20 +703,6 @@
                 <span class="toggle-label">双栏模式</span>
                 <label class="toggle">
                   <input type="checkbox" id="capDoubleColumn">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="toggle-item">
-                <span class="toggle-label">隐藏光标</span>
-                <label class="toggle">
-                  <input type="checkbox" id="capHideCursor">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="toggle-item">
-                <span class="toggle-label">遥控器支持</span>
-                <label class="toggle">
-                  <input type="checkbox" id="capRemoteControl">
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -834,7 +804,6 @@
       pluginId: null,
       isBuiltin: false,
       isDirty: false,
-      pluginPath: null,
       files: {
         'index.ts': '',
         'wide.css': '',
@@ -861,8 +830,7 @@ const manifest: PluginManifest = {
   },
   capabilities: {
     wideMode: true,
-    hideToolbar: true,
-    autoFlip: true
+    hideToolbar: true
   }
 };
 
@@ -1076,6 +1044,34 @@ export default MyPlugin;
       document.getElementById('btnReset').addEventListener('click', resetForm);
     }
 
+    // 根据模式显隐按钮，并绑定验证状态控制按钮可用性
+    function updateButtonsByMode() {
+      const btnSave = document.getElementById('btnSave');
+      const btnInstall = document.getElementById('btnInstall');
+
+      if (editorState.mode === 'create') {
+        // 新建模式：隐藏保存，显示安装到应用
+        btnSave.style.display = 'none';
+        btnInstall.style.display = '';
+      } else {
+        // 编辑模式：显示保存，隐藏安装到应用
+        btnSave.style.display = '';
+        btnInstall.style.display = 'none';
+      }
+
+      updateButtonStates();
+    }
+
+    // 根据验证状态启用/禁用保存和安装按钮
+    function updateButtonStates() {
+      const manifestValid = document.getElementById('validManifest').classList.contains('valid');
+      const btnSave = document.getElementById('btnSave');
+      const btnInstall = document.getElementById('btnInstall');
+
+      btnSave.disabled = !manifestValid;
+      btnInstall.disabled = !manifestValid;
+    }
+
     // 加载模板
     function loadTemplate() {
       editorState.files['index.ts'] = defaultCodeTemplate;
@@ -1096,6 +1092,9 @@ export default MyPlugin;
           if (data) loadPluginData(data);
         }
 
+        // 初始化按钮显隐（根据模式）
+        updateButtonsByMode();
+
         // 次路径：窗口已存在时 settings.html 会 emit 过来（此时监听已注册，可正常收到）
         if (listen) {
           await listen('editor-init', (event) => {
@@ -1115,7 +1114,6 @@ export default MyPlugin;
       editorState.mode = data.mode || 'create';
       editorState.pluginId = data.pluginId;
       editorState.isBuiltin = data.isBuiltin || false;
-      editorState.pluginPath = data.pluginPath;
 
       if (data.manifest) {
         const m = data.manifest;
@@ -1139,15 +1137,11 @@ export default MyPlugin;
         
         if (m.capabilities) {
           document.getElementById('capWideMode').checked = !!m.capabilities.wideMode;
-          document.getElementById('capDarkMode').checked = !!m.capabilities.darkMode;
           document.getElementById('capHideToolbar').checked = !!m.capabilities.hideToolbar;
           document.getElementById('capHideNavbar').checked = !!m.capabilities.hideNavbar;
-          document.getElementById('capAutoFlip').checked = !!m.capabilities.autoFlip;
           document.getElementById('capChapterNav').checked = !!m.capabilities.chapterNav;
           document.getElementById('capProgressTracker').checked = !!m.capabilities.progressTracker;
           document.getElementById('capDoubleColumn').checked = !!m.capabilities.doubleColumn;
-          document.getElementById('capHideCursor').checked = !!m.capabilities.hideCursor;
-          document.getElementById('capRemoteControl').checked = !!m.capabilities.remoteControl;
         }
       }
 
@@ -1166,6 +1160,7 @@ export default MyPlugin;
       updatePreview();
       validateForm();
       updateStatusBar();
+      updateButtonsByMode();
     }
 
     // 收集表单数据
@@ -1190,15 +1185,11 @@ export default MyPlugin;
           },
           capabilities: {
             wideMode: document.getElementById('capWideMode').checked,
-            darkMode: document.getElementById('capDarkMode').checked,
             hideToolbar: document.getElementById('capHideToolbar').checked,
             hideNavbar: document.getElementById('capHideNavbar').checked,
-            autoFlip: document.getElementById('capAutoFlip').checked,
             chapterNav: document.getElementById('capChapterNav').checked,
             progressTracker: document.getElementById('capProgressTracker').checked,
-            doubleColumn: document.getElementById('capDoubleColumn').checked,
-            hideCursor: document.getElementById('capHideCursor').checked,
-            remoteControl: document.getElementById('capRemoteControl').checked
+            doubleColumn: document.getElementById('capDoubleColumn').checked
           },
           builtin: false
         },
@@ -1248,6 +1239,9 @@ export default MyPlugin;
       const manifestIcon = document.getElementById('validManifest');
       manifestIcon.textContent = valid ? '✓' : '✗';
       manifestIcon.className = 'validation-icon ' + (valid ? 'valid' : 'invalid');
+
+      // 同步更新按钮可用状态
+      updateButtonStates();
 
       return valid;
     }
@@ -1305,10 +1299,10 @@ export default MyPlugin;
       }
 
       try {
-        if (editorState.mode === 'edit' && editorState.pluginPath) {
+        if (editorState.mode === 'edit' && editorState.pluginId) {
           // 编辑模式：覆盖原文件
           await invoke('save_plugin', {
-            path: editorState.pluginPath,
+            pluginId: editorState.pluginId,
             manifest: data.manifest,
             files: data.files
           });
@@ -1345,22 +1339,16 @@ export default MyPlugin;
       }
 
       try {
-        const path = await invoke('save_plugin_dialog', {
-          defaultName: pluginId
+        const path = await invoke('export_plugin', {
+          defaultName: pluginId,
+          manifest: data.manifest,
+          files: data.files
         });
 
         if (path) {
-          await invoke('save_plugin', {
-            path,
-            manifest: data.manifest,
-            files: data.files
-          });
-          
-          editorState.pluginPath = path;
-          editorState.mode = 'edit';
           markClean();
           updateStatusBar();
-          alert('保存成功！');
+          alert('导出成功！');
         }
       } catch (e) {
         console.error('Save as failed:', e);
@@ -1419,7 +1407,7 @@ export default MyPlugin;
 
       // 重置开关
       document.querySelectorAll('.toggle input').forEach(toggle => {
-        toggle.checked = ['capWideMode', 'capHideToolbar', 'capAutoFlip'].includes(toggle.id);
+        toggle.checked = ['capWideMode', 'capHideToolbar'].includes(toggle.id);
       });
 
       // 重置代码
@@ -1427,7 +1415,6 @@ export default MyPlugin;
 
       editorState.mode = 'create';
       editorState.pluginId = null;
-      editorState.pluginPath = null;
       
       markClean();
       updatePreview();
