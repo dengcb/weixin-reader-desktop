@@ -9,21 +9,20 @@ use crate::settings;
 /// Chrome 风格的缩放级别
 const ZOOM_LEVELS: [f64; 11] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
-/// 从设置文件读取当前 zoom 值
-fn get_current_zoom<R: Runtime>(app: &AppHandle<R>) -> f64 {
+/// 从设置文件读取当前站点的 zoom 值（zoom 按站点独立存储）
+fn get_current_zoom<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> f64 {
     let s = settings::get_settings(app.clone());
-    s.get("global")
-        .and_then(|g| g.get("zoom"))
+    s.get("sites")
+        .and_then(|sites| sites.get(site_id))
+        .and_then(|site| site.get("zoom"))
         .and_then(|z| z.as_f64())
         .unwrap_or(0.75)
 }
 
-/// 保存 zoom 值到设置文件
-fn save_zoom<R: Runtime>(app: &AppHandle<R>, zoom: f64) {
-    let update = serde_json::json!({
-        "global": { "zoom": zoom }
-    });
-    settings::save_settings(app.clone(), update, None);
+/// 保存 zoom 值到设置文件（按站点存储）
+fn save_zoom<R: Runtime>(app: &AppHandle<R>, site_id: &str, zoom: f64) {
+    let path = format!("sites.{}.zoom", site_id);
+    settings::update_setting(app, &path, serde_json::json!(zoom));
     // 通知前端更新 UI
     let _ = app.emit("menu-action", "zoom_changed");
 }
@@ -591,28 +590,31 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             "zoom_in" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let current = get_current_zoom(app);
+                    let site_id = current_site_id(&app);
+                    let current = get_current_zoom(&app, &site_id);
                     let next = next_zoom_level(current, true);
                     let _ = win.set_zoom(next);
-                    save_zoom(app, next);
+                    save_zoom(&app, &site_id, next);
                     let pct = (next * 100.0).round() as i32;
                     let _ = win.emit("show-toast", format!("{}%", pct));
                 }
             }
             "zoom_out" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let current = get_current_zoom(app);
+                    let site_id = current_site_id(&app);
+                    let current = get_current_zoom(&app, &site_id);
                     let next = next_zoom_level(current, false);
                     let _ = win.set_zoom(next);
-                    save_zoom(app, next);
+                    save_zoom(&app, &site_id, next);
                     let pct = (next * 100.0).round() as i32;
                     let _ = win.emit("show-toast", format!("{}%", pct));
                 }
             }
             "zoom_reset" => {
                 if let Some(win) = app.get_webview_window("main") {
+                    let site_id = current_site_id(&app);
                     let _ = win.set_zoom(1.0);
-                    save_zoom(app, 1.0);
+                    save_zoom(&app, &site_id, 1.0);
                     let _ = win.emit("show-toast", "100%");
                 }
             }
@@ -679,23 +681,16 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             "quit" => {
                 // Clear autoFlip.active before quitting
-                println!("[Menu Quit] Quit requested, clearing autoFlip.active");
                 let settings = crate::settings::get_settings(handle_for_events.clone());
-                if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
+                if let Some(auto_flip) = settings.get("global").and_then(|g| g.get("autoFlip")).and_then(|v| v.as_object()) {
                     if auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false) {
-                        let update = serde_json::json!({
-                            "autoFlip": {
-                                "active": false,
-                                "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                                "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                            }
-                        });
-                        println!("[Menu Quit] Saving updated settings: {}", serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-                        crate::settings::save_settings(handle_for_events.clone(), update, None);
-                        println!("[Menu Quit] Settings saved, now exiting");
+                        crate::settings::update_setting(
+                            &handle_for_events,
+                            "global.autoFlip.active",
+                            serde_json::json!(false)
+                        );
                     }
                 }
-                // Exit the app
                 std::process::exit(0);
             }
             _ => {
@@ -704,11 +699,12 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 // 不在此写 settings，lastSiteId 由前端单写，避免双写互盖
                 if id.starts_with("switch_site_") {
                     if let Some(site_id) = id.strip_prefix("switch_site_") {
-                        // Rust 端直接写入 lastSiteId，不依赖前端 invoke（Tauri 2.11 远程页面 invoke 可能挂起）
-                        let update = serde_json::json!({
-                            "global": { "lastSiteId": site_id }
-                        });
-                        crate::settings::save_settings(app.clone(), update, None);
+                        // Rust 端直接写入 lastSiteId
+                        crate::settings::update_setting(
+                            &app,
+                            "global.lastSiteId",
+                            serde_json::json!(site_id)
+                        );
 
                         // 立即更新书店菜单对勾（遍历菜单项，只勾选目标站点）
                         let target = tauri::menu::MenuId::from(format!("switch_site_{}", site_id).as_str());
@@ -731,14 +727,25 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                         }
 
                         let settings = crate::settings::get_settings(app.clone());
-                        let last_url = settings.get("sites")
-                            .and_then(|s| s.get(site_id))
-                            .and_then(|s| s.get("lastReaderUrl"))
-                            .and_then(|u| u.as_str())
-                            .map(|s| s.to_string());
-                        let target = last_url.or_else(|| crate::sites::resolve_home_url(app, site_id));
+                        // 与启动逻辑一致：受 global.lastPage 开关控制
+                        // 开 → 跳上次阅读页；关 → 跳站点首页
+                        let remember_page = settings.get("global")
+                            .and_then(|g| g.get("lastPage"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let target = if remember_page {
+                            settings.get("sites")
+                                .and_then(|s| s.get(site_id))
+                                .and_then(|s| s.get("lastReaderUrl"))
+                                .and_then(|u| u.as_str())
+                                .map(|s| s.to_string())
+                                .or_else(|| crate::sites::resolve_home_url(app, site_id))
+                        } else {
+                            crate::sites::resolve_home_url(app, site_id)
+                        };
                         if let Some(url) = target {
                             if let Some(win) = app.get_webview_window("main") {
+                                // 只导航，zoom 由前端注入脚本在新页面初始化时设置
                                 match url.parse::<tauri::Url>() {
                                     Ok(u) => { let _ = win.navigate(u); }
                                     Err(e) => eprintln!("[Bookstore] Invalid URL '{}': {:?}", url, e),

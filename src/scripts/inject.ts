@@ -7,7 +7,7 @@
  */
 
 import { log } from './core/logger';
-import { logToFile } from './core/tauri';
+import { logToFile, invoke } from './core/tauri';
 import { settingsStore } from './core/settings_store';
 import { getPluginLoader } from './core/plugin_loader';
 import { getPluginRegistry } from './core/plugin_registry';
@@ -253,16 +253,22 @@ async function main(): Promise<void> {
     
     // 3. 初始化插件系统
     await initPluginSystem();
-    
-    // 4. 初始化管理器
+
+    // 4. 通知 Rust 端按当前站点应用缩放（事件驱动，非延迟）
+    const activePlugin = getPluginLoader().getActivePlugin();
+    if (activePlugin?.manifest.id) {
+      invoke('apply_site_zoom', { siteId: activePlugin.manifest.id }).catch(() => {});
+    }
+
+    // 5. 初始化管理器
     initManagers();
-    
-    // 5. 暴露调试 API
+
+    // 6. 暴露调试 API
     exposeDebugAPI();
-    
-    // 6. 设置热重载监听器（插件安装/卸载后自动刷新）
+
+    // 7. 设置热重载监听器（插件安装/卸载后自动刷新）
     await setupHotReloadListener();
-    
+
     // 7. 性能诊断：记录页面加载耗时与最慢资源（落盘到日志）
     reportLoadPerformance();
     

@@ -157,6 +157,20 @@ pub fn set_title(window: WebviewWindow, title: String) {
     let _ = window.set_title(&title);
 }
 
+/// 前端注入脚本初始化完成时调用，通知 Rust 端按当前站点应用缩放
+#[tauri::command]
+pub fn apply_site_zoom(app: AppHandle, site_id: String) {
+    let settings = crate::settings::get_settings(app.clone());
+    let zoom = settings.get("sites")
+        .and_then(|s| s.get(&site_id))
+        .and_then(|s| s.get("zoom"))
+        .and_then(|z| z.as_f64())
+        .unwrap_or(0.75);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_zoom(zoom);
+    }
+}
+
 #[tauri::command]
 pub fn get_app_name(app: AppHandle) -> String {
     app.config().product_name.clone().unwrap_or("艾特阅读".to_string())

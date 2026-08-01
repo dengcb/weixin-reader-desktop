@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-update-now"
+description = "Enables the install_update_now command without any pre-configured scope."
+commands.allow = ["install_update_now"]
+
+[[permission]]
+identifier = "deny-install-update-now"
+description = "Denies the install_update_now command without any pre-configured scope."
+commands.deny = ["install_update_now"]

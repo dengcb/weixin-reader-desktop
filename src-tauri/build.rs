@@ -15,6 +15,7 @@ fn main() {
                 "set_zoom",
                 "close_window",
                 "set_title",
+                "apply_site_zoom",
                 "get_app_name",
                 "get_app_version",
                 "get_available_monitors",
@@ -33,6 +34,11 @@ fn main() {
                 "save_plugin",
                 "save_plugin_dialog",
                 "install_plugin_from_editor",
+                "get_settings",
+                "save_settings",
+                "check_update_manual",
+                "install_update_now",
+                "is_update_downloaded",
             ])),
     )
     .expect("failed to run tauri build");

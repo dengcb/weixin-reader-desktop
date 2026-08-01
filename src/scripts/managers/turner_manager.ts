@@ -65,7 +65,8 @@ export class TurnerManager {
         const currentSettings = settingsStore.get();
         if (currentSettings.autoFlip?.active) {
             this.autoFlipper.stopAll();
-            settingsStore.update({
+            // autoFlip 现在是全局配置
+            settingsStore.updateGlobal({
               autoFlip: { ...currentSettings.autoFlip, active: false }
             });
         }

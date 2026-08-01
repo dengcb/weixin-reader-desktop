@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-site-zoom"
+description = "Enables the apply_site_zoom command without any pre-configured scope."
+commands.allow = ["apply_site_zoom"]
+
+[[permission]]
+identifier = "deny-apply-site-zoom"
+description = "Denies the apply_site_zoom command without any pre-configured scope."
+commands.deny = ["apply_site_zoom"]

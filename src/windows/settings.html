@@ -881,16 +881,16 @@
         const sites = settings.sites || {};
         const siteSettings = sites[siteId] || {};
 
-        // 自动翻页间隔
-        if (siteSettings.autoFlip && siteSettings.autoFlip.interval) {
-          autoFlipStepSelect.value = siteSettings.autoFlip.interval.toString();
+        // 自动翻页间隔（autoFlip 现在是全局配置）
+        if (global.autoFlip && global.autoFlip.interval) {
+          autoFlipStepSelect.value = global.autoFlip.interval.toString();
         } else {
           autoFlipStepSelect.value = "30";
         }
 
         // 后台翻页
-        if (siteSettings.autoFlip && siteSettings.autoFlip.keepAwake !== undefined) {
-          keepAwakeCheckbox.checked = siteSettings.autoFlip.keepAwake;
+        if (global.autoFlip && global.autoFlip.keepAwake !== undefined) {
+          keepAwakeCheckbox.checked = global.autoFlip.keepAwake;
         } else {
           keepAwakeCheckbox.checked = true;
         }
@@ -913,24 +913,16 @@
         renderPluginList(settings);
       }).catch(e => console.error("Failed to load settings:", e));
 
-      // 保存自动翻页间隔
+      // 保存自动翻页间隔（autoFlip 现在是全局配置）
       autoFlipStepSelect.addEventListener('change', () => {
         const val = parseInt(autoFlipStepSelect.value, 10);
         invoke('get_settings').then((current) => {
           current = current || {};
-          const siteId = 'weread';
-          const sites = current.sites || {};
-          const existingSite = sites[siteId] || {};
-          const existingAutoFlip = existingSite.autoFlip || { active: false, interval: 30, keepAwake: true };
+          const global = current.global || {};
+          const existingAutoFlip = global.autoFlip || { active: false, interval: 30, keepAwake: true };
 
           const update = {
-            sites: {
-              ...sites,
-              [siteId]: {
-                ...existingSite,
-                autoFlip: { ...existingAutoFlip, interval: val }
-              }
-            }
+            global: { ...global, autoFlip: { ...existingAutoFlip, interval: val } }
           };
 
           invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));
@@ -942,19 +934,11 @@
         const val = keepAwakeCheckbox.checked;
         invoke('get_settings').then((current) => {
           current = current || {};
-          const siteId = 'weread';
-          const sites = current.sites || {};
-          const existingSite = sites[siteId] || {};
-          const existingAutoFlip = existingSite.autoFlip || { active: false, interval: 30, keepAwake: true };
+          const global = current.global || {};
+          const existingAutoFlip = global.autoFlip || { active: false, interval: 30, keepAwake: true };
 
           const update = {
-            sites: {
-              ...sites,
-              [siteId]: {
-                ...existingSite,
-                autoFlip: { ...existingAutoFlip, keepAwake: val }
-              }
-            }
+            global: { ...global, autoFlip: { ...existingAutoFlip, keepAwake: val } }
           };
 
           invoke('save_settings', { settings: update }).then(() => emit('settings-updated'));

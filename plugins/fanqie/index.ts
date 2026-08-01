@@ -21,21 +21,20 @@ import type {
 import manifest from './manifest.json';
 
 // 样式常量
+// 注意：番茄桌面版的布局与手机版不同，不能用手机版的固定宽度值
+// 桌面版默认就是全宽自适应，插件不应强制覆盖宽度
 const STYLES = {
-  // 宽屏模式：放宽阅读列宽度（番茄默认约 551px，偏窄）
+  // 宽屏模式：放宽阅读列最大宽度
   wide: {
     enabled: `
-      .muye-reader-inner {
+      .muye-reader-content {
         max-width: 820px !important;
       }
     `,
-    disabled: `
-      .muye-reader-inner {
-        max-width: 551px !important;
-      }
-    `,
+    // 不开启宽屏时不注入任何宽度限制，让番茄用自身默认布局
+    disabled: ``,
   },
-  // 沉浸模式：隐藏侧边浮动工具栏（加书架/目录/夜间/字号/下载/领红包）
+  // 沉浸模式：隐藏侧边浮动工具栏
   toolbar: {
     enabled: `
       .reader-toolbar {
@@ -85,6 +84,11 @@ export class FanqiePlugin implements ReaderPlugin {
   onLoad(api: PluginAPI): void {
     this.api = api;
     api.log.info('Fanqie plugin loaded');
+
+    // 修复：Tauri 2.11/wry 0.55 可能改变了 WKWebView 的默认 viewport 行为
+    // 导致番茄的响应式布局（rem + viewport）计算出的布局宽度极小
+    // 强制设置正确的 viewport meta
+    this.fixViewport();
 
     // 订阅设置变化
     const unsubscribe = api.settings.subscribe((settings) => {
@@ -207,6 +211,32 @@ export class FanqiePlugin implements ReaderPlugin {
   }
 
   // ==================== 私有方法 ====================
+
+  /**
+   * 修复 viewport：番茄基于 rem 做响应式布局（root font-size = 10px）
+   * 如果 WebView 的默认 viewport 行为异常，会导致布局宽度极小，
+   * 正文字段被压成一行 3~5 字的细条。
+   * 强制 viewport 为 initial-scale=1，确保 CSS 布局宽度 = 窗口宽度。
+   */
+  private fixViewport(): void {
+    // 1. 修正 viewport meta
+    const viewportMeta = document.querySelector('meta[name="viewport"]');
+    if (viewportMeta) {
+      viewportMeta.setAttribute('content',
+        'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no');
+    }
+
+    // 2. 确保 root font-size 不被异常覆盖
+    // 番茄的 rem 基准是 10px，如果被改成极小值会导致整体缩小
+    const style = document.createElement('style');
+    style.id = 'plugin-fanqie-viewport-fix';
+    style.textContent = `
+      html { font-size: 10px !important; }
+    `;
+    document.head.appendChild(style);
+
+    this.cleanupFunctions.push(() => style.remove());
+  }
 
   private applySettings(settings: Record<string, any>): void {
     if (!this.api || !this.isReaderPage()) return;

@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
@@ -65,16 +65,14 @@ pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value, version: Op
         println!("[Settings] Accepting update: version {} > current version {}", new_version, current_version);
     }
 
-            // Merge logic (shallow merge)
-    // IMPORTANT: Only allow specific top-level keys to prevent data pollution
+            // Merge new settings (deep merge for global and sites)
+    // Only allow specific top-level keys to prevent data pollution
     // Valid keys: _version, global, sites
-    // Old flat keys (readerWide, hideToolbar, etc.) will be removed
     if let Some(obj) = current.as_object_mut() {
         if let Some(new_obj) = settings.as_object() {
-            // Define allowed top-level keys
             let allowed_keys = vec!["_version", "global", "sites"];
 
-            // First, remove all keys that are not in the allowed list
+            // Remove all keys that are not in the allowed list
             let keys_to_remove: Vec<String> = obj.keys()
                 .filter(|k| !allowed_keys.contains(&k.as_str()))
                 .cloned()
@@ -82,22 +80,33 @@ pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value, version: Op
 
             for key in keys_to_remove {
                 obj.remove(&key);
-                println!("[Settings] Removed legacy key: {}", key);
             }
 
-            // Then, merge new settings (only allowed keys)
+            // Deep merge global and sites (recursive)
             for (k, v) in new_obj {
                 if allowed_keys.contains(&k.as_str()) {
-                    obj.insert(k.clone(), v.clone());
+                    match k.as_str() {
+                        "global" | "sites" => {
+                            // Deep merge nested objects
+                            if !obj.contains_key(k.as_str()) {
+                                obj.insert(k.clone(), serde_json::json!({}));
+                            }
+                            if let Some(target) = obj.get_mut(k.as_str()).and_then(|v| v.as_object_mut()) {
+                                deep_merge(target, v);
+                            }
+                        }
+                        _ => {
+                            // _version and any other scalar: direct insert
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
                 }
             }
 
-            // FORCE override _version with the version argument if provided
-            // This prevents the frontend from accidentally overwriting the version with an old value
+            // FORCE override _version
             if let Some(ver) = version {
                 obj.insert("_version".to_string(), serde_json::json!(ver));
             } else if let Some(ver_val) = new_obj.get("_version") {
-                // Only if version arg is missing, fallback to the payload version
                 obj.insert("_version".to_string(), ver_val.clone());
             }
         }
@@ -125,6 +134,102 @@ pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value, version: Op
         }
         Err(e) => {
             eprintln!("[Settings] Failed to create settings file: {}", e);
+        }
+    }
+}
+
+/// Recursively merge source into target (deep merge).
+/// For nested objects, merge key by key; for scalars, overwrite.
+fn deep_merge(target: &mut serde_json::Map<String, Value>, source: &Value) {
+    if let Some(source_obj) = source.as_object() {
+        for (key, val) in source_obj {
+            if val.is_object() && target.get(key).map_or(false, |v| v.is_object()) {
+                // Both are objects: recurse
+                if let Some(inner_target) = target.get_mut(key).and_then(|v| v.as_object_mut()) {
+                    deep_merge(inner_target, val);
+                }
+            } else {
+                // Scalar or new key: direct insert
+                target.insert(key.clone(), val.clone());
+            }
+        }
+    }
+}
+
+/// Path-style update: reads current settings, applies deep merge at the given path,
+/// auto-increments version, writes, and emits `settings-updated` to notify frontend.
+///
+/// # Example
+/// ```ignore
+/// update_setting(&app, "global.lastSiteId", serde_json::json!("fanqie"));
+/// update_setting(&app, "sites.weread.zoom", serde_json::json!(0.75));
+/// ```
+pub fn update_setting<R: Runtime>(app: &AppHandle<R>, path: &str, value: Value) {
+    let _lock = SETTINGS_LOCK.lock().unwrap();
+
+    let settings_path = get_settings_path(app);
+    if let Some(parent) = settings_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    // Read current settings
+    let mut current: Value = if settings_path.exists() {
+        if let Ok(file) = File::open(&settings_path) {
+            let reader = std::io::BufReader::new(file);
+            serde_json::from_reader(reader).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    // Navigate to the path and set the value
+    let keys: Vec<&str> = path.split('.').collect();
+    set_nested_value(&mut current, &keys, value);
+
+    // Auto-increment version
+    let current_version = current.get("_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if let Some(obj) = current.as_object_mut() {
+        obj.insert("_version".to_string(), serde_json::json!(current_version + 1));
+    }
+
+    // Write
+    if let Ok(file) = fs::File::create(&settings_path) {
+        let mut writer = BufWriter::new(file);
+        if serde_json::to_writer_pretty(&mut writer, &current).is_ok() {
+            let _ = writer.flush();
+            let new_version = current.get("_version").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!("[Settings] update_setting: {} -> {} (version: {})", path, settings_path.display(), new_version);
+        }
+    }
+
+    // Notify frontend to reload
+    let _ = app.emit("settings-updated", ());
+}
+
+/// Set a value at a dotted path inside a JSON object, creating intermediate objects as needed.
+fn set_nested_value(root: &mut Value, keys: &[&str], value: Value) {
+    if keys.is_empty() {
+        return;
+    }
+
+    if !root.is_object() {
+        *root = serde_json::json!({});
+    }
+
+    let obj = root.as_object_mut().unwrap();
+
+    if keys.len() == 1 {
+        obj.insert(keys[0].to_string(), value);
+    } else {
+        if !obj.contains_key(keys[0]) || !obj[keys[0]].is_object() {
+            obj.insert(keys[0].to_string(), serde_json::json!({}));
+        }
+        if let Some(child) = obj.get_mut(keys[0]) {
+            set_nested_value(child, &keys[1..], value);
         }
     }
 }

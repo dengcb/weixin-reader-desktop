@@ -8,17 +8,13 @@ import { createSiteContext } from './site_context';
  * 每个网站独立存储，互不干扰
  */
 export interface SiteSettings {
+  zoom?: number;  // 每个站点独立缩放比例
   readerWide?: boolean;
   hideToolbar?: boolean;
   hideNavbar?: boolean;
   lastReaderUrl?: string | null;
   scrollPosition?: number;  // Y scroll position for single-column mode
   readingProgress?: Record<string, number>; // URL-based scroll position storage
-  autoFlip?: {
-    active: boolean;
-    interval: number;
-    keepAwake: boolean;
-  };
 }
 
 /**
@@ -30,13 +26,17 @@ export interface SiteSettings {
 export interface AppSettings {
   _version?: number;  // Managed by OptimisticLock
   global?: {
-    zoom?: number;
     autoUpdate?: boolean;
-    lastPage?: boolean;  // 「阅读不停，自动记录」：是否恢复上次阅读页（正交于 rememberSite）
-    rememberSite?: boolean;  // 「记住书店，好看再来」：是否恢复上次所在站点（关则每次进微信读书）
-    lastSiteId?: string;  // 上次活跃的站点 ID（供启动时选站）
-    hideCursor?: boolean;  // 是否隐藏光标
-    enabledPlugins?: string[];  // 启用的插件列表，undefined = 全部启用（向后兼容）
+    lastPage?: boolean;  // 「阅读不停，自动记录」
+    rememberSite?: boolean;  // 「记住书店，好看再来」
+    lastSiteId?: string;
+    hideCursor?: boolean;
+    enabledPlugins?: string[];
+    autoFlip?: {
+      active: boolean;
+      interval: number;
+      keepAwake: boolean;
+    };
   };
   sites?: {
     [siteId: string]: SiteSettings;
@@ -77,21 +77,21 @@ export class SettingsStore {
 
     // 将旧的顶层设置迁移到 sites.weread
     const migratedSiteSettings: SiteSettings = {
+      zoom: loaded.zoom,  // zoom 现在按站点存储
       readerWide: loaded.readerWide,
       hideToolbar: loaded.hideToolbar,
       lastReaderUrl: loaded.lastReaderUrl,
       scrollPosition: loaded.scrollPosition,
       readingProgress: loaded.readingProgress,
-      autoFlip: loaded.autoFlip
     };
 
-    // 构建新格式
+    // 构建新格式（autoFlip 现在是全局）
     const migrated: AppSettings = {
       _version: loaded._version || 0,
       global: {
-        zoom: loaded.zoom,
         autoUpdate: loaded.autoUpdate,
-        lastPage: loaded.lastPage
+        lastPage: loaded.lastPage,
+        autoFlip: loaded.autoFlip
       },
       sites: {
         weread: migratedSiteSettings
@@ -124,7 +124,6 @@ export class SettingsStore {
       const initialSettings: AppSettings = {
         _version: loadedVersion,
         global: {
-          zoom: 0.75, // Chrome 默认缩放级别
           autoUpdate: true,
           lastPage: true,
           ...migrated.global
@@ -140,7 +139,6 @@ export class SettingsStore {
       const fallbackSettings: AppSettings = {
         _version: 0,
         global: {
-          zoom: 0.75, // Chrome 默认缩放级别
           autoUpdate: true,
           lastPage: true
         },
@@ -269,8 +267,8 @@ export class SettingsStore {
     const { _version, ...partialWithoutVersion } = partial as any;
 
     // 智能路由：区分全局设置和站点设置
-    const globalFields = ['zoom', 'autoUpdate', 'lastPage'];
-    const siteFields = ['readerWide', 'hideToolbar', 'hideNavbar', 'lastReaderUrl', 'scrollPosition', 'readingProgress', 'autoFlip'];
+    const globalFields = ['autoUpdate', 'lastPage', 'rememberSite', 'lastSiteId', 'hideCursor', 'autoFlip'];
+    const siteFields = ['zoom', 'readerWide', 'hideToolbar', 'hideNavbar', 'lastReaderUrl', 'scrollPosition', 'readingProgress'];
 
     const current = this.lock.getData();
     let needsUpdate = false;

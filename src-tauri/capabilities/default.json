@@ -36,6 +36,7 @@
     "allow-set-zoom",
     "allow-close-window",
     "allow-set-title",
+    "allow-apply-site-zoom",
     "allow-get-app-name",
     "allow-get-app-version",
     "allow-get-available-monitors",
@@ -54,6 +55,11 @@
     "allow-save-plugin",
     "allow-save-plugin-dialog",
     "allow-install-plugin-from-editor",
+    "allow-get-settings",
+    "allow-save-settings",
+    "allow-check-update-manual",
+    "allow-install-update-now",
+    "allow-is-update-downloaded",
     {
       "identifier": "http:default",
       "allow": [

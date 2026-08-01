@@ -95,15 +95,8 @@ export class MenuManager {
 
     // 5. 订阅设置变化
     settingsStore.subscribe(async (settings) => {
-      // 使用 Tauri 原生 set_zoom API（而不是 CSS zoom）
-      // 让 Tauri 调用系统 webview 的缩放功能
-      if (settings.zoom !== undefined) {
-        try {
-          await invoke('set_zoom', { value: settings.zoom });
-        } catch (e) {
-          log.error('[MenuManager] set_zoom failed:', e);
-        }
-      }
+      // zoom 由 Rust 端菜单直接控制（按站点存储），前端不再 invoke set_zoom
+      // 避免站点切换时前端用旧 siteId 的 zoom 覆盖新站点的缩放
       await this.syncMenuState(settings);
     });
 
@@ -163,14 +156,7 @@ export class MenuManager {
     const navbarState = !!settings.hideNavbar;
     const autoFlipState = !!settings.autoFlip?.active;
 
-    // 应用 Tauri 原生缩放（初始化时调用一次）
-    if (settings.zoom !== undefined) {
-      try {
-        await invoke('set_zoom', { value: settings.zoom });
-      } catch (e) {
-        log.error('[MenuManager] set_zoom failed:', e);
-      }
-    }
+    // zoom 完全由 Rust 端控制（菜单 + 启动 + 书店切换），前端不参与
 
     // Update enabled status FIRST
     await this.updateMenuEnabledStatus('sync-menu-state');
@@ -243,15 +229,10 @@ export class MenuManager {
         {
           const currentAutoFlip = settings.autoFlip || { active: false, interval: 15, keepAwake: true };
           const newActive = !currentAutoFlip.active;
-          const updates = {
+          // autoFlip 现在是全局配置
+          settingsStore.updateGlobal({
             autoFlip: { ...currentAutoFlip, active: newActive }
-          };
-
-          if (siteId !== 'unknown') {
-            settingsStore.updateSite(siteId, updates);
-          } else {
-            settingsStore.update(updates);
-          }
+          });
         }
         break;
 
@@ -270,7 +251,7 @@ export class MenuManager {
             }
           }
 
-          settingsStore.updateGlobal({ zoom: nextZoom });
+          settingsStore.updateSite(siteId, { zoom: nextZoom });
           showToast(Math.round(nextZoom * 100) + '%');
         }
         break;
@@ -290,13 +271,13 @@ export class MenuManager {
             }
           }
 
-          settingsStore.updateGlobal({ zoom: nextZoom });
+          settingsStore.updateSite(siteId, { zoom: nextZoom });
           showToast(Math.round(nextZoom * 100) + '%');
         }
         break;
 
       case 'zoom_reset':
-        settingsStore.updateGlobal({ zoom: 1.0 });
+        settingsStore.updateSite(siteId, { zoom: 1.0 });
         showToast('100%');
         break;
     }

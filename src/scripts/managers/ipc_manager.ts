@@ -186,12 +186,18 @@ export class IPCManager extends BaseManager {
       invoke('set_active_bookstore', { siteId }).catch(() => {});
     }
 
-    // 阅读页时保存该站点上次阅读页（按站点独立、全量保留；续读始终生效）
+    // 阅读页时保存该站点上次阅读页；离开阅读页时清除
+    // 这样返回首页后切换书店，回来停在首页而不是跳回书里
     if (active!.isReaderPage()) {
       const url = window.location.href;
       const site = settingsStore.getSite(siteId);
       if (site.lastReaderUrl !== url) {
         settingsStore.updateSite(siteId, { lastReaderUrl: url });
+      }
+    } else {
+      const site = settingsStore.getSite(siteId);
+      if (site.lastReaderUrl) {
+        settingsStore.updateSite(siteId, { lastReaderUrl: null });
       }
     }
   }
@@ -263,9 +269,14 @@ export class IPCManager extends BaseManager {
       this.scrollSaveTimer = setTimeout(() => {
         this.lastSavedScrollY = scrollY;
         const currentUrl = window.location.href;
-        const currentProgress = settingsStore.get().readingProgress || {};
+        const active = getPluginLoader().getActivePlugin();
+        const sid = active?.manifest.id;
+        if (!sid) return;
 
-        settingsStore.update({
+        const currentSite = settingsStore.getSite(sid);
+        const currentProgress = currentSite.readingProgress || {};
+
+        settingsStore.updateSite(sid, {
           scrollPosition: scrollY,
           readingProgress: { ...currentProgress, [currentUrl]: scrollY }
         });

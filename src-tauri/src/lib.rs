@@ -27,30 +27,15 @@ fn check_network_connection() -> bool {
 
 /// 清理 autoFlip.active 状态
 /// 当窗口关闭或应用退出时，确保自动翻页状态被正确保存为 false
-fn clear_auto_flip_active(app_handle: tauri::AppHandle, event_name: &str) {
-    println!("[{}] Checking autoFlip status...", event_name);
+fn clear_auto_flip_active(app_handle: tauri::AppHandle, _event_name: &str) {
     let settings = settings::get_settings(app_handle.clone());
 
-    if let Some(auto_flip) = settings.get("autoFlip").and_then(|v| v.as_object()) {
+    if let Some(auto_flip) = settings.get("global").and_then(|g| g.get("autoFlip")).and_then(|v| v.as_object()) {
         let is_active = auto_flip.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
-        println!("[{}] autoFlip.active = {}", event_name, is_active);
 
         if is_active {
-            let update = serde_json::json!({
-                "autoFlip": {
-                    "active": false,
-                    "interval": auto_flip.get("interval").and_then(|i| i.as_i64()).unwrap_or(30),
-                    "keepAwake": auto_flip.get("keepAwake").and_then(|k| k.as_bool()).unwrap_or(true)
-                }
-            });
-            println!("[{}] Saving updated settings: {}", event_name, serde_json::to_string(&update).unwrap_or_else(|_| "Error".to_string()));
-            settings::save_settings(app_handle.clone(), update, None);
-            println!("[{}] Settings saved", event_name);
-        } else {
-            println!("[{}] autoFlip not active, nothing to do", event_name);
+            settings::update_setting(&app_handle, "global.autoFlip.active", serde_json::json!(false));
         }
-    } else {
-        println!("[{}] No autoFlip settings found", event_name);
     }
 }
 
@@ -292,12 +277,17 @@ pub fn run() {
             }
             let win = builder.build()?;
 
-            // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置，否则默认 zoom 可能不正确）
-            // 从设置文件读取用户保存的 zoom 值，默认 0.75（Chrome 默认缩放级别）
+            // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置）
+            // zoom 按站点独立存储，从 sites[lastSiteId].zoom 读取
             {
                 let settings = settings::get_settings(app.handle().clone());
-                let zoom = settings.get("global")
-                    .and_then(|g| g.get("zoom"))
+                let site_id = settings.get("global")
+                    .and_then(|g| g.get("lastSiteId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("weread");
+                let zoom = settings.get("sites")
+                    .and_then(|s| s.get(site_id))
+                    .and_then(|s| s.get("zoom"))
                     .and_then(|z| z.as_f64())
                     .unwrap_or(0.75);
                 let _ = win.set_zoom(zoom);
@@ -319,6 +309,32 @@ pub fn run() {
             // Menu Init - AFTER main window is created
             menu::init(app)?;
 
+            // 诊断：5 秒后在番茄页面上检查布局参数
+            let diag_win = win.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let js = r#"
+                    (function() {
+                        var data = {
+                            clientWidth: document.documentElement.clientWidth,
+                            clientHeight: document.documentElement.clientHeight,
+                            innerWidth: window.innerWidth,
+                            innerHeight: window.innerHeight,
+                            devicePixelRatio: window.devicePixelRatio,
+                            fontSize: getComputedStyle(document.documentElement).fontSize,
+                            viewport: document.querySelector('meta[name=viewport]') ? document.querySelector('meta[name=viewport]').content : 'NONE',
+                            htmlStyle: document.documentElement.getAttribute('style'),
+                            innerMaxWidth: (function(){ var el = document.querySelector('.muye-reader-inner'); return el ? getComputedStyle(el).maxWidth : 'NOT FOUND'; })(),
+                            innerOffsetWidth: (function(){ var el = document.querySelector('.muye-reader-inner'); return el ? el.offsetWidth : 'NOT FOUND'; })(),
+                            bodyOffsetWidth: document.body ? document.body.offsetWidth : 'NO BODY',
+                            styles: Array.from(document.querySelectorAll('style[id]')).map(function(s){ return s.id + ': ' + s.textContent.substring(0, 100); })
+                        };
+                        console.log('[DIAG] ' + JSON.stringify(data, null, 2));
+                    })();
+                "#;
+                let _ = diag_win.eval(js);
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -332,6 +348,7 @@ pub fn run() {
             commands::set_zoom,
             commands::close_window,
             commands::set_title,
+            commands::apply_site_zoom,
             commands::get_app_name,
             commands::get_app_version,
             commands::get_available_monitors,
