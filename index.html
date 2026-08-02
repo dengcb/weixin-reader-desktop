@@ -415,55 +415,85 @@ body::before{
 (function(){
   'use strict';
 
-  var GITHUB_LATEST = 'https://github.com/dengcb/weixin-reader-desktop/releases/latest';
+  var REPO = 'dengcb/weixin-reader-desktop';
+  var API_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+  var RELEASES_PAGE = 'https://github.com/' + REPO + '/releases/latest';
   var btn = document.getElementById('download-btn');
   var txt = document.getElementById('download-text');
   var badge = document.getElementById('arch-badge');
   var sizeEl = document.getElementById('download-size');
 
-  // 检测架构：优先用 UA（GitHub Pages 是静态页，这是最可靠的方式）
-  var ua = navigator.userAgent;
-  var isARM = /ARM|aarch64/i.test(ua) || (navigator.platform && /arm/i.test(navigator.platform));
-  var arch = isARM ? 'aarch64' : 'x86_64';
-  var archLabel = isARM ? 'Apple Silicon' : 'Intel';
+  // 架构检测：多层策略，从最可靠到兜底
+  // 陷阱：Safari 的 navigator.userAgent 在 Apple Silicon 上仍报 "Intel Mac OS X"，
+  // navigator.platform 仍报 "MacIntel" —— 苹果为兼容性故意伪装，不能用 UA 判断。
+  function detectArch() {
+    // 策略 1：UA-CH 高熵提示（Chrome/Edge 系）
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      return navigator.userAgentData.getHighEntropyValues(['architecture'])
+        .then(function(h) {
+          var a = h.architecture || '';
+          if (/arm|aarch/i.test(a)) return 'aarch64';
+          if (/x86|x64|amd/i.test(a)) return 'x86_64';
+          return guessArchFromWebGL();
+        })
+        .catch(function() { return guessArchFromWebGL(); });
+    }
+    // 策略 2：WebGL 渲染器特征（Safari/Firefox 主力方案）
+    return Promise.resolve(guessArchFromWebGL());
+  }
 
-  // 用 latest 跳转链接，自动指向最新版对应 dmg
-  // 格式: .../releases/download/latest/weixin-reader-<ver>-<arch>.dmg 不存在
-  // 但 GitHub 支持 /releases/latest/download/<filename> 自动跳转最新版 asset
-  var filename = 'weixin-reader-latest-' + arch + '.dmg';
-  // GitHub 不支持 latest/download 通配，需要先获取 release tag
-  // 这里用 redirect 策略：链接到 latest 页面，JS 异步拿真实 URL 后更新
+  function guessArchFromWebGL() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return 'x86_64';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var r = '';
+      if (dbg) r = gl.getParameter(dbg.UNMASKED_RENDERER_WGL) || '';
+      if (!r) r = gl.getParameter(gl.RENDERER) || '';
+      // Apple Silicon GPU 报 "Apple M1"/"Apple M2"/"Apple GPU"
+      if (/Apple M|Apple GPU/i.test(r)) return 'aarch64';
+      // Intel/AMD/Radeon = 传统 x86 Mac
+      if (/Intel|AMD|Radeon/i.test(r)) return 'x86_64';
+    } catch (e) {}
+    return 'x86_64';
+  }
 
-  // 初始链接：先指向 latest release 页面（保底）
-  btn.href = GITHUB_LATEST;
+  // 初始保底
+  btn.href = RELEASES_PAGE;
   txt.textContent = '下载艾特阅读';
-  badge.textContent = archLabel;
+  badge.textContent = '检测中…';
 
-  // 异步获取最新 release 的真实 dmg 链接
-  fetch('https://api.github.com/repos/dengcb/weixin-reader-desktop/releases/latest')
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      var tag = data.tag_name || 'latest'; // 如 "v1.1.0"
-      var version = tag.replace(/^v/, '');
-      var dmgName = 'weixin-reader-' + version + '-' + arch + '.dmg';
-      var found = null;
-      for (var i = 0; i < (data.assets || []).length; i++) {
-        if (data.assets[i].name === dmgName) {
-          found = data.assets[i];
-          break;
-        }
-      }
-      if (found) {
-        btn.href = found.browser_download_url;
-        txt.textContent = '下载 v' + version;
-        var mb = (found.size / 1048576).toFixed(1);
-        sizeEl.textContent = mb + ' MB';
-      }
-    })
-    .catch(function(){
-      // 网络失败时保持指向 latest 页面
+  // 架构检测 + release 信息并行获取
+  Promise.all([
+    detectArch(),
+    fetch(API_URL).then(function(r){return r.json();}).catch(function(){return null;})
+  ])
+  .then(function(results){
+    var arch = results[0];
+    var data = results[1];
+    badge.textContent = arch === 'aarch64' ? 'Apple Silicon' : 'Intel';
+
+    if (!data) { sizeEl.textContent = '—'; return; }
+
+    var version = (data.tag_name || 'latest').replace(/^v/, '');
+    var dmgName = 'weixin-reader-' + version + '-' + arch + '.dmg';
+    var found = null;
+    for (var i = 0; i < (data.assets || []).length; i++) {
+      if (data.assets[i].name === dmgName) { found = data.assets[i]; break; }
+    }
+    if (found) {
+      btn.href = found.browser_download_url;
+      txt.textContent = '下载 v' + version;
+      sizeEl.textContent = (found.size / 1048576).toFixed(1) + ' MB';
+    } else {
       sizeEl.textContent = '—';
-    });
+    }
+  })
+  .catch(function(){
+    badge.textContent = 'macOS';
+    sizeEl.textContent = '—';
+  });
 })();
 </script>
 </body>
