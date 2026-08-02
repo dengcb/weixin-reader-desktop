@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>艾特阅读 · 微信读书桌面客户端</title>
+<meta name="description" content="基于 Tauri v2 + Rust 的高性能微信读书桌面客户端，极致轻量、原生体验">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  --ink:#2c2c2c;
+  --ink-light:#5a5a5a;
+  --paper:#f7f3ed;
+  --paper-warm:#efe9de;
+  --vermilion:#c44536;
+  --vermilion-deep:#9e3631;
+  --bamboo:#5b7a4e;
+  --gold:#c9a961;
+  --line:#d6cfc1;
+}
+
+body{
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Source Han Sans CN",sans-serif;
+  background:var(--paper);
+  color:var(--ink);
+  line-height:1.8;
+  overflow-x:hidden;
+}
+
+/* 纸纹理 */
+body::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  background-image:radial-gradient(circle at 20% 30%,rgba(196,69,54,.02) 0%,transparent 50%),
+                   radial-gradient(circle at 80% 70%,rgba(91,122,78,.02) 0%,transparent 50%);
+  pointer-events:none;
+  z-index:0;
+}
+
+.wrap{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:0 24px}
+
+/* ===== Hero ===== */
+.hero{
+  text-align:center;
+  padding:80px 0 50px;
+}
+
+.hero-brand{
+  display:inline-block;
+  margin-bottom:28px;
+}
+
+.hero-brand h1{
+  font-size:42px;
+  font-weight:700;
+  letter-spacing:6px;
+  color:var(--ink);
+}
+
+.hero-brand .seal{
+  display:inline-block;
+  width:40px;height:40px;
+  background:var(--vermilion);
+  color:var(--paper);
+  font-size:22px;
+  line-height:40px;
+  text-align:center;
+  border-radius:4px;
+  vertical-align:middle;
+  margin-left:12px;
+  font-weight:700;
+}
+
+.hero-tag{
+  font-size:17px;
+  color:var(--ink-light);
+  letter-spacing:2px;
+  margin-bottom:8px;
+}
+
+.hero-sub{
+  font-size:14px;
+  color:var(--ink-light);
+  letter-spacing:1px;
+  margin-bottom:36px;
+}
+
+.hero-sub .dot{
+  color:var(--line);
+  margin:0 8px;
+}
+
+/* ===== 下载按钮 ===== */
+.download-area{
+  margin-top:8px;
+  margin-bottom:40px;
+}
+
+.btn-primary{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  background:var(--vermilion);
+  color:var(--paper);
+  text-decoration:none;
+  padding:15px 40px;
+  border-radius:6px;
+  font-size:17px;
+  font-weight:600;
+  letter-spacing:2px;
+  transition:all .3s ease;
+  box-shadow:0 4px 14px rgba(196,69,54,.25);
+}
+
+.btn-primary:hover{
+  background:var(--vermilion-deep);
+  box-shadow:0 6px 20px rgba(196,69,54,.35);
+  transform:translateY(-2px);
+}
+
+.btn-primary svg{width:22px;height:22px;flex-shrink:0}
+
+.download-meta{
+  font-size:13px;
+  color:var(--ink-light);
+  margin-top:14px;
+  letter-spacing:.5px;
+}
+
+.download-meta .arch-badge{
+  display:inline-block;
+  background:var(--paper-warm);
+  border:1px solid var(--line);
+  padding:2px 10px;
+  border-radius:3px;
+  margin-left:6px;
+  font-weight:600;
+  color:var(--bamboo);
+}
+
+/* ===== 特性区 ===== */
+.features{
+  padding:50px 0;
+  border-top:1px solid var(--line);
+}
+
+.section-title{
+  text-align:center;
+  font-size:24px;
+  font-weight:700;
+  letter-spacing:4px;
+  margin-bottom:8px;
+  color:var(--ink);
+}
+
+.section-sub{
+  text-align:center;
+  font-size:14px;
+  color:var(--ink-light);
+  letter-spacing:2px;
+  margin-bottom:40px;
+}
+
+.feature-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:24px;
+}
+
+.feature-card{
+  text-align:center;
+  padding:30px 20px;
+  border-radius:10px;
+  background:linear-gradient(180deg,var(--paper-warm) 0%,var(--paper) 100%);
+  border:1px solid var(--line);
+  transition:all .3s ease;
+}
+
+.feature-card:hover{
+  border-color:var(--vermilion);
+  box-shadow:0 8px 24px rgba(0,0,0,.06);
+  transform:translateY(-4px);
+}
+
+.feature-card .icon{
+  font-size:30px;
+  margin-bottom:14px;
+}
+
+.feature-card h3{
+  font-size:17px;
+  font-weight:700;
+  margin-bottom:8px;
+  color:var(--ink);
+}
+
+.feature-card p{
+  font-size:14px;
+  color:var(--ink-light);
+  line-height:1.7;
+}
+
+/* ===== 特性列表 ===== */
+.highlights{
+  padding:50px 0;
+  border-top:1px solid var(--line);
+}
+
+.highlight-list{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:0 40px;
+}
+
+.highlight-item{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:10px 0;
+  border-bottom:1px dashed var(--line);
+}
+
+.highlight-item:last-child{border-bottom:none}
+
+.highlight-item .mark{
+  flex-shrink:0;
+  color:var(--vermilion);
+  font-size:16px;
+  margin-top:2px;
+}
+
+.highlight-item .text{
+  font-size:14px;
+  color:var(--ink-light);
+}
+
+.highlight-item .text strong{color:var(--ink);font-weight:600}
+
+/* ===== 页脚 ===== */
+.footer{
+  text-align:center;
+  padding:40px 0 50px;
+  border-top:1px solid var(--line);
+  margin-top:20px;
+}
+
+.footer-links{
+  display:flex;
+  justify-content:center;
+  gap:30px;
+  margin-bottom:20px;
+}
+
+.footer-links a{
+  color:var(--ink-light);
+  text-decoration:none;
+  font-size:14px;
+  letter-spacing:1px;
+  transition:color .2s;
+}
+
+.footer-links a:hover{color:var(--vermilion)}
+
+.footer-copy{
+  font-size:12px;
+  color:var(--ink-light);
+  opacity:.7;
+  letter-spacing:1px;
+}
+
+/* ===== 响应式 ===== */
+@media(max-width:700px){
+  .hero{padding:50px 0 30px}
+  .hero-brand h1{font-size:32px;letter-spacing:4px}
+  .hero-tag{font-size:15px}
+  .feature-grid{grid-template-columns:1fr;gap:16px}
+  .highlight-list{grid-template-columns:1fr;gap:0}
+  .btn-primary{padding:13px 30px;font-size:15px}
+}
+
+/* ===== 入场动画 ===== */
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(20px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.hero{animation:fadeUp .8s ease}
+.features{animation:fadeUp .8s ease .15s both}
+.highlights{animation:fadeUp .8s ease .3s both}
+.footer{animation:fadeUp .8s ease .45s both}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== Hero ===== -->
+  <header class="hero">
+    <div class="hero-brand">
+      <h1>艾特阅读</h1>
+      <span class="seal">阅</span>
+    </div>
+    <p class="hero-tag">基于 Tauri v2 + Rust 的高性能微信读书桌面客户端</p>
+    <p class="hero-sub">
+      <span>极致轻量 ~5MB</span>
+      <span class="dot">·</span>
+      <span>原生性能</span>
+      <span class="dot">·</span>
+      <span>完全开源</span>
+      <span class="dot">·</span>
+      <span>macOS</span>
+    </p>
+
+    <div class="download-area">
+      <a id="download-btn" class="btn-primary" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span id="download-text">下载艾特阅读</span>
+      </a>
+      <p class="download-meta">
+        macOS<span class="arch-badge" id="arch-badge">—</span>
+        ·&nbsp;<span id="download-size">—</span>
+        ·&nbsp;<a href="https://github.com/dengcb/weixin-reader-desktop/releases" style="color:inherit;text-decoration:underline">全部版本</a>
+      </p>
+    </div>
+  </header>
+
+  <!-- ===== 特性卡片 ===== -->
+  <section class="features">
+    <h2 class="section-title">为何选择</h2>
+    <p class="section-sub">轻 · 快 · 安</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">📦</div>
+        <h3>极致轻量</h3>
+        <p>安装包仅 ~5MB<br>内存占用低至 100MB<br>较 Electron 降低 80%</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">⚡</div>
+        <h3>原生性能</h3>
+        <p>基于 Rust + Tauri v2 构建<br>启动瞬间<br>CPU 占用极低</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔒</div>
+        <h3>安全可靠</h3>
+        <p>完全开源 MIT 协议<br>无广告 · 无跟踪<br>数据直连官方接口</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 功能亮点 ===== -->
+  <section class="highlights">
+    <h2 class="section-title">核心特性</h2>
+    <p class="section-sub">桌面级阅读增强，不止于浏览器</p>
+    <div class="highlight-list">
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>原生菜单栏</strong> · macOS 原生体验</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>窗口记忆</strong> · 位置尺寸自动恢复</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>阅读续接</strong> · 恢复上次阅读页面</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>宽屏模式</strong> · 沉浸式阅读</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>深色模式</strong> · 护眼舒适</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>自动翻页</strong> · 可调速度</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>多站点书店</strong> · 一壳切换多书城</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>插件系统</strong> · 可插拔第三方适配器</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>智能更新</strong> · 自动检测一键安装</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>缩放控制</strong> · 站点独立记忆比例</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 页脚 ===== -->
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/dengcb/weixin-reader-desktop">源码仓库</a>
+      <a href="https://github.com/dengcb/weixin-reader-desktop/releases">下载更新</a>
+      <a href="https://github.com/dengcb/weixin-reader-desktop/issues">问题反馈</a>
+    </div>
+    <p class="footer-copy">MIT License · 仅供学习交流使用 · 与腾讯公司无任何关联</p>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  var GITHUB_LATEST = 'https://github.com/dengcb/weixin-reader-desktop/releases/latest';
+  var btn = document.getElementById('download-btn');
+  var txt = document.getElementById('download-text');
+  var badge = document.getElementById('arch-badge');
+  var sizeEl = document.getElementById('download-size');
+
+  // 检测架构：优先用 UA（GitHub Pages 是静态页，这是最可靠的方式）
+  var ua = navigator.userAgent;
+  var isARM = /ARM|aarch64/i.test(ua) || (navigator.platform && /arm/i.test(navigator.platform));
+  var arch = isARM ? 'aarch64' : 'x86_64';
+  var archLabel = isARM ? 'Apple Silicon' : 'Intel';
+
+  // 用 latest 跳转链接，自动指向最新版对应 dmg
+  // 格式: .../releases/download/latest/weixin-reader-<ver>-<arch>.dmg 不存在
+  // 但 GitHub 支持 /releases/latest/download/<filename> 自动跳转最新版 asset
+  var filename = 'weixin-reader-latest-' + arch + '.dmg';
+  // GitHub 不支持 latest/download 通配，需要先获取 release tag
+  // 这里用 redirect 策略：链接到 latest 页面，JS 异步拿真实 URL 后更新
+
+  // 初始链接：先指向 latest release 页面（保底）
+  btn.href = GITHUB_LATEST;
+  txt.textContent = '下载艾特阅读';
+  badge.textContent = archLabel;
+
+  // 异步获取最新 release 的真实 dmg 链接
+  fetch('https://api.github.com/repos/dengcb/weixin-reader-desktop/releases/latest')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      var tag = data.tag_name || 'latest'; // 如 "v1.1.0"
+      var version = tag.replace(/^v/, '');
+      var dmgName = 'weixin-reader-' + version + '-' + arch + '.dmg';
+      var found = null;
+      for (var i = 0; i < (data.assets || []).length; i++) {
+        if (data.assets[i].name === dmgName) {
+          found = data.assets[i];
+          break;
+        }
+      }
+      if (found) {
+        btn.href = found.browser_download_url;
+        txt.textContent = '下载 v' + version;
+        var mb = (found.size / 1048576).toFixed(1);
+        sizeEl.textContent = mb + ' MB';
+      }
+    })
+    .catch(function(){
+      // 网络失败时保持指向 latest 页面
+      sizeEl.textContent = '—';
+    });
+})();
+</script>
+</body>
+</html>
