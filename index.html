@@ -275,6 +275,106 @@ body::before{
   .btn-primary{padding:13px 30px;font-size:15px}
 }
 
+/* ===== 插件生态 ===== */
+.plugins{
+  padding:50px 0;
+  border-top:1px solid var(--line);
+}
+
+.plugin-card{
+  display:flex;
+  align-items:center;
+  gap:24px;
+  padding:28px;
+  border-radius:10px;
+  background:linear-gradient(135deg,var(--paper-warm) 0%,var(--paper) 100%);
+  border:1px solid var(--line);
+  margin-bottom:20px;
+}
+
+.plugin-icon{
+  flex-shrink:0;
+  width:64px;
+  height:64px;
+  border-radius:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:32px;
+  background:var(--paper);
+  border:1px solid var(--line);
+}
+
+.plugin-info{
+  flex:1;
+}
+
+.plugin-info h3{
+  font-size:18px;
+  font-weight:700;
+  margin-bottom:4px;
+  color:var(--ink);
+}
+
+.plugin-info .plugin-desc{
+  font-size:14px;
+  color:var(--ink-light);
+  line-height:1.7;
+  margin-bottom:8px;
+}
+
+.plugin-info .plugin-tags{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.plugin-tag{
+  display:inline-block;
+  font-size:12px;
+  color:var(--ink-light);
+  background:var(--paper);
+  border:1px solid var(--line);
+  padding:2px 10px;
+  border-radius:3px;
+}
+
+.plugin-download{
+  flex-shrink:0;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  background:var(--brand);
+  color:var(--paper);
+  text-decoration:none;
+  padding:10px 20px;
+  border-radius:6px;
+  font-size:14px;
+  font-weight:600;
+  transition:all .3s ease;
+}
+
+.plugin-download:hover{
+  background:var(--brand-deep);
+}
+
+.plugin-dev-link{
+  text-align:center;
+  margin-top:24px;
+  font-size:14px;
+  color:var(--ink-light);
+}
+
+.plugin-dev-link a{
+  color:var(--brand);
+  font-weight:600;
+}
+
+@media(max-width:700px){
+  .plugin-card{flex-direction:column;text-align:center}
+  .plugin-download{margin-top:8px}
+}
+
 /* ===== 入场动画 ===== */
 @keyframes fadeUp{
   from{opacity:0;transform:translateY(20px)}
@@ -283,7 +383,8 @@ body::before{
 .hero{animation:fadeUp .8s ease}
 .features{animation:fadeUp .8s ease .15s both}
 .highlights{animation:fadeUp .8s ease .3s both}
-.footer{animation:fadeUp .8s ease .45s both}
+.plugins{animation:fadeUp .8s ease .4s both}
+.footer{animation:fadeUp .8s ease .55s both}
 </style>
 </head>
 <body>
@@ -392,6 +493,28 @@ body::before{
         <span class="text"><strong>缩放控制</strong> · 站点独立记忆比例</span>
       </div>
     </div>
+  </section>
+
+  <!-- ===== 插件生态 ===== -->
+  <section class="plugins">
+    <h2 class="section-title">插件生态</h2>
+    <p class="section-sub">一个壳，切换多个书城</p>
+
+    <div class="plugin-card">
+      <div class="plugin-icon">🍅</div>
+      <div class="plugin-info">
+        <h3>番茄小说</h3>
+        <p class="plugin-desc">官方范例插件，完整实现双栏分页、宽屏模式、工具栏隐藏、章节导航和阅读进度追踪。</p>
+        <div class="plugin-tags">
+          <span class="plugin-tag">fanqienovel.com</span>
+          <span class="plugin-tag">双栏分页</span>
+          <span class="plugin-tag">官方范例</span>
+        </div>
+      </div>
+      <a class="plugin-download" href="https://github.com/dengcb/weixin-reader-desktop/raw/main/plugins/fanqie.atrd">下载插件</a>
+    </div>
+
+    <p class="plugin-dev-link">想要适配其他网站？阅读 <a href="https://github.com/dengcb/weixin-reader-desktop/blob/main/docs/PLUGIN_DEVELOPMENT.md">第三方插件开发指南</a>，以番茄插件为模板开始开发</p>
   </section>
 
   <!-- ===== 页脚 ===== -->
