@@ -1,10 +1,10 @@
-/// Integration tests for Plugin Management
-///
-/// These tests verify:
-/// - PluginInfo serialization/deserialization
-/// - PluginSiteConfig structure
-/// - Plugin directory management (Mock)
-/// - Plugin installation logic (Mock-based logic check)
+//! Integration tests for Plugin Management
+//!
+//! These tests verify:
+//! - PluginInfo serialization/deserialization
+//! - PluginSiteConfig structure
+//! - Plugin directory management (Mock)
+//! - Plugin installation logic (Mock-based logic check)
 
 #[cfg(test)]
 mod tests {

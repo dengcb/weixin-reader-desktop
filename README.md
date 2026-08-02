@@ -74,7 +74,7 @@ CPU 占用低
 
 ## ✨ 核心特性
 
-### 🖥️ 桌面体验
+### 🖥 桌面体验
 
 ```
 ✓ macOS 原生菜单栏            ✓ 窗口位置/大小记忆
@@ -102,8 +102,8 @@ CPU 占用低
 </td>
 <td>
 
-**⌨️ 翻页控制**
-- 🖱️ 触摸板双指滑动
+**⌨ 翻页控制**
+- 🖱 触摸板双指滑动
 - ⚡ 自动翻页（可调速）
 - 👻 鼠标自动隐藏
 - 🎯 精准进度显示
@@ -123,7 +123,7 @@ CPU 占用低
 ✓ 插件级命名空间隔离             ✓ 配置命名空间与独立阅读位置
 ```
 
-### 🛠️ 可视化插件编辑器 <sup>v0.9.0 新增</sup>
+### 🛠 可视化插件编辑器 <sup>v0.9.0 新增</sup>
 
 > 内置插件开发工具，无需外部 IDE 即可创建和编辑插件
 
@@ -212,25 +212,20 @@ bun release:arm    # Apple Silicon
 bun release:intel  # Intel
 ```
 
-### 🪟 Windows 构建（在 macOS 上交叉编译）
+### 🪟 Windows 构建
+
+正式 Windows 版本仅发布 x64 NSIS。维护者先在 macOS 完成两个架构的签名、公证和 draft 上传，再由 GitHub Actions 的原生 Windows x64 runner 构建 NSIS 并上传到同一 draft。GitHub 不会自动发布，三个平台资产齐全后仍需维护者手工生成 `latest.json` 并确认 publish。
+
+需要自行打包的用户应在 Windows x64 环境运行：
 
 ```bash
-# 1. 首次安装（仅需一次）
-brew install llvm
-cargo install cargo-xwin
-rustup target add x86_64-pc-windows-msvc
-
-# 2. 构建
-export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
-bun run build
-cargo xwin build --release --target x86_64-pc-windows-msvc --manifest-path src-tauri/Cargo.toml
-
-# 产物: src-tauri/target/x86_64-pc-windows-msvc/release/weixin-reader.exe (~7MB)
+bun install --frozen-lockfile
+bun run tauri build --bundles nsis --target x86_64-pc-windows-msvc -- --locked
 ```
 
 ---
 
-## 🛠️ 开发指南
+## 🛠 开发指南
 
 ### 📋 环境准备
 
@@ -283,11 +278,17 @@ bun run debug:intel  # Intel
 ### 📤 发布打包
 
 ```bash
-bun release:all    # 构建所有架构
-bun release:arm    # Apple Silicon
-bun release:intel  # Intel
-bun release:clear  # 清理发布文件
+bun run release:all      # 正式构建 macOS ARM + Intel，生成发布元数据
+bun run release:upload   # 创建 tag/draft、上传 macOS、触发 Windows workflow
+bun run release:status   # 查看 Windows workflow、资产、SHA-256 和 Authenticode
+bun run release:publish  # 校验三个平台、生成 latest.json、输入完整 tag 后发布
+
+bun run release:arm      # 单架构诊断构建，不能直接正式上传
+bun run release:intel    # 单架构诊断构建，不能直接正式上传
+bun run release:clear    # 清理本地发布文件
 ```
+
+`release:all` 要求本机已有 Apple 签名/公证凭据与 `TAURI_SIGNING_PRIVATE_KEY`；`release:upload/status/publish` 要求具备仓库 Contents 与 Actions 权限的 `GH_TOKEN` 或 `GITHUB_TOKEN`。GitHub 的 `windows-release` Environment 需配置同一套 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。Windows 首期未做 Authenticode 签名时，Release 会保留“未知发布者”说明。
 
 ### ✅ 测试
 
@@ -331,7 +332,7 @@ git diff --check
 
 ---
 
-## 🏗️ 技术架构
+## 🏗 技术架构
 
 ### 📚 技术栈
 
@@ -475,7 +476,7 @@ git diff --check
 </tr>
 <tr>
 <td><code>monitor.rs</code></td>
-<td>🖥️ 多显示器支持，事件驱动检测</td>
+<td>🖥 多显示器支持，事件驱动检测</td>
 </tr>
 <tr>
 <td><code>plugin_manager.rs</code></td>
@@ -509,15 +510,16 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 ## 📖 文档
 
-- 🏗️ [插件与站点架构](docs/PLUGIN_ARCHITECTURE.md) - `ReaderSiteRuntime`、插件运行时与开发约束
+- 🏗 [插件与站点架构](docs/PLUGIN_ARCHITECTURE.md) - `ReaderSiteRuntime`、插件运行时与开发约束
 - 🔁 [事件与生命周期](docs/EVENT_BUS_REFACTOR.md) - EventBus、BaseManager 与资源清理规范
 - 🔐 [Tauri 2.11 与 IPC](docs/TAURI_2_11_UPGRADE.md) - Capability 拆分和命令一致性规则
 - 🧪 [测试指南](docs/TESTING.md) - 当前测试结构与完整质量门禁
+- ✍️ [Code signing policy](docs/CODE_SIGNING_POLICY.md) - Windows 签名角色、来源与发布约束
 - 📘 [2026 架构重构记录](docs/ARCHITECTURE_REFACTOR_2026.md) - 本次重构的动机、改动和兼容边界
 
 ---
 
-## ⚠️ 免责声明
+## ⚠ 免责声明
 
 > 本项目仅为个人学习和使用的第三方客户端，与腾讯公司及微信读书团队无任何关联
 
@@ -540,7 +542,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 </td>
 <td align="center">
 
-### 🗄️ 数据来源
+### 🗄 数据来源
 
 所有内容均通过官方接口<br>
 **weread.qq.com**<br>
@@ -571,8 +573,8 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 <div align="center">
 
-**Built with ❤️ using Rust & Tauri**
+**Built with ❤ using Rust & Tauri**
 
-<sub>如果这个项目对你有帮助，请给个 ⭐️ Star 支持一下！</sub>
+<sub>如果这个项目对你有帮助，请给个 ⭐ Star 支持一下！</sub>
 
 </div>

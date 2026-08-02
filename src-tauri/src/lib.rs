@@ -102,7 +102,7 @@ pub fn run() {
             // For menu quit, we handle it in menu.rs custom quit item
 
             // Update Manager Init
-            update::init(&app.handle());
+            update::init(app.handle());
 
             // Create Main Window - determine initial URL
             // Check if we should restore the last reader page directly (to avoid flash of homepage)
@@ -119,7 +119,7 @@ pub fn run() {
                 //     开 → 该站点上次阅读页 sites[siteId].lastReaderUrl（无则站点首页）；关 → 站点首页
                 // 两个开关互不为前提，默认均为开（向后兼容）。
                 let resolved_url = resolve_startup_url(&settings, |site_id| {
-                    sites::resolve_home_url(&app.handle(), site_id)
+                    sites::resolve_home_url(app.handle(), site_id)
                 });
 
                 match resolved_url {
@@ -234,7 +234,7 @@ pub fn run() {
         .run(|app_handle, event| {
             match event {
                 // ExitRequested - triggered in some cases but NOT macOS Command+Q (known bug)
-                tauri::RunEvent::ExitRequested { api: _, .. } => {
+                tauri::RunEvent::ExitRequested { .. } => {
                     clear_auto_flip_active(app_handle.clone(), "ExitRequested");
                 }
                 // Exit - triggered when event loop is exiting (including macOS Command+Q)
@@ -250,7 +250,7 @@ pub fn run() {
                     // 编辑器窗口获得焦点时显示编辑菜单，失去焦点时隐藏
                     if let tauri::WindowEvent::Focused(focused) = event {
                         if focused {
-                            menu::set_edit_menu_visible(&app_handle, label == "plugin-editor");
+                            menu::set_edit_menu_visible(app_handle, label == "plugin-editor");
                         }
                     }
                 }

@@ -209,7 +209,7 @@ pub fn save_reading_position<R: Runtime>(
     position: f64,
 ) -> Result<(), String> {
     validate_runtime_scope(&app, &window, &site_id, &url)?;
-    if !position.is_finite() || position < 0.0 || position > 1_000_000_000.0 {
+    if !position.is_finite() || !(0.0..=1_000_000_000.0).contains(&position) {
         return Err("Invalid reading position".to_string());
     }
     let _guard = POSITION_LOCK

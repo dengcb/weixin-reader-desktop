@@ -14,7 +14,7 @@ pub fn update_menu_state(app: AppHandle, id: String, state: bool) {
             if let Some(view_submenu) = items.get(1).and_then(|i| i.as_submenu()) {
                 if let Ok(sub_items) = view_submenu.items() {
                     for sub_item in sub_items.iter() {
-                        if *sub_item.id() == tauri::menu::MenuId::from(id.as_str()) {
+                        if sub_item.id() == id.as_str() {
                             if let Some(check_item) = sub_item.as_check_menuitem() {
                                 let _ = check_item.set_checked(state);
                                 return;
@@ -36,7 +36,7 @@ pub fn set_menu_item_enabled(app: AppHandle, id: String, enabled: bool) {
                 if let Some(submenu) = menu_item.as_submenu() {
                     if let Ok(sub_items) = submenu.items() {
                         for sub_item in sub_items.iter() {
-                            if *sub_item.id() == tauri::menu::MenuId::from(id.as_str()) {
+                            if sub_item.id() == id.as_str() {
                                 if let Some(check_item) = sub_item.as_check_menuitem() {
                                     let _ = check_item.set_enabled(enabled);
                                 } else if let Some(menu_item_inner) = sub_item.as_menuitem() {
@@ -549,7 +549,7 @@ pub async fn export_plugin(
     let result = app
         .dialog()
         .file()
-        .set_file_name(&format!("{}-plugin", default_name))
+        .set_file_name(format!("{}-plugin", default_name))
         .set_title("导出插件")
         .blocking_save_file();
 

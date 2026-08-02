@@ -8,7 +8,7 @@
         "@tauri-apps/api": "^2.11.1",
       },
       "devDependencies": {
-        "@tauri-apps/cli": "^2.11.4",
+        "@tauri-apps/cli": "2.11.4",
         "@types/bun": "^1.3.14",
         "@types/node": "^25.9.5",
         "happy-dom": "^20.11.1",

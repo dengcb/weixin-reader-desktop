@@ -28,7 +28,7 @@ describe('Tauri application contracts', () => {
     );
     expect(config.plugins.updater.endpoints).toHaveLength(3);
     expect(source).toContain('.plugin(tauri_plugin_updater::Builder::default().build())');
-    expect(source).toContain('update::init(&app.handle())');
+    expect(source).toContain('update::init(app.handle())');
   });
 
   it('registers global window-state persistence and the bounded log rotation policy', async () => {

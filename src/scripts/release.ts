@@ -1,576 +1,792 @@
-import { execSync, spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync, renameSync, statSync } from 'fs';
-import { join } from 'path';
+import { createHash } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
+import { normalizeUpdaterSignature, verifyUpdaterSignature } from './release_signature';
 
 const rootDir = process.cwd();
 const releaseDir = join(rootDir, 'release');
+const metadataPath = join(releaseDir, 'release-metadata.json');
 const srcTauriDir = join(rootDir, 'src-tauri');
+const owner = 'dengcb';
+const repo = 'weixin-reader-desktop';
+const workflowFile = 'release.yml';
+const repoUrl = `https://github.com/${owner}/${repo}`;
 
-// 将绝对路径转换为相对路径（用于日志显示）
-function relPath(absPath: string): string {
-    return absPath.replace(rootDir + '/', '').replace(rootDir, '.');
+const macTargets = {
+  'aarch64-apple-darwin': { platform: 'darwin-aarch64', arch: 'aarch64' },
+  'x86_64-apple-darwin': { platform: 'darwin-x86_64', arch: 'x86_64' },
+} as const;
+
+type MacTarget = keyof typeof macTargets;
+type MacPlatform = (typeof macTargets)[MacTarget]['platform'];
+
+interface ArtifactRecord {
+  name: string;
+  size: number;
+  sha256: string;
 }
 
-// 运行命令并处理输出（将绝对路径替换为相对路径）
-async function runCommandWithFilteredOutput(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    const child = spawn(cmd, args, {
-        env,
-        stdio: ['inherit', 'pipe', 'pipe'],
-        shell: true
-    });
-
-    // 处理 stdout
-    child.stdout?.on('data', (data) => {
-        const output = data.toString();
-        const filtered = output.replace(new RegExp(rootDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '.');
-        process.stdout.write(filtered);
-    });
-
-    // 处理 stderr
-    child.stderr?.on('data', (data) => {
-        const output = data.toString();
-        const filtered = output.replace(new RegExp(rootDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '.');
-        process.stderr.write(filtered);
-    });
-
-    // 等待命令完成
-    return new Promise<void>((resolve, reject) => {
-        child.on('close', (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`Command exited with code ${code}`));
-            }
-        });
-    });
+interface MacReleaseRecord {
+  target: MacTarget;
+  installer: ArtifactRecord;
+  updater: ArtifactRecord;
+  signature: ArtifactRecord;
 }
 
-// 格式化时间显示
-function formatDuration(ms: number): string {
-    const seconds = (ms / 1000).toFixed(2);
-    return `${seconds}s`;
+interface ReleaseMetadata {
+  version: string;
+  tag: string;
+  commit: string;
+  createdAt: string;
+  tools: {
+    bun: string;
+    rust: string;
+    tauriCli: string;
+  };
+  platforms: Record<MacPlatform, MacReleaseRecord>;
 }
 
-// 执行步骤并计时
-async function runStep(name: string, fn: () => void | Promise<void>) {
-    console.log(`\n⏳ [${name}] Starting...`);
-    const start = performance.now();
-    try {
-        await fn();
-        const end = performance.now();
-        console.log(`✅ [${name}] Finished in ${formatDuration(end - start)}`);
-    } catch (error) {
-        console.error(`❌ [${name}] Failed!`);
-        throw error;
-    }
+interface GitHubAsset {
+  id: number;
+  name: string;
+  size: number;
+  url: string;
+  browser_download_url: string;
+  digest?: string | null;
 }
 
-console.log('🚀 Starting Release Process...');
-const totalStart = performance.now();
+interface GitHubRelease {
+  id: number;
+  tag_name: string;
+  target_commitish: string;
+  draft: boolean;
+  url: string;
+  html_url: string;
+  upload_url: string;
+  body: string | null;
+  assets: GitHubAsset[];
+}
 
-const args = process.argv.slice(2);
-const command = args[0]; // 'upload' | 'publish' | 'arm' | 'intel' | undefined (default: build all)
+interface WorkflowRun {
+  id: number;
+  event: string;
+  head_branch: string | null;
+  head_sha: string;
+  status: string;
+  conclusion: string | null;
+  created_at: string;
+  html_url: string;
+}
 
-(async () => {
-    try {
-        if (command === 'upload') {
-            await runUpload();
-        } else if (command === 'publish') {
-            await runPublish();
-        } else {
-            // Build & Notarize
-            // Determine targets based on command
-            let targets = ['aarch64-apple-darwin', 'x86_64-apple-darwin'];
-            if (command === 'arm') {
-                targets = ['aarch64-apple-darwin'];
-            } else if (command === 'intel') {
-                targets = ['x86_64-apple-darwin'];
-            }
-            
-            await runBuildAndNotarize(targets);
-        }
+interface WindowsReleaseInfo {
+  version: string;
+  tag: string;
+  commit: string;
+  platform: 'windows-x86_64';
+  authenticodeStatus: string;
+  installerAsset: string;
+  updaterAsset: string;
+  signatureAsset: string;
+  checksumAsset: string;
+  installerSize: number;
+  updaterSize: number;
+  installerSha256: string;
+}
 
-    } catch (error) {
-        console.error('\n💥 Release process failed!');
-        process.exit(1);
-    }
+class GitHubApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
-    const totalEnd = performance.now();
-    console.log(`\n✨ All done! Total time: ${formatDuration(totalEnd - totalStart)}`);
-})();
+function packageVersion(): string {
+  const parsed = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8')) as { version: string };
+  return parsed.version;
+}
 
-// -------------------------------------------------------------------------
-// Phase 1: Build & Notarize
-// -------------------------------------------------------------------------
-async function runBuildAndNotarize(targets: string[]) {
-    // Check Env Vars
-    const { APPLE_ID, APPLE_PASSWORD, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID, TAURI_SIGNING_PRIVATE_KEY } = process.env;
-    const applePassword = APPLE_APP_SPECIFIC_PASSWORD || APPLE_PASSWORD;
+function relPath(path: string): string {
+  return path.startsWith(rootDir) ? `.${path.slice(rootDir.length)}` : path;
+}
 
-    if (!APPLE_ID || !applePassword || !APPLE_TEAM_ID) {
-        console.warn('\n⚠️  WARNING: Apple Credentials not found in environment variables!');
-        console.warn('   - APPLE_ID');
-        console.warn('   - APPLE_APP_SPECIFIC_PASSWORD (preferred) or APPLE_PASSWORD');
-        console.warn('   - APPLE_TEAM_ID');
-        console.warn('   Notarization will be SKIPPED by Tauri and this script.\n');
-    } else {
-        console.log('✅ Apple Credentials found.');
-        // Ensure Tauri can see them too
-        if (!process.env.APPLE_PASSWORD && APPLE_APP_SPECIFIC_PASSWORD) {
-             process.env.APPLE_PASSWORD = APPLE_APP_SPECIFIC_PASSWORD;
-        }
-    }
+function sha256(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
 
-    if (!TAURI_SIGNING_PRIVATE_KEY) {
-        console.warn('\n⚠️  WARNING: TAURI_SIGNING_PRIVATE_KEY not found!');
-        console.warn('   Updater artifacts (.tar.gz) will NOT be generated.');
-    } else {
-        console.log('✅ TAURI_SIGNING_PRIVATE_KEY found.');
-        // Ensure password is set (even if empty) to avoid Tauri confusion
-        if (process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
-            process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '';
-        }
-    }
+function artifact(path: string): ArtifactRecord {
+  return {
+    name: basename(path),
+    size: statSync(path).size,
+    sha256: sha256(path),
+  };
+}
 
-    // 阶段 1: Build & Sign App (同步版本 -> 构建 -> 签名)
-    // 1.1 同步版本
-    await runStep('Sync Version', () => {
-        execSync('bun src/scripts/sync_version.ts', { stdio: 'inherit' });
+function commandOutput(command: string, args: string[]): string {
+  return execFileSync(command, args, { cwd: rootDir, encoding: 'utf8' }).trim();
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const child = spawn(command, args, {
+    cwd: rootDir,
+    env,
+    stdio: ['inherit', 'pipe', 'pipe'],
+    shell: false,
+  });
+  const escapedRoot = rootDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rootRegex = new RegExp(escapedRoot, 'g');
+  child.stdout?.on('data', (data) => process.stdout.write(data.toString().replace(rootRegex, '.')));
+  child.stderr?.on('data', (data) => process.stderr.write(data.toString().replace(rootRegex, '.')));
+  await new Promise<void>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} ${args.join(' ')} 退出码 ${code}`));
     });
+  });
+}
 
-    // 1.2 执行 Tauri 构建 (双架构独立构建)
-    // 获取版本号
-    const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'));
-    const version = packageJson.version;
+async function runStep(name: string, task: () => Promise<void>): Promise<void> {
+  const startedAt = performance.now();
+  console.log(`\n[${name}]`);
+  await task();
+  console.log(`[${name}] 完成，用时 ${((performance.now() - startedAt) / 1000).toFixed(2)}s`);
+}
 
-    for (const target of targets) {
-        await runStep(`Build for ${target}`, async () => {
-            // 使用当前环境变量，让 Tauri 自动处理 App 的公证 (Notarization)
-            await runCommandWithFilteredOutput('tauri', ['build', '--target', target], { ...process.env });
+function requireReleaseCredentials(formalRelease: boolean): void {
+  const applePassword = process.env.APPLE_APP_SPECIFIC_PASSWORD || process.env.APPLE_PASSWORD;
+  const missingApple = [
+    !process.env.APPLE_ID && 'APPLE_ID',
+    !applePassword && 'APPLE_APP_SPECIFIC_PASSWORD 或 APPLE_PASSWORD',
+    !process.env.APPLE_TEAM_ID && 'APPLE_TEAM_ID',
+  ].filter(Boolean);
+  const missingUpdater = !process.env.TAURI_SIGNING_PRIVATE_KEY;
 
-            // Copy Artifacts immediately after build to avoid overwrites or confusion
-            const targetBundleDir = join(srcTauriDir, 'target', target, 'release', 'bundle');
-            const archSuffix = target.includes('aarch64') ? 'aarch64' : 'x86_64';
-            
-            if (!existsSync(releaseDir)) {
-                mkdirSync(releaseDir, { recursive: true });
-            }
+  if (formalRelease && (missingApple.length > 0 || missingUpdater)) {
+    const missing = [
+      ...missingApple,
+      ...(missingUpdater ? ['TAURI_SIGNING_PRIVATE_KEY'] : []),
+    ].join('、');
+    throw new Error(`正式发布缺少签名或公证凭据：${missing}`);
+  }
+  if (!formalRelease && (missingApple.length > 0 || missingUpdater)) {
+    console.warn('单架构诊断构建缺少部分正式发布凭据，Tauri 可能拒绝 bundle。');
+  }
+  if (applePassword) process.env.APPLE_PASSWORD = applePassword;
+  if (process.env.TAURI_SIGNING_PRIVATE_KEY && process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
+    process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '';
+  }
+}
 
-            // Copy DMG with rename
-            const dmgDir = join(targetBundleDir, 'dmg');
-            if (existsSync(dmgDir)) {
-                const files = readdirSync(dmgDir).filter(f => f.endsWith('.dmg'));
-                for (const file of files) {
-                    const src = join(dmgDir, file);
-                    // Rename to English standard: weixin-reader-0.2.0-aarch64.dmg
-                    const destName = `weixin-reader-${version}-${archSuffix}.dmg`;
-                    const dest = join(releaseDir, destName);
-                    copyFileSync(src, dest);
-                    console.log(`   Copied DMG: ${destName}`);
-                }
-            }
-            
-            const appDir = join(targetBundleDir, 'macos');
-            if (existsSync(appDir)) {
-                const allFiles = readdirSync(appDir);
+async function runPreflight(): Promise<void> {
+  const commands: Array<[string, string[]]> = [
+    [process.execPath, ['install', '--frozen-lockfile']],
+    [process.execPath, ['run', 'check:version']],
+    [process.execPath, ['run', 'check:frozen']],
+    [process.execPath, ['run', 'typecheck']],
+    [process.execPath, ['test']],
+    [process.execPath, ['run', 'check:ipc']],
+    ['cargo', ['fmt', '--manifest-path', 'src-tauri/Cargo.toml', '--check']],
+    [
+      'cargo',
+      [
+        'clippy',
+        '--manifest-path',
+        'src-tauri/Cargo.toml',
+        '--all-targets',
+        '--all-features',
+        '--locked',
+        '--',
+        '-D',
+        'warnings',
+      ],
+    ],
+    ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']],
+    ['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']],
+  ];
+  for (const [command, args] of commands) {
+    await runCommand(command, args);
+  }
+}
 
-                // Copy and Rename Updater Artifacts (tar.gz or zip)
-                let files = allFiles.filter(f => f.endsWith('.tar.gz') || f.endsWith('.tar.gz.sig') || f.endsWith('.zip') || f.endsWith('.zip.sig') || f.endsWith('.tar.zst') || f.endsWith('.tar.zst.sig'));
-                
-                if (files.length === 0) {
-                        console.warn(`   ⚠️ No .tar.gz, .zip, or .tar.zst files found in ${relPath(appDir)}.`);
-                        console.warn(`   ⚠️ Tauri should have generated updater artifacts automatically.`);
-                        console.warn(`   ⚠️ Please check:`);
-                        console.warn(`      1. bundle.createUpdaterArtifacts is set to true in tauri.conf.json`);
-                        console.warn(`      2. TAURI_SIGNING_PRIVATE_KEY environment variable is set`);
-                        console.warn(`      3. Private key password is correct`);
+function findSingleFile(directory: string, predicate: (name: string) => boolean, label: string): string {
+  if (!existsSync(directory)) throw new Error(`未找到 ${label} 目录：${relPath(directory)}`);
+  const matches = readdirSync(directory).filter(predicate).sort();
+  if (matches.length !== 1) {
+    throw new Error(`${relPath(directory)} 中应恰好有一个 ${label}，实际 ${matches.length} 个`);
+  }
+  return join(directory, matches[0]);
+}
 
-                        /*
-                        // Fallback: Manual Generation if Private Key is present
-                        // NOTE: This is a fallback method. With createUpdaterArtifacts: true,
-                        // Tauri should generate these files automatically.
-                        if (process.env.TAURI_SIGNING_PRIVATE_KEY) {
-                             console.log(`   🛠️  Attempting manual generation of updater artifacts...`);
-
-                             // Find the .app file
-                             const appFiles = allFiles.filter(f => f.endsWith('.app'));
-                             if (appFiles.length > 0) {
-                                 const appName = appFiles[0];
-                                 const tarName = `${appName}.tar.gz`;
-                                 const tarPath = join(appDir, tarName);
-
-                                 try {
-                                     // 1. Create tar.gz (preserve structure: weixin-reader.app/)
-                                     console.log(`      Creating ${tarName}...`);
-                                     execSync(`tar -czf "${tarPath}" -C "${appDir}" "${appName}"`, { stdio: 'inherit' });
-
-                                     // 2. Sign the tar.gz
-                                     console.log(`      Signing ${tarName}...`);
-
-                                     // Map TAURI_SIGNING_PRIVATE_KEY to TAURI_PRIVATE_KEY for 'tauri signer'
-                                     const env = {
-                                         ...process.env,
-                                         TAURI_PRIVATE_KEY: process.env.TAURI_SIGNING_PRIVATE_KEY,
-                                         TAURI_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || ''
-                                     };
-
-                                     execSync(`bun tauri signer sign "${tarPath}"`, { stdio: 'inherit', env });
-
-                                     console.log(`      ✅ Manual generation successful!`);
-
-                                     // Re-scan files to include the new ones
-                                     const newAllFiles = readdirSync(appDir);
-                                     files = newAllFiles.filter(f => f.endsWith('.tar.gz') || f.endsWith('.tar.gz.sig'));
-
-                                 } catch (e) {
-                                     console.error(`      ❌ Manual generation failed:`, e);
-                                 }
-                             } else {
-                                 console.warn(`      ❌ No .app file found to package.`);
-                             }
-                        } else {
-                            console.warn(`      ❌ Cannot manually generate: TAURI_SIGNING_PRIVATE_KEY not found.`);
-                        }
-                        */
-                }
-
-                for (const file of files) {
-                        const srcPath = join(appDir, file);
-                        // Rename tar.gz and sig to include arch to avoid conflicts
-                        
-                        let destName = file;
-                        // Standardize extension if needed, but keep original if possible to match signature
-                        // But we must include arch.
-                        
-                        if (file.endsWith('.tar.gz')) {
-                                destName = `weixin-reader-${version}-${archSuffix}.app.tar.gz`;
-                        } else if (file.endsWith('.tar.gz.sig')) {
-                                destName = `weixin-reader-${version}-${archSuffix}.app.tar.gz.sig`;
-                        } else if (file.endsWith('.zip')) {
-                             destName = `weixin-reader-${version}-${archSuffix}.app.zip`;
-                        } else if (file.endsWith('.zip.sig')) {
-                             destName = `weixin-reader-${version}-${archSuffix}.app.zip.sig`;
-                        } else if (file.endsWith('.tar.zst')) {
-                             destName = `weixin-reader-${version}-${archSuffix}.app.tar.zst`;
-                        } else if (file.endsWith('.tar.zst.sig')) {
-                             destName = `weixin-reader-${version}-${archSuffix}.app.tar.zst.sig`;
-                        }
-
-                    const destPath = join(releaseDir, destName);
-                    // Use renameSync (mv) instead of copyFileSync (cp) to ensure we don't leave old artifacts
-                    // preventing stale files in next runs if build fails to generate new ones.
-                    renameSync(srcPath, destPath);
-                    console.log(`   Moved Updater Asset: ${destName}`);
-                }
-            } else {
-                console.warn(`   ⚠️ Directory not found: ${relPath(appDir)}`);
-            }
-        });
+function collectMacArtifacts(target: MacTarget, buildStartedAt: number): MacReleaseRecord {
+  const { arch } = macTargets[target];
+  const bundleDir = join(srcTauriDir, 'target', target, 'release', 'bundle');
+  const dmgSource = findSingleFile(join(bundleDir, 'dmg'), (name) => name.endsWith('.dmg'), 'DMG');
+  const macosDir = join(bundleDir, 'macos');
+  const updaterSource = findSingleFile(
+    macosDir,
+    (name) =>
+      (name.endsWith('.tar.gz') || name.endsWith('.zip') || name.endsWith('.tar.zst')) &&
+      existsSync(join(macosDir, `${name}.sig`)),
+    'updater archive',
+  );
+  const updaterSignatureSource = `${updaterSource}.sig`;
+  for (const path of [dmgSource, updaterSource, updaterSignatureSource]) {
+    if (statSync(path).mtimeMs < buildStartedAt - 2_000) {
+      throw new Error(`拒绝使用本次构建前的旧产物：${relPath(path)}`);
     }
+  }
 
-    // 阶段 2: Notarize DMGs (对所有生成的 DMG 进行公证)
-    await runStep('Notarize DMGs', async () => {
-        const dmgs = readdirSync(releaseDir).filter(f => f.endsWith('.dmg'));
+  mkdirSync(releaseDir, { recursive: true });
+  const version = packageVersion();
+  const updaterName = basename(updaterSource);
+  const suffix = updaterName.endsWith('.tar.gz')
+    ? '.app.tar.gz'
+    : updaterName.endsWith('.tar.zst')
+      ? '.app.tar.zst'
+      : '.app.zip';
+  const installerPath = join(releaseDir, `weixin-reader-${version}-${arch}.dmg`);
+  const updaterPath = join(releaseDir, `weixin-reader-${version}-${arch}${suffix}`);
+  const signaturePath = `${updaterPath}.sig`;
+  copyFileSync(dmgSource, installerPath);
+  copyFileSync(updaterSource, updaterPath);
+  copyFileSync(updaterSignatureSource, signaturePath);
 
-        if (dmgs.length === 0) {
-            console.warn('⚠️ No DMGs found to notarize.');
-            return;
-        }
+  return {
+    target,
+    installer: artifact(installerPath),
+    updater: artifact(updaterPath),
+    signature: artifact(signaturePath),
+  };
+}
 
-        const { APPLE_ID, APPLE_PASSWORD, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID } = process.env;
-        const password = APPLE_APP_SPECIFIC_PASSWORD || APPLE_PASSWORD;
+async function notarizeAndStaple(record: MacReleaseRecord): Promise<void> {
+  const dmgPath = join(releaseDir, record.installer.name);
+  const applePassword = process.env.APPLE_APP_SPECIFIC_PASSWORD || process.env.APPLE_PASSWORD;
+  if (!process.env.APPLE_ID || !applePassword || !process.env.APPLE_TEAM_ID) {
+    console.warn(`跳过 ${record.installer.name} 的 DMG 公证；这是诊断产物，不能正式上传。`);
+    return;
+  }
+  await runCommand('xcrun', [
+    'notarytool',
+    'submit',
+    dmgPath,
+    '--apple-id',
+    process.env.APPLE_ID,
+    '--password',
+    applePassword,
+    '--team-id',
+    process.env.APPLE_TEAM_ID,
+    '--wait',
+  ]);
+  await runCommand('xcrun', ['stapler', 'staple', dmgPath]);
+  record.installer = artifact(dmgPath);
+}
 
-        if (!APPLE_ID || !password || !APPLE_TEAM_ID) {
-             console.warn('⚠️ Missing Apple credentials. Skipping DMG notarization.');
-             return;
-        }
+async function runBuild(targets: MacTarget[]): Promise<void> {
+  const formalRelease = targets.length === 2;
+  requireReleaseCredentials(formalRelease);
+  if (formalRelease) {
+    await runStep('正式发布 preflight', runPreflight);
+  } else {
+    await runStep('版本检查', () => runCommand(process.execPath, ['run', 'check:version']));
+  }
 
-        for (const dmg of dmgs) {
-            console.log(`   Notarizing ${dmg}...`);
-            const dmgPath = join(releaseDir, dmg);
+  const records = {} as Record<MacPlatform, MacReleaseRecord>;
+  for (const target of targets) {
+    const buildStartedAt = Date.now();
+    await runStep(`构建 ${target}`, () =>
+      runCommand(process.execPath, ['run', 'tauri', 'build', '--target', target, '--', '--locked']),
+    );
+    const record = collectMacArtifacts(target, buildStartedAt);
+    await runStep(`公证并 stapling ${record.installer.name}`, () => notarizeAndStaple(record));
+    records[macTargets[target].platform] = record;
+  }
 
-            try {
-                // Submit
-                await runCommandWithFilteredOutput('xcrun', ['notarytool', 'submit', dmgPath, '--apple-id', APPLE_ID, '--password', password, '--team-id', APPLE_TEAM_ID, '--wait'], process.env);
-                // Staple
-                await runCommandWithFilteredOutput('xcrun', ['stapler', 'staple', dmgPath], process.env);
-                console.log(`   🍏 Notarized & Stapled: ${dmg}`);
-            } catch (e) {
-                console.error(`   ❌ Failed to notarize ${dmg}`);
-                throw e;
-            }
-        }
+  if (!formalRelease) {
+    console.log('\n单架构诊断构建完成；这些产物不会生成正式发布元数据，不能用于 release:upload。');
+    return;
+  }
+
+  const version = packageVersion();
+  const metadata: ReleaseMetadata = {
+    version,
+    tag: `v${version}`,
+    commit: commandOutput('git', ['rev-parse', 'HEAD']),
+    createdAt: new Date().toISOString(),
+    tools: {
+      bun: commandOutput(process.execPath, ['--version']),
+      rust: commandOutput('rustc', ['--version']),
+      tauriCli: commandOutput(process.execPath, ['run', 'tauri', '--version']).split('\n').slice(-1)[0] ?? '',
+    },
+    platforms: records,
+  };
+  writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  console.log(`\n正式 macOS 产物与元数据已写入 ${relPath(releaseDir)}。`);
+  console.log('下一步：bun run release:upload');
+}
+
+function loadMetadata(): ReleaseMetadata {
+  if (!existsSync(metadataPath)) {
+    throw new Error('缺少 release/release-metadata.json，请先运行 bun run release:all');
+  }
+  return JSON.parse(readFileSync(metadataPath, 'utf8')) as ReleaseMetadata;
+}
+
+function validateLocalMetadata(metadata: ReleaseMetadata): void {
+  const version = packageVersion();
+  const commit = commandOutput('git', ['rev-parse', 'HEAD']);
+  if (metadata.version !== version || metadata.tag !== `v${version}`) {
+    throw new Error('release:all 元数据与当前 package.json.version 不一致');
+  }
+  if (metadata.commit !== commit) {
+    throw new Error(`release:all 元数据 commit=${metadata.commit}，当前 commit=${commit}`);
+  }
+  const platforms = Object.keys(metadata.platforms).sort();
+  const expected = ['darwin-aarch64', 'darwin-x86_64'];
+  if (JSON.stringify(platforms) !== JSON.stringify(expected)) {
+    throw new Error(`macOS 平台元数据不完整：${platforms.join(', ')}`);
+  }
+  for (const platform of expected as MacPlatform[]) {
+    const record = metadata.platforms[platform];
+    for (const value of [record.installer, record.updater, record.signature]) {
+      const path = join(releaseDir, value.name);
+      if (!existsSync(path)) throw new Error(`缺少本地发布产物：${value.name}`);
+      if (statSync(path).size !== value.size || sha256(path) !== value.sha256) {
+        throw new Error(`本地产物与 release:all 元数据不一致：${value.name}`);
+      }
+    }
+  }
+}
+
+function assertTrackedClean(): void {
+  const status = commandOutput('git', ['status', '--porcelain', '--untracked-files=no']);
+  if (status) {
+    throw new Error(`存在 tracked 未提交修改，拒绝创建 tag/release：\n${status}`);
+  }
+}
+
+function token(): string {
+  const value = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!value) throw new Error('缺少 GITHUB_TOKEN 或 GH_TOKEN');
+  return value;
+}
+
+function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token()}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'weixin-reader-release-script',
+    ...extra,
+  };
+}
+
+async function githubRequest<T>(pathOrUrl: string, init: RequestInit = {}): Promise<T> {
+  const url = pathOrUrl.startsWith('https://')
+    ? pathOrUrl
+    : `https://api.github.com/repos/${owner}/${repo}${pathOrUrl}`;
+  const response = await fetch(url, {
+    ...init,
+    headers: { ...githubHeaders(), ...(init.headers ?? {}) },
+  });
+  if (!response.ok) {
+    throw new GitHubApiError(
+      response.status,
+      `GitHub API ${response.status} ${response.statusText}: ${await response.text()}`,
+    );
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+async function findRelease(tag: string): Promise<GitHubRelease | undefined> {
+  const releases = await githubRequest<GitHubRelease[]>('/releases?per_page=100');
+  return releases.find((release) => release.tag_name === tag);
+}
+
+async function tagCommit(tag: string): Promise<string | undefined> {
+  try {
+    const commit = await githubRequest<{ sha: string }>(`/commits/${encodeURIComponent(tag)}`);
+    return commit.sha;
+  } catch (error) {
+    if (error instanceof GitHubApiError && error.status === 404) return undefined;
+    throw error;
+  }
+}
+
+async function ensureTag(metadata: ReleaseMetadata): Promise<void> {
+  const existing = await tagCommit(metadata.tag);
+  if (existing && existing !== metadata.commit) {
+    throw new Error(`远程 tag ${metadata.tag} 已指向 ${existing}，不是 ${metadata.commit}`);
+  }
+  if (!existing) {
+    await githubRequest('/git/refs', {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/tags/${metadata.tag}`, sha: metadata.commit }),
     });
+    console.log(`已创建 tag ${metadata.tag} -> ${metadata.commit}`);
+  }
+}
 
-    // Generate latest.json
-    try {
-        generateLatestJson();
-    } catch (e) {
-        console.error('⚠️ Failed to generate latest.json:', e);
+function releaseBody(version: string, authenticodeStatus = 'NotSigned'): string {
+  const lines = [
+    `艾特阅读 v${version}`,
+    '',
+    `[Code signing policy](${repoUrl}/blob/v${version}/docs/CODE_SIGNING_POLICY.md)`,
+  ];
+  if (authenticodeStatus !== 'Valid') {
+    lines.push(
+      '',
+      '> Windows 安装包暂未进行 Authenticode 发布者签名，可能触发 SmartScreen“未知发布者”提示。',
+      '> Windows 资产附带 SHA-256；Tauri updater 签名只用于更新完整性验证，不是 Windows 发布者签名。',
+    );
+  }
+  return lines.join('\n');
+}
+
+async function ensureDraft(metadata: ReleaseMetadata): Promise<GitHubRelease> {
+  const existing = await findRelease(metadata.tag);
+  if (existing) {
+    if (!existing.draft) throw new Error(`${metadata.tag} 已正式发布，拒绝覆盖`);
+    const remoteCommit = await tagCommit(metadata.tag);
+    if (remoteCommit !== metadata.commit) throw new Error('draft release 的 tag commit 不匹配');
+    return existing;
+  }
+  return githubRequest<GitHubRelease>('/releases', {
+    method: 'POST',
+    body: JSON.stringify({
+      tag_name: metadata.tag,
+      target_commitish: metadata.commit,
+      name: metadata.tag,
+      body: releaseBody(metadata.version),
+      draft: true,
+      prerelease: false,
+    }),
+  });
+}
+
+async function deleteAssetIfPresent(release: GitHubRelease, name: string): Promise<void> {
+  const existing = release.assets.find((asset) => asset.name === name);
+  if (existing) await githubRequest(existing.url, { method: 'DELETE' });
+}
+
+async function uploadAsset(release: GitHubRelease, path: string): Promise<void> {
+  const name = basename(path);
+  await deleteAssetIfPresent(release, name);
+  const uploadUrl = release.upload_url.split('{')[0];
+  const bytes = readFileSync(path);
+  const response = await fetch(`${uploadUrl}?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: githubHeaders({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(bytes.length),
+    }),
+    body: new Uint8Array(bytes),
+  });
+  if (!response.ok) {
+    throw new GitHubApiError(response.status, `上传 ${name} 失败：${await response.text()}`);
+  }
+  console.log(`已上传 ${name}`);
+}
+
+function macAssetNames(metadata: ReleaseMetadata): string[] {
+  return (Object.values(metadata.platforms) as MacReleaseRecord[]).flatMap((record) => [
+    record.installer.name,
+    record.updater.name,
+    record.signature.name,
+  ]);
+}
+
+async function workflowRuns(): Promise<WorkflowRun[]> {
+  const response = await githubRequest<{ workflow_runs: WorkflowRun[] }>(
+    `/actions/workflows/${workflowFile}/runs?event=workflow_dispatch&per_page=50`,
+  );
+  return response.workflow_runs;
+}
+
+async function latestWindowsRun(metadata: ReleaseMetadata): Promise<WorkflowRun | undefined> {
+  return (await workflowRuns())
+    .filter(
+      (run) =>
+        run.event === 'workflow_dispatch' &&
+        run.head_sha === metadata.commit &&
+        (!run.head_branch || run.head_branch === metadata.tag) &&
+        Date.parse(run.created_at) >= Date.parse(metadata.createdAt),
+    )
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+}
+
+async function runUpload(): Promise<void> {
+  await runCommand(process.execPath, ['run', 'check:version']);
+  assertTrackedClean();
+  const metadata = loadMetadata();
+  validateLocalMetadata(metadata);
+  token();
+  await ensureTag(metadata);
+  const release = await ensureDraft(metadata);
+
+  await deleteAssetIfPresent(release, 'latest.json');
+  const uploadNames = ['release-metadata.json', ...macAssetNames(metadata)];
+  for (const name of uploadNames) await uploadAsset(release, join(releaseDir, name));
+
+  const dispatchedAt = Date.now();
+  await githubRequest(`/actions/workflows/${workflowFile}/dispatches`, {
+    method: 'POST',
+    body: JSON.stringify({ ref: metadata.tag, inputs: { tag: metadata.tag } }),
+  });
+  console.log(`已触发 Windows workflow：${metadata.tag}`);
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await Bun.sleep(1_500);
+    const run = await latestWindowsRun(metadata);
+    if (run && Date.parse(run.created_at) >= dispatchedAt - 5_000) {
+      console.log(`Workflow run: ${run.html_url}`);
+      console.log('等待其成功后运行 bun run release:status；确认资产后再运行 release:publish。');
+      return;
     }
-    
-    console.log(`📂 Files are ready in: ${relPath(releaseDir)}`);
-    console.log(`👉 Next step: Run 'bun run release:upload' to upload artifacts.`);
+  }
+  console.log(`Workflow 页面：${repoUrl}/actions/workflows/${workflowFile}`);
+  console.log('dispatch 已接受，但 run 尚未出现在 API；稍后运行 bun run release:status。');
 }
 
-// -------------------------------------------------------------------------
-// Phase 2: Upload (Draft)
-// -------------------------------------------------------------------------
-async function runUpload() {
-    await runStep('Upload to GitHub (Draft)', async () => {
-        const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-        if (!token) {
-                throw new Error('⚠️  GITHUB_TOKEN not found. Cannot upload.');
-        }
-
-        if (!existsSync(releaseDir)) {
-            throw new Error(`Release directory not found: ${relPath(releaseDir)}. Please run 'bun run release' first.`);
-        }
-
-        // Regenerate latest.json to be sure (or just use existing)
-        generateLatestJson();
-        
-        console.log('   Uploading to GitHub Release (via API)...');
-
-        // 获取版本号
-        const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'));
-        const version = packageJson.version;
-        const tagName = `v${version}`;
-        const owner = 'dengcb';
-        const repo = 'weixin-reader-desktop';
-
-        // GitHub API Helpers
-        const headers = {
-            'Authorization': `token ${token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'weixin-reader-release-script'
-        };
-
-        async function request(url: string, options: RequestInit = {}) {
-            const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
-            if (!res.ok) {
-                const body = await res.text();
-                throw new Error(`GitHub API Error: ${res.status} ${res.statusText}\n${body}`);
-            }
-            return res.json();
-        }
-
-        // 1. 获取或创建 Release (Draft)
-        let release: any;
-        try {
-            console.log(`   Checking for existing release ${tagName}...`);
-            release = await request(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${tagName}`);
-            console.log(`   Found existing release: ${release.id}`);
-        } catch (e) {
-            console.log(`   Release ${tagName} not found, creating new DRAFT release...`);
-            release = await request(`https://api.github.com/repos/${owner}/${repo}/releases`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    tag_name: tagName,
-                    name: `v${version}`,
-                    body: `Auto-released v${version}`,
-                    draft: true, // Create as draft
-                    prerelease: false
-                })
-            });
-            console.log(`   Created new draft release: ${release.id}`);
-        }
-
-        // 2. 上传 Assets
-        const uploadUrlTemplate = release.upload_url;
-        const uploadBaseUrl = uploadUrlTemplate.split('{')[0];
-
-        const filesToUpload = readdirSync(releaseDir).filter(f => {
-            if (f.endsWith('.DS_Store')) return false;
-            const filePath = join(releaseDir, f);
-            return statSync(filePath).isFile();
-        });
-        
-        for (const fileName of filesToUpload) {
-            const filePath = join(releaseDir, fileName);
-            console.log(`   Uploading ${fileName}...`);
-            
-            // 检查是否已存在同名 asset，如果存在则先删除
-            if (release.assets && release.assets.length > 0) {
-                const existingAsset = release.assets.find((a: any) => a.name === fileName);
-                if (existingAsset) {
-                        console.log(`     Deleting existing asset ${existingAsset.id}...`);
-                        await fetch(existingAsset.url, { method: 'DELETE', headers });
-                }
-            }
-
-            const fileBuffer = readFileSync(filePath);
-            
-            const uploadRes = await fetch(`${uploadBaseUrl}?name=${fileName}`, {
-                method: 'POST',
-                headers: {
-                    ...headers,
-                    'Content-Type': 'application/octet-stream',
-                    'Content-Length': fileBuffer.length.toString()
-                },
-                body: fileBuffer
-            });
-
-            if (!uploadRes.ok) {
-                    const body = await uploadRes.text();
-                    throw new Error(`Failed to upload ${fileName}: ${uploadRes.status} ${uploadRes.statusText}\n${body}`);
-            }
-            console.log(`     ✅ Uploaded ${fileName}`);
-        }
-        
-        console.log('   All assets uploaded successfully!');
-        console.log(`👉 Next step: Run 'bun run release:publish' to publish the release.`);
-    });
+function requireAsset(release: GitHubRelease, name: string): GitHubAsset {
+  const asset = release.assets.find((candidate) => candidate.name === name);
+  if (!asset) throw new Error(`draft release 缺少资产：${name}`);
+  return asset;
 }
 
-// -------------------------------------------------------------------------
-// Phase 3: Publish
-// -------------------------------------------------------------------------
-async function runPublish() {
-    await runStep('Publish Release', async () => {
-        const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-        if (!token) {
-            throw new Error('⚠️  GITHUB_TOKEN not found.');
-        }
-
-        const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'));
-        const version = packageJson.version;
-        const tagName = `v${version}`;
-        const owner = 'dengcb';
-        const repo = 'weixin-reader-desktop';
-
-        const headers = {
-            'Authorization': `token ${token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'User-Agent': 'weixin-reader-release-script'
-        };
-
-        async function request(url: string, options: RequestInit = {}) {
-            const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
-            if (!res.ok) {
-                const body = await res.text();
-                throw new Error(`GitHub API Error: ${res.status} ${res.statusText}\n${body}`);
-            }
-            return res.json();
-        }
-
-        console.log(`   Checking release ${tagName}...`);
-        let release: any;
-        try {
-            // Draft releases cannot always be retrieved by tag directly via API
-            // Instead, list releases and find by tag_name
-            const releases: any[] = await request(`https://api.github.com/repos/${owner}/${repo}/releases`);
-            release = releases.find((r: any) => r.tag_name === tagName);
-            
-            if (!release) {
-                 // Fallback to tag lookup just in case (e.g. if it's already published and paginated out, though unlikely for latest)
-                 try {
-                    release = await request(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${tagName}`);
-                 } catch (e) {
-                    throw new Error(`Release ${tagName} not found in list or by tag! Please upload first.`);
-                 }
-            }
-        } catch (e) {
-             console.error(`   ❌ Error finding release ${tagName}:`, e);
-             throw e;
-        }
-
-        // Check for latest.json
-        const hasLatestJson = release.assets && release.assets.some((a: any) => a.name === 'latest.json');
-        if (!hasLatestJson) {
-            console.error('   ❌ Assets found:', release.assets ? release.assets.map((a: any) => a.name).join(', ') : 'None');
-            throw new Error(`❌ latest.json not found in release assets. Please run 'bun run release:upload' first.`);
-        }
-
-        console.log(`   Found latest.json. Publishing release...`);
-
-        // Update release to published (draft: false)
-        await request(release.url, {
-            method: 'PATCH',
-            body: JSON.stringify({
-                draft: false
-            })
-        });
-
-        console.log(`✅ Release ${tagName} is now PUBLISHED!`);
-    });
+async function downloadAsset(asset: GitHubAsset): Promise<Uint8Array> {
+  const response = await fetch(asset.url, {
+    headers: githubHeaders({ Accept: 'application/octet-stream' }),
+    redirect: 'follow',
+  });
+  if (!response.ok) throw new Error(`下载 ${asset.name} 失败：${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
 }
 
-// -------------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------------
-function generateLatestJson() {
-    const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'));
-    const version = packageJson.version;
-    const tagName = `v${version}`;
+async function readJsonAsset<T>(release: GitHubRelease, name: string): Promise<T> {
+  const bytes = await downloadAsset(requireAsset(release, name));
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+}
 
-    console.log(`   Generating latest.json for version ${version} (${tagName})...`);
-
-    if (!existsSync(releaseDir)) {
-         console.warn(`   ⚠️ Release directory does not exist (${relPath(releaseDir)}), skipping latest.json generation.`);
-         return;
+function metadataHashes(metadata: ReleaseMetadata): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const record of Object.values(metadata.platforms) as MacReleaseRecord[]) {
+    for (const value of [record.installer, record.updater, record.signature]) {
+      result.set(value.name, value.sha256);
     }
-    
-    // We need to support both architectures if they exist in release dir
-    const platforms: Record<string, { signature: string, url: string }> = {};
-    
-    const files = readdirSync(releaseDir);
-    
-    for (const file of files) {
-        if (file.endsWith('.tar.gz')) {
-            const sigFile = file + '.sig';
-            if (existsSync(join(releaseDir, sigFile))) {
-                let signature = readFileSync(join(releaseDir, sigFile), 'utf-8').trim();
-
-                // The .sig file on disk might be the raw Minisign text OR Base64 encoded Minisign text.
-                // Tauri Updater v2 expects the Base64 encoded string of the FULL Minisign file (including comments).
-
-                if (signature.startsWith('dW50cnVzdGVk')) {
-                     // It is already Base64 encoded Minisign file content. Keep it as is.
-                } else if (signature.startsWith('untrusted comment:')) {
-                     // It is raw text. We should Base64 encode it for latest.json
-                     signature = Buffer.from(signature, 'utf-8').toString('base64');
-                }
-                
-                // Remove the old extraction logic which stripped the comments
-                /*
-                // 1. Decode if it looks like Base64-encoded Minisign (starts with "dW50cnVzdGVk" -> "untrusted")
-                if (signature.startsWith('dW50cnVzdGVk')) {
-                    try {
-                        console.log('      ⚠️  Detected Base64 encoded Minisign file, decoding...');
-                        signature = Buffer.from(signature, 'base64').toString('utf-8').trim();
-                    } catch (e) {
-                        console.warn('      ❌ Failed to decode Base64 signature:', e);
-                    }
-                }
-                
-                // ... (rest of old logic)
-                */
-
-                const url = `https://github.com/dengcb/weixin-reader-desktop/releases/download/${tagName}/${file}`;
-                
-                // Determine arch from filename
-                let arch = '';
-                if (file.includes('aarch64')) {
-                    arch = 'darwin-aarch64';
-                } else if (file.includes('x86_64')) {
-                    arch = 'darwin-x86_64';
-                }
-                
-                if (arch) {
-                    platforms[arch] = { signature, url };
-                }
-            }
-        }
-    }
-    
-    const latestJson = {
-        version: tagName,
-        notes: `Update to ${tagName}`,
-        pub_date: new Date().toISOString(),
-        platforms
-    };
-
-    writeFileSync(join(releaseDir, 'latest.json'), JSON.stringify(latestJson, null, 2));
-    console.log('   ⬆️ Generated latest.json');
+  }
+  return result;
 }
+
+async function runStatus(): Promise<void> {
+  const metadata = loadMetadata();
+  token();
+  const release = await findRelease(metadata.tag);
+  if (!release) throw new Error(`未找到 ${metadata.tag} release`);
+  const run = await latestWindowsRun(metadata);
+  console.log(
+    run
+      ? `Windows workflow: ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ''}\n${run.html_url}`
+      : 'Windows workflow: 未找到',
+  );
+
+  let windowsInfo: WindowsReleaseInfo | undefined;
+  if (release.assets.some((asset) => asset.name === 'windows-release-info.json')) {
+    windowsInfo = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-release-info.json');
+  }
+  const hashes = metadataHashes(metadata);
+  if (windowsInfo) hashes.set(windowsInfo.installerAsset, windowsInfo.installerSha256);
+  console.table(
+    release.assets.map((asset) => ({
+      asset: asset.name,
+      sizeMiB: (asset.size / 1024 / 1024).toFixed(2),
+      sha256: asset.digest?.replace(/^sha256:/, '') ?? hashes.get(asset.name) ?? '—',
+    })),
+  );
+  console.log(`Windows Authenticode: ${windowsInfo?.authenticodeStatus ?? '尚无 Windows 资产'}`);
+  console.log(`Release 状态: ${release.draft ? 'draft' : 'published'}`);
+}
+
+async function verifyRemoteArtifact(
+  asset: GitHubAsset,
+  expectedSha256: string,
+): Promise<Uint8Array> {
+  const bytes = await downloadAsset(asset);
+  const actual = createHash('sha256').update(bytes).digest('hex');
+  if (actual !== expectedSha256) {
+    throw new Error(`${asset.name} 远程 SHA-256=${actual}，期望 ${expectedSha256}`);
+  }
+  return bytes;
+}
+
+async function updaterPlatform(
+  release: GitHubRelease,
+  updaterName: string,
+  signatureName: string,
+  expectedSha256: string,
+): Promise<{ url: string; signature: string }> {
+  const updaterAsset = requireAsset(release, updaterName);
+  const signatureAsset = requireAsset(release, signatureName);
+  const updater = await verifyRemoteArtifact(updaterAsset, expectedSha256);
+  const rawSignature = new TextDecoder().decode(await downloadAsset(signatureAsset));
+  const config = JSON.parse(
+    readFileSync(join(srcTauriDir, 'tauri.conf.json'), 'utf8'),
+  ) as { plugins: { updater: { pubkey: string } } };
+  verifyUpdaterSignature(updater, rawSignature, config.plugins.updater.pubkey);
+  const signature = normalizeUpdaterSignature(rawSignature);
+  return { url: updaterAsset.browser_download_url, signature };
+}
+
+async function runPublish(): Promise<void> {
+  await runCommand(process.execPath, ['run', 'check:version']);
+  const metadata = loadMetadata();
+  validateLocalMetadata(metadata);
+  token();
+  const run = await latestWindowsRun(metadata);
+  if (!run || run.status !== 'completed' || run.conclusion !== 'success') {
+    throw new Error(`Windows workflow 尚未成功：${run ? `${run.status}/${run.conclusion}` : '未找到'}`);
+  }
+  let release = await findRelease(metadata.tag);
+  if (!release) throw new Error(`未找到 ${metadata.tag} release`);
+  if (!release.draft) throw new Error(`${metadata.tag} 已经发布`);
+
+  for (const name of macAssetNames(metadata)) requireAsset(release, name);
+  const windows = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-release-info.json');
+  if (
+    windows.version !== metadata.version ||
+    windows.tag !== metadata.tag ||
+    windows.commit !== metadata.commit ||
+    windows.platform !== 'windows-x86_64'
+  ) {
+    throw new Error('Windows 发布元数据与 macOS release:all 元数据不一致');
+  }
+  for (const name of [
+    windows.installerAsset,
+    windows.updaterAsset,
+    windows.signatureAsset,
+    windows.checksumAsset,
+  ]) {
+    requireAsset(release, name);
+  }
+
+  const arm = metadata.platforms['darwin-aarch64'];
+  const intel = metadata.platforms['darwin-x86_64'];
+  const platforms = {
+    'darwin-aarch64': await updaterPlatform(
+      release,
+      arm.updater.name,
+      arm.signature.name,
+      arm.updater.sha256,
+    ),
+    'darwin-x86_64': await updaterPlatform(
+      release,
+      intel.updater.name,
+      intel.signature.name,
+      intel.updater.sha256,
+    ),
+    'windows-x86_64': await updaterPlatform(
+      release,
+      windows.updaterAsset,
+      windows.signatureAsset,
+      windows.installerSha256,
+    ),
+  };
+  if (Object.keys(platforms).sort().join(',') !== 'darwin-aarch64,darwin-x86_64,windows-x86_64') {
+    throw new Error('latest.json 平台集合不正确');
+  }
+  const latest = {
+    version: metadata.version,
+    notes: `Update to ${metadata.tag}`,
+    pub_date: new Date().toISOString(),
+    platforms,
+  };
+  const latestPath = join(releaseDir, 'latest.json');
+  writeFileSync(latestPath, `${JSON.stringify(latest, null, 2)}\n`);
+  console.table(
+    Object.entries(platforms).map(([platform, value]) => ({
+      platform,
+      url: value.url,
+      signature: `${value.signature.slice(0, 20)}…`,
+      version: metadata.version,
+    })),
+  );
+  console.log(`Windows Authenticode: ${windows.authenticodeStatus}`);
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(`发布需要交互确认；请在终端运行并输入完整 tag：${metadata.tag}`);
+  }
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await prompt.question(`输入完整 tag “${metadata.tag}” 确认上传 latest.json 并发布：`);
+  prompt.close();
+  if (answer.trim() !== metadata.tag) throw new Error('确认 tag 不匹配，已取消发布');
+
+  await uploadAsset(release, latestPath);
+  release = (await findRelease(metadata.tag)) ?? release;
+  for (const name of [
+    ...macAssetNames(metadata),
+    windows.installerAsset,
+    windows.signatureAsset,
+    windows.checksumAsset,
+    'windows-release-info.json',
+    'latest.json',
+  ]) {
+    requireAsset(release, name);
+  }
+  await githubRequest(release.url, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      draft: false,
+      make_latest: 'true',
+      body: releaseBody(metadata.version, windows.authenticodeStatus),
+    }),
+  });
+  console.log(`${metadata.tag} 已正式发布：${release.html_url}`);
+}
+
+async function main(): Promise<void> {
+  const command = process.argv[2];
+  switch (command) {
+    case undefined:
+      await runBuild(['aarch64-apple-darwin', 'x86_64-apple-darwin']);
+      break;
+    case 'arm':
+      await runBuild(['aarch64-apple-darwin']);
+      break;
+    case 'intel':
+      await runBuild(['x86_64-apple-darwin']);
+      break;
+    case 'upload':
+      await runUpload();
+      break;
+    case 'status':
+      await runStatus();
+      break;
+    case 'publish':
+      await runPublish();
+      break;
+    default:
+      throw new Error(`未知 release 命令：${command}`);
+  }
+}
+
+main().catch((error) => {
+  console.error('\n发布流程失败：', error);
+  process.exit(1);
+});

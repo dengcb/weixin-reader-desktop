@@ -23,7 +23,19 @@ const createBareManager = (siteId = 'demo', isReaderPage = true): MenuManager =>
   const manager = Object.create(MenuManager.prototype) as MenuManager;
   Object.assign(manager as any, {
     initialized: true,
-    siteContext: { siteId, isReaderPage },
+    siteContext: {
+      siteId,
+      isReaderPage,
+      currentRuntime: siteId === 'unknown' ? null : {
+        manifest: {
+          capabilities: {
+            wideMode: true,
+            hideToolbar: false,
+            hideNavbar: true,
+          },
+        },
+      },
+    },
     destroyed: false,
     initAbortController: new AbortController(),
     routeChangedHandler: null,
@@ -123,6 +135,57 @@ describe('MenuManager behavior', () => {
       command: 'update_menu_state',
       args: { id: 'auto_flip', state: true },
     });
+  });
+
+  it('reads active runtime capabilities only on reader pages', async () => {
+    const invokeMock = mock(async (_command: string, _args?: Record<string, any>) => undefined);
+    window.__TAURI__.core.invoke = invokeMock as any;
+    const manager = createBareManager('demo', true);
+
+    await (manager as any).updateMenuEnabledStatus('reader');
+    let calls = invokeMock.mock.calls.map(([command, args]) => ({ command, args }));
+    expect(calls.some(({ command }) => command === 'get_installed_plugins')).toBe(false);
+    expect(calls).toContainEqual({
+      command: 'set_menu_item_enabled',
+      args: { id: 'reader_wide', enabled: true },
+    });
+    expect(calls).toContainEqual({
+      command: 'set_menu_item_enabled',
+      args: { id: 'hide_toolbar', enabled: false },
+    });
+    expect(calls).toContainEqual({
+      command: 'set_menu_item_enabled',
+      args: { id: 'hide_navbar', enabled: true },
+    });
+
+    invokeMock.mockClear();
+    (manager as any).siteContext.isReaderPage = false;
+    await (manager as any).updateMenuEnabledStatus('outside-reader');
+    calls = invokeMock.mock.calls.map(([command, args]) => ({ command, args }));
+    expect(calls.some(({ command }) => command === 'get_installed_plugins')).toBe(false);
+    for (const id of ['reader_wide', 'hide_cursor', 'hide_toolbar', 'hide_navbar', 'auto_flip']) {
+      expect(calls).toContainEqual({
+        command: 'set_menu_item_enabled',
+        args: { id, enabled: false },
+      });
+    }
+  });
+
+  it('leaves reader features disabled after a reader-to-home transition', async () => {
+    const invokeMock = mock(async (_command: string, _args?: Record<string, any>) => undefined);
+    window.__TAURI__.core.invoke = invokeMock as any;
+    const manager = createBareManager('demo', true);
+
+    await (manager as any).updateMenuEnabledStatus('reader');
+    (manager as any).siteContext.isReaderPage = false;
+    await (manager as any).updateMenuEnabledStatus('home');
+
+    for (const id of ['reader_wide', 'hide_cursor', 'hide_toolbar', 'hide_navbar', 'auto_flip']) {
+      const updates = invokeMock.mock.calls.filter(([command, args]) =>
+        command === 'set_menu_item_enabled' && args?.id === id
+      );
+      expect(updates[updates.length - 1]?.[1]).toEqual({ id, enabled: false });
+    }
   });
 
   it('updates the native title and is inert without Tauri', async () => {

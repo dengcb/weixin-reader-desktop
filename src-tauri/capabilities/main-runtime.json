@@ -20,7 +20,6 @@
     "allow-patch-settings",
     "allow-get-reading-position",
     "allow-save-reading-position",
-    "allow-get-runtime-plugin",
-    "allow-get-installed-plugins"
+    "allow-get-runtime-plugin"
   ]
 }

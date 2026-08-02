@@ -271,7 +271,7 @@ pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
         .map_err(|error| format!("Failed to open plugin file: {error}"))?;
     let mut archive =
         ZipArchive::new(file).map_err(|error| format!("Failed to read plugin archive: {error}"))?;
-    if archive.len() == 0 || archive.len() > MAX_ARCHIVE_FILES {
+    if archive.is_empty() || archive.len() > MAX_ARCHIVE_FILES {
         return Err("Plugin archive has an invalid file count".to_string());
     }
 
@@ -343,7 +343,7 @@ pub fn install_plugin_from_file<R: Runtime>(
             .map_err(|error| format!("Failed to reopen plugin file: {error}"))?;
         let mut archive = ZipArchive::new(file)
             .map_err(|error| format!("Failed to read plugin archive: {error}"))?;
-        if archive.len() == 0 || archive.len() > MAX_ARCHIVE_FILES {
+        if archive.is_empty() || archive.len() > MAX_ARCHIVE_FILES {
             return Err("Plugin archive has an invalid file count".to_string());
         }
         let mut total_size = 0_u64;

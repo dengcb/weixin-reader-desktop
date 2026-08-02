@@ -54,69 +54,31 @@ struct PluginSiteMenuItem {
     url: String,
 }
 
-/// 站点能力（控制菜单项灰掉/可用）
-struct SiteCapabilities {
-    wide_mode: bool,
-    hide_toolbar: bool,
-    hide_navbar: bool,
-}
-
-impl SiteCapabilities {
-    /// 微信读书是根站点，全部可用
-    fn all_enabled() -> Self {
-        Self {
-            wide_mode: true,
-            hide_toolbar: true,
-            hide_navbar: true,
-        }
-    }
-}
-
-/// 获取指定站点的 capabilities。
-/// 微信读书（weread）返回全 true；外部插件从 manifest 读取。
-fn get_site_capabilities<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> SiteCapabilities {
-    if site_id == "weread" {
-        return SiteCapabilities::all_enabled();
-    }
-
-    if let Ok(plugins) = plugin_manager::get_installed_plugins(app) {
-        for plugin in plugins {
-            if plugin.id == site_id {
-                if let Some(ref caps) = plugin.capabilities {
-                    return SiteCapabilities {
-                        wide_mode: caps.get("wideMode").and_then(|v| v.as_bool()).unwrap_or(false),
-                        hide_toolbar: caps.get("hideToolbar").and_then(|v| v.as_bool()).unwrap_or(false),
-                        hide_navbar: caps.get("hideNavbar").and_then(|v| v.as_bool()).unwrap_or(false),
-                    };
-                }
-            }
-        }
-    }
-
-    SiteCapabilities {
-        wide_mode: false,
-        hide_toolbar: false,
-        hide_navbar: false,
-    }
-}
-
-/// 遍历菜单树，按 capabilities 设置 reader_wide / hide_toolbar / hide_navbar 的 enabled。
-fn apply_capability_to_menu<R: Runtime>(app: &AppHandle<R>, caps: &SiteCapabilities) {
+/// 原生端不知道远程页面当前是否已经进入正文，因此创建、重建和跨站导航时
+/// 一律先禁用阅读功能。前端 MenuManager 在确认正文路由后再读取插件能力并启用。
+fn disable_reader_menu_items<R: Runtime>(app: &AppHandle<R>) {
     let Some(menu) = app.menu() else { return };
     let Ok(top_items) = menu.items() else { return };
 
     for top in top_items.iter() {
-        let Some(submenu) = top.as_submenu() else { continue };
+        let Some(submenu) = top.as_submenu() else {
+            continue;
+        };
         let is_view = submenu.text().ok().map(|t| t == "视图").unwrap_or(false);
-        if !is_view { continue }
-        let Ok(sub_items) = submenu.items() else { continue };
+        if !is_view {
+            continue;
+        }
+        let Ok(sub_items) = submenu.items() else {
+            continue;
+        };
         for item in sub_items.iter() {
             let id = item.id().as_ref();
             if let Some(check_item) = item.as_check_menuitem() {
                 match id {
-                    "reader_wide" => { let _ = check_item.set_enabled(caps.wide_mode); }
-                    "hide_toolbar" => { let _ = check_item.set_enabled(caps.hide_toolbar); }
-                    "hide_navbar" => { let _ = check_item.set_enabled(caps.hide_navbar); }
+                    "reader_wide" | "hide_cursor" | "hide_toolbar" | "hide_navbar"
+                    | "auto_flip" => {
+                        let _ = check_item.set_enabled(false);
+                    }
                     _ => {}
                 }
             }
@@ -134,7 +96,9 @@ pub fn set_edit_menu_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     // 查找编辑菜单的位置
     let mut edit_index: Option<usize> = None;
     for (i, top) in top_items.iter().enumerate() {
-        let Some(submenu) = top.as_submenu() else { continue };
+        let Some(submenu) = top.as_submenu() else {
+            continue;
+        };
         if submenu.text().unwrap_or_default() == "编辑" {
             edit_index = Some(i);
             break;
@@ -148,15 +112,20 @@ pub fn set_edit_menu_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
         }
         (true, None) => {
             // 显示：重新创建并插入到 app_menu 之后（index=1）
-            let edit_menu = match Submenu::with_items(app, "编辑", true, &[
-                &PredefinedMenuItem::undo(app, Some("撤销")).unwrap(),
-                &PredefinedMenuItem::redo(app, Some("重做")).unwrap(),
-                &PredefinedMenuItem::separator(app).unwrap(),
-                &PredefinedMenuItem::cut(app, Some("剪切")).unwrap(),
-                &PredefinedMenuItem::copy(app, Some("拷贝")).unwrap(),
-                &PredefinedMenuItem::paste(app, Some("粘贴")).unwrap(),
-                &PredefinedMenuItem::select_all(app, Some("全选")).unwrap(),
-            ]) {
+            let edit_menu = match Submenu::with_items(
+                app,
+                "编辑",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, Some("撤销")).unwrap(),
+                    &PredefinedMenuItem::redo(app, Some("重做")).unwrap(),
+                    &PredefinedMenuItem::separator(app).unwrap(),
+                    &PredefinedMenuItem::cut(app, Some("剪切")).unwrap(),
+                    &PredefinedMenuItem::copy(app, Some("拷贝")).unwrap(),
+                    &PredefinedMenuItem::paste(app, Some("粘贴")).unwrap(),
+                    &PredefinedMenuItem::select_all(app, Some("全选")).unwrap(),
+                ],
+            ) {
                 Ok(m) => m,
                 Err(_) => return,
             };
@@ -176,7 +145,7 @@ fn get_plugin_site_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> Vec<Plugin
             if let Some(site) = plugin.site {
                 items.push(PluginSiteMenuItem {
                     id: format!("switch_site_{}", plugin.id),
-                    name: format!("{}", plugin.name),
+                    name: plugin.name,
                     url: site.home_url,
                 });
             }
@@ -500,9 +469,8 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
 
     handle.set_menu(menu)?;
 
-    // 按当前站点 capabilities 灰掉不适用的菜单项
-    let caps = get_site_capabilities(handle, &current_site_id(handle));
-    apply_capability_to_menu(handle, &caps);
+    // 等正文路由确认后由前端根据插件能力恢复可用项。
+    disable_reader_menu_items(handle);
 
     eprintln!("DEBUG: Menu rebuilt successfully");
 
@@ -732,9 +700,8 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
 
-    // 按当前站点 capabilities 灰掉不适用的菜单项
-    let caps = get_site_capabilities(handle, &current_site_id(handle));
-    apply_capability_to_menu(handle, &caps);
+    // 启动时远程页面可能仍在首页，先保持所有阅读功能禁用。
+    disable_reader_menu_items(handle);
 
     // Event Handling - use handle for move closure
     let handle_for_events = handle.clone();
@@ -783,31 +750,31 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             "zoom_in" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(&app);
-                    let current = get_current_zoom(&app, &site_id);
+                    let site_id = current_site_id(app);
+                    let current = get_current_zoom(app, &site_id);
                     let next = next_zoom_level(current, true);
                     let _ = win.set_zoom(next);
-                    save_zoom(&app, &site_id, next);
+                    save_zoom(app, &site_id, next);
                     let pct = (next * 100.0).round() as i32;
                     let _ = win.emit("show-toast", format!("{}%", pct));
                 }
             }
             "zoom_out" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(&app);
-                    let current = get_current_zoom(&app, &site_id);
+                    let site_id = current_site_id(app);
+                    let current = get_current_zoom(app, &site_id);
                     let next = next_zoom_level(current, false);
                     let _ = win.set_zoom(next);
-                    save_zoom(&app, &site_id, next);
+                    save_zoom(app, &site_id, next);
                     let pct = (next * 100.0).round() as i32;
                     let _ = win.emit("show-toast", format!("{}%", pct));
                 }
             }
             "zoom_reset" => {
                 if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(&app);
+                    let site_id = current_site_id(app);
                     let _ = win.set_zoom(1.0);
-                    save_zoom(&app, &site_id, 1.0);
+                    save_zoom(app, &site_id, 1.0);
                     let _ = win.emit("show-toast", "100%");
                 }
             }
@@ -899,7 +866,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
                         // Rust 端直接写入 lastSiteId
                     let _ = crate::settings::update_setting(
-                            &app,
+                            app,
                             "global.lastSiteId",
                             serde_json::json!(site_id)
                         );
@@ -924,14 +891,13 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                             }
                         }
 
-                        // 按目标站点 capabilities 灰掉不适用的菜单项
-                        let caps = get_site_capabilities(app, site_id);
-                        apply_capability_to_menu(app, &caps);
-
-                        // 如果点击的就是当前站点，只更新对勾和 capabilities，不导航
+                        // 如果点击的就是当前站点，只更新书店对勾，不改变当前正文菜单状态
                         if is_same_site {
                             return;
                         }
+
+                        // 新页面确认进入正文前，不允许旧站点能力残留在菜单中。
+                        disable_reader_menu_items(app);
 
                         let settings = crate::settings::read_settings(app)
                             .unwrap_or_else(|_| crate::settings::default_settings());
