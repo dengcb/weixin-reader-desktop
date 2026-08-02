@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>艾特阅读 · 微信读书桌面客户端</title>
 <meta name="description" content="基于 Tauri v2 + Rust 的高性能微信读书桌面客户端，极致轻量、原生体验">
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 
@@ -13,8 +15,8 @@
   --ink-light:#5a5a5a;
   --paper:#f7f3ed;
   --paper-warm:#efe9de;
-  --vermilion:#c44536;
-  --vermilion-deep:#9e3631;
+  --brand:#349f66;
+  --brand-deep:#2b8052;
   --bamboo:#5b7a4e;
   --gold:#c9a961;
   --line:#d6cfc1;
@@ -59,18 +61,12 @@ body::before{
   color:var(--ink);
 }
 
-.hero-brand .seal{
-  display:inline-block;
-  width:40px;height:40px;
-  background:var(--vermilion);
-  color:var(--paper);
-  font-size:22px;
-  line-height:40px;
-  text-align:center;
-  border-radius:4px;
-  vertical-align:middle;
-  margin-left:12px;
-  font-weight:700;
+.hero-logo{
+  width:72px;
+  height:72px;
+  border-radius:16px;
+  display:block;
+  margin:0 auto 16px;
 }
 
 .hero-tag{
@@ -102,7 +98,7 @@ body::before{
   display:inline-flex;
   align-items:center;
   gap:10px;
-  background:var(--vermilion);
+  background:var(--brand);
   color:var(--paper);
   text-decoration:none;
   padding:15px 40px;
@@ -111,12 +107,12 @@ body::before{
   font-weight:600;
   letter-spacing:2px;
   transition:all .3s ease;
-  box-shadow:0 4px 14px rgba(196,69,54,.25);
+  box-shadow:0 4px 14px rgba(52,159,102,.25);
 }
 
 .btn-primary:hover{
-  background:var(--vermilion-deep);
-  box-shadow:0 6px 20px rgba(196,69,54,.35);
+  background:var(--brand-deep);
+  box-shadow:0 6px 20px rgba(52,159,102,.35);
   transform:translateY(-2px);
 }
 
@@ -179,7 +175,7 @@ body::before{
 }
 
 .feature-card:hover{
-  border-color:var(--vermilion);
+  border-color:var(--brand);
   box-shadow:0 8px 24px rgba(0,0,0,.06);
   transform:translateY(-4px);
 }
@@ -216,19 +212,17 @@ body::before{
 
 .highlight-item{
   display:flex;
-  align-items:flex-start;
+  align-items:center;
   gap:12px;
   padding:10px 0;
   border-bottom:1px dashed var(--line);
 }
 
-.highlight-item:last-child{border-bottom:none}
-
 .highlight-item .mark{
   flex-shrink:0;
-  color:var(--vermilion);
-  font-size:16px;
-  margin-top:2px;
+  color:var(--brand);
+  font-size:14px;
+  line-height:1;
 }
 
 .highlight-item .text{
@@ -261,7 +255,7 @@ body::before{
   transition:color .2s;
 }
 
-.footer-links a:hover{color:var(--vermilion)}
+.footer-links a:hover{color:var(--brand)}
 
 .footer-copy{
   font-size:12px;
@@ -297,8 +291,8 @@ body::before{
   <!-- ===== Hero ===== -->
   <header class="hero">
     <div class="hero-brand">
+      <img src="logo.png" alt="艾特阅读" class="hero-logo">
       <h1>艾特阅读</h1>
-      <span class="seal">阅</span>
     </div>
     <p class="hero-tag">基于 Tauri v2 + Rust 的高性能微信读书桌面客户端</p>
     <p class="hero-sub">
@@ -403,10 +397,10 @@ body::before{
   <footer class="footer">
     <div class="footer-links">
       <a href="https://github.com/dengcb/weixin-reader-desktop">源码仓库</a>
-      <a href="https://github.com/dengcb/weixin-reader-desktop/releases">下载更新</a>
+      <a href="https://github.com/dengcb/weixin-reader-desktop/releases/latest">下载更新</a>
       <a href="https://github.com/dengcb/weixin-reader-desktop/issues">问题反馈</a>
     </div>
-    <p class="footer-copy">MIT License · 仅供学习交流使用 · 与腾讯公司无任何关联</p>
+    <p class="footer-copy">© 2026 dengcb · MIT License · 仅供学习交流使用</p>
   </footer>
 
 </div>
