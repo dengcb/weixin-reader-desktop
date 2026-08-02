@@ -13,6 +13,7 @@
 </p>
 
 <p>
+  <a href="https://reader.dengcb.com">官方主页</a> •
   <a href="#-选择理由">选择理由</a> •
   <a href="#-核心特性">核心特性</a> •
   <a href="#-快速开始">快速开始</a> •
@@ -510,6 +511,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 ## 📖 文档
 
+- 🔌 [第三方插件开发指南](docs/PLUGIN_DEVELOPMENT.md) - Manifest、自声明规范、代码与样式组织、构建测试和社区验收
 - 🏗 [插件与站点架构](docs/PLUGIN_ARCHITECTURE.md) - `ReaderSiteRuntime`、插件运行时与开发约束
 - 🔁 [事件与生命周期](docs/EVENT_BUS_REFACTOR.md) - EventBus、BaseManager 与资源清理规范
 - 🔐 [Tauri 2.11 与 IPC](docs/TAURI_2_11_UPGRADE.md) - Capability 拆分和命令一致性规则

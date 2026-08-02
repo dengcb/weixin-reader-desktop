@@ -13,7 +13,7 @@ import { cleanupPluginAPI, createPluginAPI } from './plugin_api';
 import { getPluginRegistry } from './plugin_registry';
 import { settingsStore } from './settings_store';
 import { invoke } from './tauri';
-import type { ReaderPlugin } from './plugin_types';
+import type { PluginManifest, ReaderPlugin } from './plugin_types';
 import {
   createPluginSiteRuntime,
   type ReaderSiteRuntime,
@@ -27,6 +27,9 @@ export class PluginLoader {
   
   /** 是否已初始化 */
   private initialized = false;
+
+  /** 当前外部插件包内可由插件代码读取的 CSS 文件。 */
+  private externalStyleFiles = new Map<string, Readonly<Record<string, string>>>();
   
   private constructor() {}
   
@@ -131,7 +134,10 @@ export class PluginLoader {
     
     try {
       // 创建插件专属的 API 实例
-      const api = createPluginAPI(manifest);
+      const api = createPluginAPI(
+        manifest,
+        this.externalStyleFiles.get(pluginId) ?? {},
+      );
       
       // 调用插件的 onLoad 生命周期方法
       plugin.onLoad(api);
@@ -379,7 +385,11 @@ export class PluginLoader {
    */
   private async loadExternalPlugins(): Promise<void> {
     const registry = getPluginRegistry();
-    let runtimePlugin: { plugin: { id: string }; code: string } | null = null;
+    let runtimePlugin: {
+      plugin: Pick<PluginManifest, 'id'> & Partial<PluginManifest>;
+      code: string;
+      styles?: Record<string, string>;
+    } | null = null;
     try {
       runtimePlugin = await invoke('get_runtime_plugin');
     } catch (e) {
@@ -393,7 +403,17 @@ export class PluginLoader {
     try {
       const instance = await this.instantiateFromCode(runtimePlugin.code);
       if (instance?.manifest.id === pluginId) {
-        registry.register(createPluginSiteRuntime(instance));
+        const installedManifest: PluginManifest = {
+          ...instance.manifest,
+          ...runtimePlugin.plugin,
+          renderMode: runtimePlugin.plugin.renderMode ?? instance.manifest.renderMode,
+          capabilities: runtimePlugin.plugin.capabilities ?? {},
+        };
+        this.externalStyleFiles.set(
+          pluginId,
+          Object.freeze({ ...(runtimePlugin.styles ?? {}) }),
+        );
+        registry.register(createPluginSiteRuntime(instance, installedManifest));
         log.info(`[PluginLoader] External plugin registered: ${pluginId}`);
       } else if (instance) {
         log.error(`[PluginLoader] Runtime plugin ID mismatch: expected '${pluginId}'`);
@@ -433,6 +453,7 @@ export class PluginLoader {
       registry.updateState(registered.plugin.id, 'unloaded');
     }
     registry.clear();
+    this.externalStyleFiles.clear();
     this.initialized = false;
   }
 }

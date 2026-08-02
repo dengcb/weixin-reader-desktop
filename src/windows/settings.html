@@ -547,52 +547,6 @@
       flex-shrink: 0;
     }
 
-    .plugin-btn.config {
-      border-color: var(--border-color);
-      color: var(--text-secondary);
-    }
-
-    .plugin-btn.config:hover {
-      background-color: var(--hover-bg);
-      color: var(--text-color);
-    }
-
-    /* 配置面板 */
-    .plugin-config {
-      display: none;
-      margin-top: 16px;
-      padding-top: 16px;
-      border-top: 1px solid var(--border-color);
-    }
-
-    .plugin-config.expanded {
-      display: block;
-    }
-
-    .config-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 0;
-    }
-
-    .config-item-label {
-      font-size: 13px;
-      color: var(--text-color);
-    }
-
-    .config-item-desc {
-      font-size: 11px;
-      color: var(--text-secondary);
-      margin-top: 2px;
-    }
-
-    .config-divider {
-      height: 1px;
-      background-color: var(--border-color);
-      margin: 12px 0;
-    }
-
     /* 内置插件标签 */
     .plugin-badge {
       display: inline-block;
@@ -988,20 +942,11 @@
           description: '微信读书网站阅读增强，支持宽屏模式、自动翻页、隐藏工具栏等功能',
           builtin: true,
           enabled: true,
-          homeUrl: 'https://weread.qq.com/',
-          configSchema: {
-            autoFlip: { type: 'boolean', label: '自动翻页', settingsKey: 'global.autoFlip.active' },
-            wideMode: { type: 'boolean', label: '阅读变宽', settingsKey: 'sites.weread.readerWide' },
-            hideCursor: { type: 'boolean', label: '隐藏光标', settingsKey: 'global.hideCursor' },
-            hideToolbar: { type: 'boolean', label: '隐藏工具栏', settingsKey: 'sites.weread.hideToolbar' },
-            hideNavbar: { type: 'boolean', label: '隐藏导航栏', settingsKey: 'sites.weread.hideNavbar' }
-          }
+          homeUrl: 'https://weread.qq.com/'
         }
       ];
 
       let allPlugins = [...BUILTIN_PLUGINS];
-      let pluginConfigs = {};
-      let expandedPluginId = null;
 
       // 加载外部插件列表
       async function loadPluginList() {
@@ -1072,28 +1017,13 @@
       }
 
       // 渲染插件列表
-      async function renderPluginList(settings) {
-        settings = settings || {};
-        pluginConfigs = settings.pluginConfigs || {};
+      async function renderPluginList() {
         const pluginList = document.getElementById('pluginList');
-        
-        // 从嵌套路径读取值的辅助函数
-        const getSettingValue = (path) => {
-          const parts = path.split('.');
-          let value = settings;
-          for (const part of parts) {
-            if (value === undefined || value === null) return undefined;
-            value = value[part];
-          }
-          return value;
-        };
         
         await loadPluginList();
         
         pluginList.replaceChildren();
         allPlugins.forEach(p => {
-          const config = pluginConfigs[p.id] || {};
-          const isExpanded = expandedPluginId === p.id;
           const create = (tag, className, text) => {
             const node = document.createElement(tag);
             if (className) node.className = className;
@@ -1118,40 +1048,12 @@
           info.append(create('div', 'plugin-desc', p.description || ''));
 
           const actions = create('div', 'plugin-actions');
-          if (p.configSchema) {
-            actions.append(makeButton('config', 'config', `配置${isExpanded ? ' ▲' : ' ▼'}`));
-          }
           if (!p.builtin) actions.append(makeButton('edit', 'edit', '编辑'));
           const uninstall = makeButton('uninstall', 'uninstall', '卸载');
           uninstall.dataset.builtin = String(!!p.builtin);
           actions.append(uninstall);
           header.append(info, actions);
           card.append(header);
-
-          if (p.configSchema) {
-            const panel = create('div', `plugin-config ${isExpanded ? 'expanded' : ''}`);
-            panel.dataset.configPanel = p.id;
-            Object.entries(p.configSchema).forEach(([key, def]) => {
-              if (def.condition && !config[def.condition]) return;
-              const item = create('div', 'config-item');
-              const copy = create('div');
-              copy.append(create('div', 'config-item-label', def.label));
-              if (def.description) copy.append(create('div', 'config-item-desc', def.description));
-              const toggle = create('label', 'toggle');
-              const input = create('input');
-              input.type = 'checkbox';
-              input.dataset.plugin = p.id;
-              input.dataset.configKey = key;
-              input.dataset.settingsKey = def.settingsKey || '';
-              input.checked = def.settingsKey
-                ? !!getSettingValue(def.settingsKey)
-                : !!(config[key] ?? def.default);
-              toggle.append(input, create('span', 'toggle-slider'));
-              item.append(copy, toggle);
-              panel.append(item);
-            });
-            card.append(panel);
-          }
 
           pluginList.append(card);
         });
@@ -1160,23 +1062,12 @@
         pluginList.querySelectorAll('.plugin-btn').forEach(btn => {
           btn.addEventListener('click', handlePluginAction);
         });
-        
-        pluginList.querySelectorAll('.config-item input[type="checkbox"]').forEach(input => {
-          input.addEventListener('change', handleConfigChange);
-        });
       }
 
       async function handlePluginAction(e) {
         const btn = e.target;
         const pluginId = btn.dataset.pluginId;
         const action = btn.dataset.action;
-        
-        if (action === 'config') {
-          // 展开/收起配置面板
-          expandedPluginId = expandedPluginId === pluginId ? null : pluginId;
-          invoke('get_settings').then(renderPluginList);
-          return;
-        }
         
         if (action === 'edit') {
           // 打开编辑器窗口
@@ -1218,48 +1109,12 @@
             // 触发事件通知主窗口
             emit('plugins-updated');
             
-            expandedPluginId = null;
             invoke('get_settings').then(renderPluginList);
           } catch (e) {
             console.error('Failed to uninstall plugin:', e);
             alert('卸载失败: ' + e);
           }
           return;
-        }
-      }
-
-      async function handleConfigChange(e) {
-        const input = e.target;
-        const pluginId = input.dataset.plugin;
-        const key = input.dataset.configKey;
-        const settingsKey = input.dataset.settingsKey;
-        const value = input.checked;
-        
-        try {
-          // 如果有 settingsKey，更新应用设置
-          if (settingsKey) {
-            const parts = settingsKey.split('.');
-
-            const [section, id, field] = parts;
-            if (section === 'global' && field) {
-              await patchSettings({ global: { [id]: { [field]: value } } });
-            } else if (section === 'global') {
-              await patchSettings({ global: { [id]: value } });
-            } else if (section === 'sites' && field) {
-              await patchSettings({ sites: { [id]: { [field]: value } } });
-            } else {
-              throw new Error('不支持的设置路径');
-            }
-          } else {
-            // 普通插件配置
-            const applied = await patchSettings({
-              pluginConfigs: { [pluginId]: { [key]: value } }
-            });
-            pluginConfigs = applied.pluginConfigs || {};
-          }
-        } catch (e) {
-          console.error('Failed to save config:', e);
-          input.checked = !value; // 恢复
         }
       }
 

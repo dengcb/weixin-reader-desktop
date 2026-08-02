@@ -11,7 +11,9 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size, WebviewWindow,
+};
 
 #[cfg(target_os = "macos")]
 use objc::runtime::Object;
@@ -22,25 +24,81 @@ type id = *mut Object;
 #[cfg(target_os = "macos")]
 const nil: id = std::ptr::null_mut();
 
-fn point_in_monitor_bounds(
-    window_position: (i32, i32),
-    monitor_position: (i32, i32),
-    monitor_size: (u32, u32),
-    scale: f64,
-) -> bool {
-    if !scale.is_finite() || scale <= 0.0 {
-        return false;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+impl Rect {
+    fn from_parts(position: &PhysicalPosition<i32>, size: &PhysicalSize<u32>) -> Self {
+        Self {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        }
     }
-    let logical_mx = monitor_position.0 as f64 / scale;
-    let logical_my = monitor_position.1 as f64 / scale;
-    let logical_mw = monitor_size.0 as f64 / scale;
-    let logical_mh = monitor_size.1 as f64 / scale;
-    let logical_wx = window_position.0 as f64 / scale;
-    let logical_wy = window_position.1 as f64 / scale;
-    logical_wx >= logical_mx
-        && logical_wx < logical_mx + logical_mw
-        && logical_wy >= logical_my
-        && logical_wy < logical_my + logical_mh
+}
+
+fn monitor_index_from_native(current: Rect, monitors: &[Rect]) -> Option<usize> {
+    monitors.iter().position(|monitor| *monitor == current)
+}
+
+fn map_axis(
+    window_origin: i32,
+    window_length: u32,
+    source_origin: i32,
+    source_length: u32,
+    target_origin: i32,
+    target_length: u32,
+) -> (i32, u32) {
+    if source_length == 0 || target_length == 0 {
+        return (target_origin, target_length);
+    }
+
+    let length_ratio = window_length as f64 / source_length as f64;
+    let target_window_length =
+        ((target_length as f64 * length_ratio).round() as u32).clamp(1, target_length);
+
+    let source_travel = source_length.saturating_sub(window_length);
+    let anchor = if source_travel == 0 {
+        0.5
+    } else {
+        ((window_origin as f64 - source_origin as f64) / source_travel as f64).clamp(0.0, 1.0)
+    };
+    let target_travel = target_length.saturating_sub(target_window_length);
+    let target_window_origin = target_origin as f64 + (target_travel as f64 * anchor).round();
+
+    (target_window_origin as i32, target_window_length)
+}
+
+/// 将普通窗口在源显示器工作区中的尺寸比例和位置锚点映射到目标工作区。
+fn map_window_to_work_area(window: Rect, source: Rect, target: Rect) -> Rect {
+    let (x, width) = map_axis(
+        window.x,
+        window.width,
+        source.x,
+        source.width,
+        target.x,
+        target.width,
+    );
+    let (y, height) = map_axis(
+        window.y,
+        window.height,
+        source.y,
+        source.height,
+        target.y,
+        target.height,
+    );
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 /// 从 Rust 字符串创建 NSString（通过 objc msg_send，不依赖 cocoa crate）
@@ -52,63 +110,24 @@ fn ns_string(s: &str) -> id {
 
 /// Get the index of the monitor (display) where the main window is currently located.
 ///
-/// This function uses the window's physical position and converts it to logical coordinates
-/// to determine which monitor contains the window.
+/// 使用 Tauri 2.11 的 `current_monitor()` 获取窗口所属显示器。
 ///
 /// # Returns
 /// * `Some(usize)` - The index of the monitor containing the window
 /// * `None` - Unable to determine the monitor (window not found or position unavailable)
 pub fn get_current_monitor_index<R: Runtime>(handle: &AppHandle<R>) -> Option<usize> {
-    // Get window position (physical pixels)
-    let (window_x, window_y) = handle
-        .get_webview_window("main")
-        .and_then(|w| w.outer_position().ok())
-        .map(|p| (p.x, p.y))
-        .unwrap_or((0, 0));
+    let window = handle.get_webview_window("main")?;
+    let monitors = window.available_monitors().ok()?;
+    let monitor_bounds: Vec<_> = monitors
+        .iter()
+        .map(|monitor| Rect::from_parts(monitor.position(), monitor.size()))
+        .collect();
 
-    eprintln!(
-        "DEBUG: get_current_monitor_index: window position = ({}, {})",
-        window_x, window_y
-    );
-
-    // Use Tauri's available_monitors to get all displays
-    if let Ok(monitors) = handle.available_monitors() {
-        eprintln!("DEBUG: Total monitors: {}", monitors.len());
-
-        for (i, monitor) in monitors.iter().enumerate() {
-            let pos = monitor.position();
-            let size = monitor.size();
-            let scale = monitor.scale_factor();
-
-            eprintln!(
-                "DEBUG: Monitor[{}]: x={}, y={}, width={}, height={}, scale={}",
-                i, pos.x, pos.y, size.width, size.height, scale
-            );
-
-            let within = point_in_monitor_bounds(
-                (window_x, window_y),
-                (pos.x, pos.y),
-                (size.width, size.height),
-                scale,
-            );
-
-            eprintln!(
-                "DEBUG: Window logical ({:.0}, {:.0}) within monitor[{}]: {}",
-                window_x as f64 / scale,
-                window_y as f64 / scale,
-                i,
-                within
-            );
-
-            if within {
-                eprintln!("DEBUG: Window is on monitor[{}]", i);
-                return Some(i);
-            }
-        }
-    }
-
-    eprintln!("DEBUG: Could not determine which monitor the window is on");
-    None
+    let current = window.current_monitor().ok()??;
+    monitor_index_from_native(
+        Rect::from_parts(current.position(), current.size()),
+        &monitor_bounds,
+    )
 }
 
 /// Get macOS system display names (e.g., "P275MV", "G1").
@@ -191,75 +210,106 @@ pub fn get_display_names<R: Runtime>(handle: &AppHandle<R>) -> Vec<String> {
     names
 }
 
-/// Calculate the center position for moving a window to a target monitor.
-///
-/// # Arguments
-/// * `monitor_index` - The index of the target monitor
-/// * `window_size` - The current window size (physical pixels)
-/// * `handle` - The app handle to get monitor information
-///
-/// # Returns
-/// * `Some((i32, i32))` - The (x, y) logical position for centering the window
-/// * `None` - Unable to calculate (monitor not found or window not available)
-pub fn calculate_center_position<R: Runtime>(
-    monitor_index: usize,
-    window_size: (u32, u32),
-    handle: &AppHandle<R>,
-) -> Option<(i32, i32)> {
-    if let Ok(monitors) = handle.available_monitors() {
-        if let Some(target_monitor) = monitors.get(monitor_index) {
-            let scale = target_monitor.scale_factor();
-            let pos = target_monitor.position();
-            let size = target_monitor.size();
-
-            let (x, y) = calculate_center_from_physical_bounds(
-                (pos.x, pos.y),
-                (size.width, size.height),
-                scale,
-                window_size,
-            );
-
-            eprintln!(
-                "DEBUG: Calculated center position ({}, {}) for monitor[{}]",
-                x, y, monitor_index
-            );
-            eprintln!(
-                "DEBUG: Target monitor: logical=({:.0}, {:.0}), size={:.0}x{:.0}, scale={}",
-                pos.x as f64 / scale,
-                pos.y as f64 / scale,
-                size.width as f64 / scale,
-                size.height as f64 / scale,
-                scale
-            );
-            eprintln!(
-                "DEBUG: Window size: physical={}x{}",
-                window_size.0, window_size.1
-            );
-
-            return Some((x, y));
-        }
-    }
-
-    None
+fn apply_window_rect<R: Runtime>(window: &WebviewWindow<R>, rect: Rect) -> tauri::Result<()> {
+    window.set_position(Position::Physical(PhysicalPosition::new(rect.x, rect.y)))?;
+    window.set_size(Size::Physical(PhysicalSize::new(rect.width, rect.height)))
 }
 
-/// 与硬件无关的居中计算，供普通单元测试覆盖。
-fn calculate_center_from_physical_bounds(
-    monitor_position: (i32, i32),
-    monitor_size: (u32, u32),
-    scale: f64,
-    window_size: (u32, u32),
-) -> (i32, i32) {
-    let logical_width = window_size.0 as f64 / scale;
-    let logical_height = window_size.1 as f64 / scale;
-    let logical_mx = monitor_position.0 as f64 / scale;
-    let logical_my = monitor_position.1 as f64 / scale;
-    let logical_mw = monitor_size.0 as f64 / scale;
-    let logical_mh = monitor_size.1 as f64 / scale;
-    (
-        (logical_mx + (logical_mw - logical_width) / 2.0) as i32,
-        (logical_my + (logical_mh - logical_height) / 2.0) as i32,
-    )
+fn wait_for_restored_window<R: Runtime>(
+    window: &WebviewWindow<R>,
+    was_fullscreen: bool,
+    was_maximized: bool,
+) {
+    for _ in 0..30 {
+        let fullscreen_ready = !was_fullscreen || matches!(window.is_fullscreen(), Ok(false));
+        let maximized_ready = !was_maximized || matches!(window.is_maximized(), Ok(false));
+        if fullscreen_ready && maximized_ready {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+fn wait_for_target_monitor<R: Runtime>(handle: &AppHandle<R>, target_index: usize) {
+    for _ in 0..20 {
+        if get_current_monitor_index(handle) == Some(target_index) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// 将主窗口移动到目标显示器，并保留全屏/最大化状态或普通窗口比例。
+pub fn move_main_window_to_monitor<R: Runtime>(
+    handle: &AppHandle<R>,
+    target_index: usize,
+) -> Result<(), String> {
+    let window = handle
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| error.to_string())?;
+    let current_index = get_current_monitor_index(handle)
+        .ok_or_else(|| "Tauri current_monitor could not identify the source display".to_string())?;
+    if current_index == target_index {
+        return Ok(());
+    }
+
+    let source_monitor = monitors
+        .get(current_index)
+        .ok_or_else(|| "Source display index is no longer valid".to_string())?;
+    let target_monitor = monitors
+        .get(target_index)
+        .ok_or_else(|| "Target display index is no longer valid".to_string())?;
+
+    let window_rect = Rect::from_parts(
+        &window.outer_position().map_err(|error| error.to_string())?,
+        &window.outer_size().map_err(|error| error.to_string())?,
+    );
+    let source_work_area = Rect::from_parts(
+        &source_monitor.work_area().position,
+        &source_monitor.work_area().size,
+    );
+    let target_work_area = Rect::from_parts(
+        &target_monitor.work_area().position,
+        &target_monitor.work_area().size,
+    );
+    let target_rect = map_window_to_work_area(window_rect, source_work_area, target_work_area);
+
+    let was_fullscreen = window.is_fullscreen().unwrap_or(false);
+    let was_maximized = !was_fullscreen && window.is_maximized().unwrap_or(false);
+
+    if was_fullscreen {
+        window
+            .set_fullscreen(false)
+            .map_err(|error| error.to_string())?;
+    } else if was_maximized {
+        window.unmaximize().map_err(|error| error.to_string())?;
+    }
+
+    let handle = handle.clone();
+    let move_window = move || {
+        wait_for_restored_window(&window, was_fullscreen, was_maximized);
+        if let Err(error) = apply_window_rect(&window, target_rect) {
+            eprintln!("[Monitor] Failed to move main window: {error}");
+            return;
+        }
+        wait_for_target_monitor(&handle, target_index);
+        if was_fullscreen {
+            if let Err(error) = window.set_fullscreen(true) {
+                eprintln!("[Monitor] Failed to restore fullscreen: {error}");
+            }
+        } else if was_maximized {
+            if let Err(error) = window.maximize() {
+                eprintln!("[Monitor] Failed to restore maximized state: {error}");
+            }
+        }
+    };
+
+    std::thread::spawn(move_window);
+
+    Ok(())
 }
 
 /// Start event-driven window position monitoring.
@@ -301,15 +351,9 @@ where
                         );
                         last_idx.store(new_idx, Ordering::Relaxed);
 
-                        // Rebuild menu after a short delay to let the move complete
-                        let handle = handle_clone.clone();
-                        let callback = callback_clone.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            if let Err(e) = callback(&handle) {
-                                eprintln!("DEBUG MONITOR: Failed to rebuild menu: {:?}", e);
-                            }
-                        });
+                        if let Err(e) = callback_clone(&handle_clone) {
+                            eprintln!("DEBUG MONITOR: Failed to rebuild menu: {:?}", e);
+                        }
                     }
                 }
             }
@@ -330,39 +374,129 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_center_position_basic() {
+    fn native_monitor_bounds_match_the_available_monitor_index() {
+        let monitors = [
+            Rect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            Rect {
+                x: 1920,
+                y: -400,
+                width: 1080,
+                height: 1920,
+            },
+        ];
+        assert_eq!(monitor_index_from_native(monitors[1], &monitors), Some(1));
         assert_eq!(
-            calculate_center_from_physical_bounds((0, 0), (3840, 2160), 2.0, (1600, 1200)),
-            (560, 240),
-        );
-        assert_eq!(
-            calculate_center_from_physical_bounds((-1920, 0), (1920, 1080), 1.0, (1200, 800)),
-            (-1560, 140),
+            monitor_index_from_native(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1280,
+                    height: 720,
+                },
+                &monitors,
+            ),
+            None
         );
     }
 
     #[test]
-    fn center_calculation_handles_offsets_fractional_scale_and_large_windows() {
+    fn centered_ninety_percent_window_keeps_its_ratios_on_a_portrait_display() {
         assert_eq!(
-            calculate_center_from_physical_bounds((1920, 0), (2560, 1440), 1.25, (1000, 750)),
-            (2160, 276),
-        );
-        assert_eq!(
-            calculate_center_from_physical_bounds((0, 0), (1000, 800), 1.0, (1400, 1000)),
-            (-200, -100),
+            map_window_to_work_area(
+                Rect {
+                    x: 96,
+                    y: 92,
+                    width: 1728,
+                    height: 936,
+                },
+                Rect {
+                    x: 0,
+                    y: 40,
+                    width: 1920,
+                    height: 1040,
+                },
+                Rect {
+                    x: 1920,
+                    y: 24,
+                    width: 1080,
+                    height: 1896,
+                },
+            ),
+            Rect {
+                x: 1974,
+                y: 119,
+                width: 972,
+                height: 1706,
+            }
         );
     }
 
     #[test]
-    fn monitor_bounds_include_top_left_and_exclude_bottom_right() {
-        let position = (-1920, 100);
-        let size = (1920, 1080);
-        assert!(point_in_monitor_bounds(position, position, size, 2.0));
-        assert!(point_in_monitor_bounds((-1, 1179), position, size, 2.0));
-        assert!(!point_in_monitor_bounds((0, 1179), position, size, 2.0));
-        assert!(!point_in_monitor_bounds((-1, 1180), position, size, 2.0));
-        assert!(!point_in_monitor_bounds((-1921, 100), position, size, 2.0));
-        assert!(!point_in_monitor_bounds(position, position, size, 0.0));
-        assert!(!point_in_monitor_bounds(position, position, size, f64::NAN));
+    fn window_edge_anchors_are_preserved_between_different_orientations() {
+        assert_eq!(
+            map_window_to_work_area(
+                Rect {
+                    x: 700,
+                    y: 550,
+                    width: 400,
+                    height: 300,
+                },
+                Rect {
+                    x: 100,
+                    y: 50,
+                    width: 1000,
+                    height: 800,
+                },
+                Rect {
+                    x: -1200,
+                    y: 0,
+                    width: 1200,
+                    height: 1920,
+                },
+            ),
+            Rect {
+                x: -480,
+                y: 1200,
+                width: 480,
+                height: 720,
+            }
+        );
+    }
+
+    #[test]
+    fn oversized_windows_are_clamped_inside_the_target_work_area() {
+        assert_eq!(
+            map_window_to_work_area(
+                Rect {
+                    x: -200,
+                    y: -100,
+                    width: 1400,
+                    height: 1000,
+                },
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 1000,
+                    height: 800,
+                },
+                Rect {
+                    x: 1000,
+                    y: 24,
+                    width: 800,
+                    height: 1200,
+                },
+            ),
+            Rect {
+                x: 1000,
+                y: 24,
+                width: 800,
+                height: 1200,
+            }
+        );
     }
 }

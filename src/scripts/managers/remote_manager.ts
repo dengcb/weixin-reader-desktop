@@ -5,6 +5,9 @@ import { EventBus, Events } from '../core/event_bus';
 import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 
+const MENU_KEY_DEBOUNCE_MS = 1000;
+const MENU_CONTEXT_GUARD_MS = 1500;
+
 /**
  * RemoteManager - 极简蓝牙遥控器管理器
  *
@@ -14,8 +17,11 @@ export class RemoteManager {
   private siteContext: SiteContext;
   private enabled = false;
   private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
+  private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
+  private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
   private menuKeyDebouncing = false;
   private menuDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastMenuKeyAt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private initializationGeneration = 0;
   private unsubscribeSettings: (() => void) | null = null;
@@ -198,6 +204,15 @@ export class RemoteManager {
       window.removeEventListener('keydown', this.keyboardHandler, true);
       this.keyboardHandler = null;
     }
+    if (this.contextMenuHandler) {
+      window.removeEventListener('contextmenu', this.contextMenuHandler, true);
+      this.contextMenuHandler = null;
+    }
+    if (this.keyupHandler) {
+      window.removeEventListener('keyup', this.keyupHandler, true);
+      this.keyupHandler = null;
+    }
+    this.lastMenuKeyAt = 0;
     this.enabled = false;
     log.info('[RemoteManager] 已禁用');
   }
@@ -252,27 +267,70 @@ export class RemoteManager {
         settingsStore.update({ hideNavbar: !current.hideNavbar });
         handled = true;
       }
-      // 菜单键 - 隐藏工具栏
+      // 小米遥控器菜单键：首个未知信号立即切换工具栏；后续重复信号只负责阻止默认右键菜单。
       else if (e.code === 'Unidentified' && e.keyCode === 0) {
-        if (!this.menuKeyDebouncing) {
-          const current = settingsStore.get();
-          settingsStore.update({ hideToolbar: !current.hideToolbar });
-          this.menuKeyDebouncing = true;
-          this.menuDebounceTimer = setTimeout(() => {
-            this.menuKeyDebouncing = false;
-            this.menuDebounceTimer = null;
-          }, 1000);
-          handled = true;
-        }
+        this.handleRemoteMenuSignal();
+        handled = true;
       }
 
       if (handled) {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
       }
     };
 
+    // macOS WebKit 将小米遥控器菜单键报告为左上角 (1,1) 的 contextmenu，
+    // 松开后才补发 Unidentified keyup；壳在网页收到前完成识别和拦截。
+    this.contextMenuHandler = (e: MouseEvent) => {
+      if (!this.siteContext.isReaderPage) return;
+      if (this.isRemoteMenuContextEvent(e)) {
+        this.handleRemoteMenuSignal();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (Date.now() - this.lastMenuKeyAt > MENU_CONTEXT_GUARD_MS) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+
+    this.keyupHandler = (e: KeyboardEvent) => {
+      if (!this.siteContext.isReaderPage || !this.isRemoteMenuKeyboardEvent(e)) return;
+      this.handleRemoteMenuSignal();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+
     window.addEventListener('keydown', this.keyboardHandler, { passive: false, capture: true });
+    window.addEventListener('keyup', this.keyupHandler, { capture: true });
+    window.addEventListener('contextmenu', this.contextMenuHandler, { capture: true });
+  }
+
+  private isRemoteMenuKeyboardEvent(e: KeyboardEvent): boolean {
+    return e.code === 'Unidentified'
+      && e.keyCode === 0
+      && (e.key === '\u0010' || e.key === 'Unidentified' || e.key === '');
+  }
+
+  private isRemoteMenuContextEvent(e: MouseEvent): boolean {
+    return e.type === 'contextmenu'
+      && e.button === 2
+      && e.buttons === 0
+      && e.detail === 0
+      && e.clientX === 1
+      && e.clientY === 1;
+  }
+
+  private handleRemoteMenuSignal(): void {
+    this.lastMenuKeyAt = Date.now();
+    if (this.menuKeyDebouncing) return;
+    const current = settingsStore.get();
+    settingsStore.update({ hideToolbar: !current.hideToolbar });
+    this.menuKeyDebouncing = true;
+    this.menuDebounceTimer = setTimeout(() => {
+      this.menuKeyDebouncing = false;
+      this.menuDebounceTimer = null;
+    }, MENU_KEY_DEBOUNCE_MS);
   }
 
   destroy() {

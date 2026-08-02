@@ -1,0 +1,20 @@
+/*
+ * @capability wideMode
+ * [功能能力 2/6：宽屏模式]
+ * 「阅读 → 阅读变宽」开启时才会注入本文件，因此不依赖运行期给 body
+ * 追加类名；即使插件早于 <body> 加载，首屏进入双栏后也会直接使用 90%。
+ */
+body.atreader-fanqie-paged {
+  /* 与微信读书宽屏模式一致：灰色书页从窗口宽度的 80% 增至 90%。 */
+  --atreader-page-ratio: 90%;
+}
+
+body.atreader-fanqie-paged .reader-toolbar {
+  right: auto !important;
+  left: min(calc(95% + 8px), calc(100% - 64px)) !important;
+}
+
+/* 关闭双栏配置后，宽屏开关仍对番茄原生单栏有效。 */
+body:not(.atreader-fanqie-paged) .muye-reader-content {
+  max-width: 960px !important;
+}

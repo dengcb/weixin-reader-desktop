@@ -1,0 +1,127 @@
+/*
+ * @capability doubleColumn
+ * [功能能力 1/6：双栏模式]
+ * 番茄整页双栏排版、百分比书页宽度和无动画整页位移。
+ *
+ * 可直接在「设置 → 插件管理 → 番茄小说 → 编辑 → 样式文件」中调整。
+ * JS 只负责更新 --atreader-page-height 和 --atreader-page-offset。
+ * 底部页码属于“进度追踪”，样式单独放在 progress.css。
+ */
+
+html:has(body.atreader-fanqie-paged),
+body.atreader-fanqie-paged {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
+
+body.atreader-fanqie-paged {
+  /*
+   * 番茄原生阅读背景画在 .muye-reader-box 上，而它的外壳默认只有 960px。
+   * 参考微信读书：普通模式灰色书页占窗口 80%，32px 仅作为书页内部边距，
+   * 不再叠加到总宽度，避免书页向右压住原生工具栏。
+   */
+  --atreader-page-ratio: 80%;
+  --atreader-shell-padding: 32px;
+  --atreader-shell-width: var(--atreader-page-ratio);
+}
+
+body.atreader-fanqie-paged .muye-reader {
+  overflow: hidden !important;
+}
+
+body.atreader-fanqie-paged .muye-reader .muye-reader-inner {
+  box-sizing: border-box !important;
+  width: var(--atreader-shell-width) !important;
+  max-width: none !important;
+}
+
+body.atreader-fanqie-paged .muye-reader-box {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+body.atreader-fanqie-paged .muye-reader-box-header {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding-right: var(--atreader-shell-padding) !important;
+  padding-left: var(--atreader-shell-padding) !important;
+}
+
+body.atreader-fanqie-paged .muye-reader-nav {
+  box-sizing: border-box !important;
+  left: 50% !important;
+  width: var(--atreader-shell-width) !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding-right: var(--atreader-shell-padding) !important;
+  padding-left: var(--atreader-shell-padding) !important;
+  transform: translateX(-50%) !important;
+}
+
+body.atreader-fanqie-paged .atreader-fanqie-page-viewport {
+  --atreader-column-gap: clamp(40px, 5vw, 72px);
+  box-sizing: border-box !important;
+  width: calc(
+    100%
+    - var(--atreader-shell-padding)
+    - var(--atreader-shell-padding)
+  ) !important;
+  max-width: none !important;
+  height: var(--atreader-page-height) !important;
+  min-height: 320px !important;
+  margin-right: auto !important;
+  margin-left: auto !important;
+  overflow: hidden !important;
+}
+
+body.atreader-fanqie-paged .atreader-fanqie-page-viewport > .muye-reader-content {
+  box-sizing: border-box !important;
+  display: block !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: var(--atreader-page-height) !important;
+  min-height: 320px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  column-count: 2 !important;
+  column-gap: var(--atreader-column-gap) !important;
+  column-fill: auto !important;
+  overflow: visible !important;
+  transform: translate3d(var(--atreader-page-offset, 0), 0, 0) !important;
+  transition: none !important;
+}
+
+body.atreader-fanqie-paged .muye-reader-content p {
+  orphans: 2;
+  widows: 2;
+}
+
+body.atreader-fanqie-paged .muye-reader-content img,
+body.atreader-fanqie-paged .muye-reader-content figure,
+body.atreader-fanqie-paged .muye-reader-content pre,
+body.atreader-fanqie-paged .muye-reader-content blockquote {
+  max-width: 100% !important;
+  max-height: calc(var(--atreader-page-height) - 24px) !important;
+  break-inside: avoid;
+}
+
+/* 浮动工具栏停在百分比书页右侧 8px，不再与灰色背景重叠。 */
+body.atreader-fanqie-paged .reader-toolbar {
+  right: auto !important;
+  left: min(calc(90% + 8px), calc(100% - 64px)) !important;
+}
+
+@media (max-width: 760px) {
+  body.atreader-fanqie-paged {
+    --atreader-shell-padding: 16px;
+  }
+
+  body.atreader-fanqie-paged .atreader-fanqie-page-viewport {
+    --atreader-column-gap: 28px;
+  }
+
+  body.atreader-fanqie-paged .reader-toolbar {
+    display: none !important;
+  }
+}

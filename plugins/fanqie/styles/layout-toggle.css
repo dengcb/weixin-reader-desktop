@@ -1,0 +1,21 @@
+/*
+ * @capability doubleColumn
+ * [功能能力 1/6：双栏模式]
+ * 注入到番茄原生工具栏顶部的单列 / 双栏切换按钮。
+ * 按钮沿用 .reader-toolbar-item 的尺寸、悬停和文字样式，只补充交互细节。
+ */
+.atreader-fanqie-layout-toggle {
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.atreader-fanqie-layout-toggle .reader-toolbar-item-icon {
+  color: inherit;
+}
+
+.atreader-fanqie-layout-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
+  outline-offset: -2px;
+}

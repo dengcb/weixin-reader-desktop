@@ -291,6 +291,7 @@ pub async fn get_installed_plugins(
 pub struct RuntimePlugin {
     pub plugin: plugin_manager::PluginInfo,
     pub code: String,
+    pub styles: std::collections::BTreeMap<String, String>,
 }
 
 fn manifest_matches_host(plugin: &plugin_manager::PluginInfo, host: &str) -> bool {
@@ -336,7 +337,12 @@ pub async fn get_runtime_plugin<R: Runtime>(
         return Ok(None);
     };
     let code = plugin_manager::get_plugin_code(&app, &plugin.id)?;
-    Ok(Some(RuntimePlugin { plugin, code }))
+    let styles = plugin_manager::get_plugin_styles(&app, &plugin.id)?;
+    Ok(Some(RuntimePlugin {
+        plugin,
+        code,
+        styles,
+    }))
 }
 
 // ==================== 插件编辑器命令 ====================

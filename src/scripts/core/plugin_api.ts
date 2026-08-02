@@ -53,7 +53,10 @@ export const cleanupPluginAPI = (pluginId: string): void => {
  * 为插件创建 Style API
  * 样式 ID 自动添加插件前缀，避免冲突
  */
-const createStyleAPI = (pluginId: string): StyleAPI => {
+const createStyleAPI = (
+  pluginId: string,
+  styleFiles: Readonly<Record<string, string>>,
+): StyleAPI => {
   const prefix = `plugin-${pluginId}-`;
   const styles = new Set<string>();
   pluginStyleIds.set(pluginId, styles);
@@ -73,6 +76,16 @@ const createStyleAPI = (pluginId: string): StyleAPI => {
     
     has(id: string): boolean {
       return !!document.getElementById(`${prefix}${id}`);
+    },
+
+    getFile(name: string): string | null {
+      return Object.prototype.hasOwnProperty.call(styleFiles, name)
+        ? styleFiles[name]
+        : null;
+    },
+
+    listFiles(): string[] {
+      return Object.keys(styleFiles).sort();
     },
   };
 };
@@ -298,12 +311,15 @@ const createContentAPI = (_pluginId: string): ContentAPI => {
  * 为指定插件创建完整的 PluginAPI 实例
  * 每个插件获得独立的命名空间
  */
-export const createPluginAPI = (manifest: PluginManifest): PluginAPI => {
+export const createPluginAPI = (
+  manifest: PluginManifest,
+  styleFiles: Readonly<Record<string, string>> = {},
+): PluginAPI => {
   const pluginId = manifest.id;
   cleanupPluginAPI(pluginId);
   
   return {
-    style: createStyleAPI(pluginId),
+    style: createStyleAPI(pluginId, styleFiles),
     settings: createSettingsAPI(pluginId),
     events: createEventsAPI(pluginId),
     menu: createMenuAPI(pluginId),

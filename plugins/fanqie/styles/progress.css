@@ -1,0 +1,21 @@
+/*
+ * @capability progressTracker
+ * [功能能力 6/6：进度追踪]
+ * 开启时，本文件与底部“当前页 / 总页数”节点一起生效。
+ * 关闭能力后，代码会移除节点、停止注入本文件，并回收底部 48px 预留空间。
+ */
+.atreader-fanqie-page-indicator {
+  position: fixed;
+  z-index: 2147483000;
+  right: 50%;
+  bottom: 14px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, Canvas 88%, transparent);
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  pointer-events: none;
+  transform: translateX(50%);
+  backdrop-filter: blur(10px);
+}

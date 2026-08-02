@@ -140,6 +140,21 @@ describe('ReaderSiteRuntime and SiteContext', () => {
     expect(isReaderSiteRuntime(externalPlugin())).toBe(false);
   });
 
+  it('uses the installed manifest as the runtime and plugin capability authority', () => {
+    const plugin = externalPlugin();
+    const installedManifest: PluginManifest = {
+      ...manifest,
+      version: '2.0.0',
+      capabilities: { doubleColumn: true, wideMode: false },
+    };
+    const runtime = createPluginSiteRuntime(plugin, installedManifest);
+
+    expect(runtime.manifest).toBe(installedManifest);
+    expect(plugin.manifest).toBe(installedManifest);
+    expect(runtime.manifest.version).toBe('2.0.0');
+    expect(runtime.manifest.capabilities.doubleColumn).toBe(true);
+  });
+
   it('reuses one MutationObserver across repeated stop and restart cycles', () => {
     const NativeObserver = globalThis.MutationObserver;
     let instances = 0;

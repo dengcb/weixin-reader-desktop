@@ -1,0 +1,14 @@
+/*
+ * @capability hideNavbar
+ * [功能能力 4/6：隐藏导航栏]
+ * 「阅读 → 隐藏导航栏」
+ * .muye-reader-nav 包含返回按钮、书名、登录入口以及下方 1px 分隔线。
+ */
+.muye-reader-nav {
+  display: none !important;
+}
+
+/* 原站把导航栏的 80px 预留在书页 padding-top: 13.2rem 中，需同步收回。 */
+.muye-reader-box {
+  padding-top: 5.2rem !important;
+}

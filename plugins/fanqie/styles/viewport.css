@@ -1,0 +1,8 @@
+/*
+ * @foundation
+ * [基础兼容样式：不对应单独的功能能力开关]
+ * 番茄桌面页以 10px 为 rem 基准，避免 WebView viewport 差异把正文压成细条。
+ */
+html {
+  font-size: 10px !important;
+}

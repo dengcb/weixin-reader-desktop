@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -503,6 +504,52 @@ pub fn get_plugin_code<R: Runtime>(app: &AppHandle<R>, plugin_id: &str) -> Resul
     fs::read_to_string(&code_path).map_err(|error| format!("Failed to read plugin code: {error}"))
 }
 
+fn read_plugin_styles_directory(styles_dir: &Path) -> Result<BTreeMap<String, String>, String> {
+    if !styles_dir.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let metadata = fs::symlink_metadata(styles_dir)
+        .map_err(|error| format!("Failed to inspect plugin styles: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Plugin styles path must be a real directory".to_string());
+    }
+
+    let mut styles = BTreeMap::new();
+    for entry in fs::read_dir(styles_dir)
+        .map_err(|error| format!("Failed to read plugin styles: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Failed to read plugin style entry: {error}"))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.ends_with(".css") {
+            continue;
+        }
+        validate_plugin_file_name(&name)?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Failed to inspect plugin style '{name}': {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(format!("Plugin style must be a regular file: {name}"));
+        }
+        if metadata.len() > MAX_ENTRY_BYTES {
+            return Err(format!("Plugin style is too large: {name}"));
+        }
+        let content = fs::read_to_string(entry.path())
+            .map_err(|error| format!("Failed to read plugin style '{name}': {error}"))?;
+        styles.insert(name, content);
+    }
+    Ok(styles)
+}
+
+/// 读取已安装插件 styles/ 下的 CSS；只返回当前插件目录内的普通文本文件。
+pub fn get_plugin_styles<R: Runtime>(
+    app: &AppHandle<R>,
+    plugin_id: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let styles_dir = installed_plugin_dir(app, plugin_id)?.join("styles");
+    read_plugin_styles_directory(&styles_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,6 +577,27 @@ mod tests {
             builtin: false,
             enabled: false,
         }
+    }
+
+    #[test]
+    fn runtime_style_reader_returns_named_css_files_only() {
+        let directory = std::env::temp_dir().join(format!(
+            "wxrd-style-reader-{}-{}",
+            std::process::id(),
+            INSTALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("reader.css"), "body { overflow: hidden; }").unwrap();
+        fs::write(directory.join("notes.txt"), "ignored").unwrap();
+
+        let styles = read_plugin_styles_directory(&directory).unwrap();
+        assert_eq!(styles.len(), 1);
+        assert_eq!(
+            styles.get("reader.css").map(String::as_str),
+            Some("body { overflow: hidden; }")
+        );
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     fn temporary_archive(label: &str) -> PathBuf {

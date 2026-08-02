@@ -125,6 +125,10 @@ export interface StyleAPI {
   remove(id: string): void;
   /** 检查样式是否已注入 */
   has(id: string): boolean;
+  /** 读取插件包 styles/ 目录中的 CSS 文件（只读） */
+  getFile(name: string): string | null;
+  /** 列出插件包中可用的 CSS 文件名 */
+  listFiles(): string[];
 }
 
 /**

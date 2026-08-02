@@ -64,3 +64,6 @@ CLAUDE.md
 
 # Test
 test-*.js
+
+#worktree for Github Pages
+site/

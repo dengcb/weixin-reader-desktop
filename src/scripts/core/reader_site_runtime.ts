@@ -124,12 +124,27 @@ class WeReadSiteRuntime implements ReaderSiteRuntime {
 
 class PluginSiteRuntime implements ReaderSiteRuntime {
   readonly styleOwner = 'plugin' as const;
+  private readonly effectiveManifest: PluginManifest;
 
-  constructor(private readonly plugin: ReaderPlugin) {}
+  constructor(
+    private readonly plugin: ReaderPlugin,
+    manifestOverride?: PluginManifest,
+  ) {
+    this.effectiveManifest = manifestOverride ?? plugin.manifest;
+    if (manifestOverride) {
+      // 安装包 manifest 是编辑器实际修改的文件，也应是运行时能力的权威来源。
+      // 同步回插件实例，保证插件内部读取 this.manifest 时得到同一份配置。
+      Object.defineProperty(plugin, 'manifest', {
+        value: this.effectiveManifest,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
 
-  get manifest(): PluginManifest { return this.plugin.manifest; }
-  get id(): string { return this.plugin.manifest.id; }
-  get name(): string { return this.plugin.manifest.name; }
+  get manifest(): PluginManifest { return this.effectiveManifest; }
+  get id(): string { return this.effectiveManifest.id; }
+  get name(): string { return this.effectiveManifest.name; }
 
   onLoad(api: PluginAPI): void { this.plugin.onLoad(api); }
   onUnload(): void { this.plugin.onUnload(); }
@@ -181,8 +196,10 @@ class PluginSiteRuntime implements ReaderSiteRuntime {
 
 export const createWeReadSiteRuntime = (): ReaderSiteRuntime => new WeReadSiteRuntime();
 
-export const createPluginSiteRuntime = (plugin: ReaderPlugin): ReaderSiteRuntime =>
-  new PluginSiteRuntime(plugin);
+export const createPluginSiteRuntime = (
+  plugin: ReaderPlugin,
+  manifestOverride?: PluginManifest,
+): ReaderSiteRuntime => new PluginSiteRuntime(plugin, manifestOverride);
 
 export const isReaderSiteRuntime = (plugin: ReaderPlugin): plugin is ReaderSiteRuntime =>
   'styleOwner' in plugin && 'getWideModeCSS' in plugin && 'getToolbarCSS' in plugin;

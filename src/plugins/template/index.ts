@@ -1,4 +1,4 @@
-/**
+/*!
  * 插件模板 - 主文件
  * Plugin Template - Main File
  * 
@@ -10,6 +10,11 @@
  * 2. 修改 manifest.json 中的配置
  * 3. 实现下面的各个方法
  * 4. 在 styles/ 目录下添加 CSS 样式
+ * 5. 每项已开启能力须在实现处用 `@capability <能力键>` 自声明
+ *
+ * 当前模板已声明的能力：
+ * @capability wideMode
+ * @capability hideToolbar
  */
 
 import type {

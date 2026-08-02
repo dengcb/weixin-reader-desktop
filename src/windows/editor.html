@@ -665,6 +665,13 @@
             <div class="form-hint" style="margin-bottom: 12px;">选择插件支持的功能能力</div>
             <div class="toggle-group">
               <div class="toggle-item">
+                <span class="toggle-label">双栏模式</span>
+                <label class="toggle">
+                  <input type="checkbox" id="capDoubleColumn">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-item">
                 <span class="toggle-label">宽屏模式</span>
                 <label class="toggle">
                   <input type="checkbox" id="capWideMode" checked>
@@ -696,13 +703,6 @@
                 <span class="toggle-label">进度追踪</span>
                 <label class="toggle">
                   <input type="checkbox" id="capProgressTracker">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="toggle-item">
-                <span class="toggle-label">双栏模式</span>
-                <label class="toggle">
-                  <input type="checkbox" id="capDoubleColumn">
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -804,17 +804,31 @@
       pluginId: null,
       isBuiltin: false,
       isDirty: false,
-      files: {
-        'index.ts': '',
-        'wide.css': '',
-        'toolbar.css': '',
-        'navbar.css': '',
-        'theme.css': ''
-      }
+      originalManifest: null,
+      activeCodeFile: 'index.ts',
+      activeStyleFile: 'wide.css',
+      files: {}
     };
 
+    // 官方插件自声明规范：能力是否真的可用由实际使用验证；编辑器只检查声明是否齐全。
+    const codeFilePriority = ['index.ts', 'index.js', 'plugin.ts', 'plugin.js'];
+    const capabilityFields = {
+      doubleColumn: 'capDoubleColumn',
+      wideMode: 'capWideMode',
+      hideToolbar: 'capHideToolbar',
+      hideNavbar: 'capHideNavbar',
+      chapterNav: 'capChapterNav',
+      progressTracker: 'capProgressTracker'
+    };
+    const capabilityKeys = Object.keys(capabilityFields);
+
     // 默认代码模板
-    const defaultCodeTemplate = `import type { ReaderPlugin, PluginManifest, PluginStyles, PluginAPI } from '../../scripts/core/plugin_types';
+    const defaultCodeTemplate = `/*!
+ * 官方自声明标记：能力开启后，须在代码或样式中至少出现一次对应标记。
+ * @capability wideMode
+ * @capability hideToolbar
+ */
+import type { ReaderPlugin, PluginManifest, PluginStyles, PluginAPI } from '../../scripts/core/plugin_types';
 
 const manifest: PluginManifest = {
   id: 'my-plugin',
@@ -880,20 +894,20 @@ export default MyPlugin;
 `;
 
     const defaultStyleTemplates = {
-      'wide.css': `/* 宽屏模式样式 */
+      'wide.css': `/* @capability wideMode - 宽屏模式样式 */
 .reader-container {
   max-width: 90% !important;
   margin: 0 auto;
 }`,
-      'toolbar.css': `/* 工具栏隐藏样式 */
+      'toolbar.css': `/* @capability hideToolbar - 工具栏隐藏样式 */
 .toolbar {
   display: none !important;
 }`,
-      'navbar.css': `/* 导航栏隐藏样式 */
+      'navbar.css': `/* @capability hideNavbar - 导航栏隐藏样式 */
 .navbar {
   display: none !important;
 }`,
-      'theme.css': `/* 主题样式 */
+      'theme.css': `/* @foundation - 不对应功能能力开关的基础主题样式 */
 /* 深色模式 */
 @media (prefers-color-scheme: dark) {
   body {
@@ -961,59 +975,38 @@ export default MyPlugin;
 
     // 表单监听
     function initFormListeners() {
-      const inputs = document.querySelectorAll('input, textarea, select');
+      const inputs = document.querySelectorAll('.section input, .section textarea, .section select');
       inputs.forEach(input => {
         input.addEventListener('input', () => {
           markDirty();
           updatePreview();
-          validateForm();
+          validateAll();
         });
         input.addEventListener('change', () => {
           markDirty();
           updatePreview();
-          validateForm();
+          validateAll();
         });
       });
     }
 
     // 代码编辑器
     function initCodeEditors() {
-      // 代码标签页切换
-      document.querySelectorAll('#section-code .file-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          document.querySelectorAll('#section-code .file-tab').forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-          const file = tab.dataset.file;
-          codeEditor.value = editorState.files[file] || '';
-        });
-      });
-
-      // 样式标签页切换
-      document.querySelectorAll('#section-styles .file-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          document.querySelectorAll('#section-styles .file-tab').forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-          const file = tab.dataset.file;
-          styleEditor.value = editorState.files[file] || '';
-        });
-      });
-
       // 代码编辑监听
       codeEditor.addEventListener('input', () => {
-        const activeTab = document.querySelector('#section-code .file-tab.active');
-        if (activeTab) {
-          editorState.files[activeTab.dataset.file] = codeEditor.value;
+        if (editorState.activeCodeFile) {
+          editorState.files[editorState.activeCodeFile] = codeEditor.value;
         }
         markDirty();
-        validateCode();
+        validateAll();
       });
 
       styleEditor.addEventListener('input', () => {
-        const activeTab = document.querySelector('#section-styles .file-tab.active');
-        if (activeTab) {
-          editorState.files[activeTab.dataset.file] = styleEditor.value;
+        if (editorState.activeStyleFile) {
+          editorState.files[editorState.activeStyleFile] = styleEditor.value;
         }
         markDirty();
+        validateAll();
       });
 
       // Tab 键支持
@@ -1034,6 +1027,51 @@ export default MyPlugin;
           }
         });
       });
+    }
+
+    function renderFileTabs(sectionSelector, names, preferred, editor, stateKey) {
+      const tabs = document.querySelector(`${sectionSelector} .file-tabs`);
+      const active = names.includes(preferred) ? preferred : (names[0] || null);
+      editorState[stateKey] = active;
+      tabs.replaceChildren();
+
+      names.forEach(name => {
+        const tab = document.createElement('div');
+        tab.className = `file-tab${name === active ? ' active' : ''}`;
+        tab.dataset.file = name;
+        tab.textContent = name;
+        tab.addEventListener('click', () => {
+          tabs.querySelectorAll('.file-tab').forEach(item => item.classList.remove('active'));
+          tab.classList.add('active');
+          editorState[stateKey] = name;
+          editor.value = editorState.files[name] || '';
+        });
+        tabs.append(tab);
+      });
+
+      editor.value = active ? (editorState.files[active] || '') : '';
+    }
+
+    function renderEditorFiles(preferredCode, preferredStyle) {
+      const codeFiles = codeFilePriority.filter(name => Object.hasOwn(editorState.files, name));
+      const styleFiles = Object.keys(editorState.files)
+        .filter(name => name.endsWith('.css'))
+        .sort();
+
+      renderFileTabs(
+        '#section-code',
+        codeFiles,
+        preferredCode || codeFiles[0],
+        codeEditor,
+        'activeCodeFile'
+      );
+      renderFileTabs(
+        '#section-styles',
+        styleFiles,
+        preferredStyle || (styleFiles.includes('wide.css') ? 'wide.css' : styleFiles[0]),
+        styleEditor,
+        'activeStyleFile'
+      );
     }
 
     // 按钮事件
@@ -1065,19 +1103,25 @@ export default MyPlugin;
     // 根据验证状态启用/禁用保存和安装按钮
     function updateButtonStates() {
       const manifestValid = document.getElementById('validManifest').classList.contains('valid');
+      const codeValid = document.getElementById('validCode').classList.contains('valid');
+      const stylesValid = document.getElementById('validStyles').classList.contains('valid');
+      const allValid = manifestValid && codeValid && stylesValid;
       const btnSave = document.getElementById('btnSave');
       const btnInstall = document.getElementById('btnInstall');
 
-      btnSave.disabled = !manifestValid;
-      btnInstall.disabled = !manifestValid;
+      btnSave.disabled = !allValid;
+      btnInstall.disabled = !allValid;
     }
 
     // 加载模板
     function loadTemplate() {
-      editorState.files['index.ts'] = defaultCodeTemplate;
-      Object.assign(editorState.files, defaultStyleTemplates);
-      codeEditor.value = editorState.files['index.ts'];
-      styleEditor.value = editorState.files['wide.css'];
+      editorState.originalManifest = null;
+      editorState.files = {
+        'index.ts': defaultCodeTemplate,
+        ...defaultStyleTemplates
+      };
+      renderEditorFiles('index.ts', 'wide.css');
+      validateAll();
     }
 
     // 从 Rust 后端加载初始数据
@@ -1114,6 +1158,9 @@ export default MyPlugin;
       editorState.mode = data.mode || 'create';
       editorState.pluginId = data.pluginId;
       editorState.isBuiltin = data.isBuiltin || false;
+      editorState.originalManifest = data.manifest
+        ? JSON.parse(JSON.stringify(data.manifest))
+        : null;
 
       if (data.manifest) {
         const m = data.manifest;
@@ -1136,29 +1183,31 @@ export default MyPlugin;
         }
         
         if (m.capabilities) {
+          document.getElementById('capDoubleColumn').checked = !!m.capabilities.doubleColumn;
           document.getElementById('capWideMode').checked = !!m.capabilities.wideMode;
           document.getElementById('capHideToolbar').checked = !!m.capabilities.hideToolbar;
           document.getElementById('capHideNavbar').checked = !!m.capabilities.hideNavbar;
           document.getElementById('capChapterNav').checked = !!m.capabilities.chapterNav;
           document.getElementById('capProgressTracker').checked = !!m.capabilities.progressTracker;
-          document.getElementById('capDoubleColumn').checked = !!m.capabilities.doubleColumn;
         }
       }
 
       if (data.files) {
+        editorState.files = {};
         data.files.forEach(file => {
           editorState.files[file.name] = file.content;
         });
-        // 代码框：按优先级取首个存在文件（兼容 index.ts 源码与已安装的 plugin.js）
-        codeEditor.value = editorState.files['index.ts'] || editorState.files['index.js']
-          || editorState.files['plugin.ts'] || editorState.files['plugin.js'] || '';
-        // 样式框：优先 wide.css，否则首个 .css（内联样式插件无 css 文件时为空）
-        const firstCss = Object.keys(editorState.files).find(n => n.endsWith('.css'));
-        styleEditor.value = editorState.files['wide.css'] || (firstCss ? editorState.files[firstCss] : '');
+        // 已安装包通常只有 plugin.js；标签必须绑定真实文件，保存后才会实际生效。
+        const preferredCode = codeFilePriority
+          .find(name => Object.hasOwn(editorState.files, name));
+        renderEditorFiles(
+          preferredCode,
+          Object.hasOwn(editorState.files, 'wide.css') ? 'wide.css' : undefined
+        );
       }
 
       updatePreview();
-      validateForm();
+      validateAll();
       updateStatusBar();
       updateButtonsByMode();
     }
@@ -1166,9 +1215,11 @@ export default MyPlugin;
     // 收集表单数据
     function collectFormData() {
       const domain = document.getElementById('siteDomain').value.trim();
+      const original = editorState.originalManifest || {};
       
       return {
         manifest: {
+          ...original,
           id: document.getElementById('pluginId').value.trim(),
           name: document.getElementById('pluginName').value.trim(),
           version: document.getElementById('pluginVersion').value.trim(),
@@ -1178,18 +1229,20 @@ export default MyPlugin;
           sourceType: document.getElementById('sourceType').value,
           renderMode: document.getElementById('renderMode').value,
           site: {
+            ...(original.site || {}),
             domain: domain ? [domain] : [],
             homeUrl: document.getElementById('siteHomeUrl').value.trim(),
             readerPattern: document.getElementById('siteReaderPattern').value.trim(),
             homePattern: document.getElementById('siteHomePattern').value.trim() || undefined
           },
           capabilities: {
+            ...(original.capabilities || {}),
+            doubleColumn: document.getElementById('capDoubleColumn').checked,
             wideMode: document.getElementById('capWideMode').checked,
             hideToolbar: document.getElementById('capHideToolbar').checked,
             hideNavbar: document.getElementById('capHideNavbar').checked,
             chapterNav: document.getElementById('capChapterNav').checked,
-            progressTracker: document.getElementById('capProgressTracker').checked,
-            doubleColumn: document.getElementById('capDoubleColumn').checked
+            progressTracker: document.getElementById('capProgressTracker').checked
           },
           builtin: false
         },
@@ -1209,13 +1262,46 @@ export default MyPlugin;
       document.getElementById('previewDomain').textContent = document.getElementById('siteDomain').value || '-';
     }
 
-    // 表单验证
+    function setValidationState(id, valid, message) {
+      const icon = document.getElementById(id);
+      icon.textContent = valid ? '✓' : '✗';
+      icon.className = 'validation-icon ' + (valid ? 'valid' : 'invalid');
+      icon.title = message;
+    }
+
+    function getDeclaredCapabilities() {
+      return capabilityKeys.filter(key =>
+        document.getElementById(capabilityFields[key]).checked
+      );
+    }
+
+    function getCapabilityMarkers() {
+      const markers = new Set();
+      const markerPattern = /@capability\s+([A-Za-z][A-Za-z0-9]*)\b/g;
+      Object.values(editorState.files).forEach(content => {
+        for (const match of String(content).matchAll(markerPattern)) {
+          if (capabilityKeys.includes(match[1])) markers.add(match[1]);
+        }
+      });
+      return markers;
+    }
+
+    // 只检查官方自声明格式，不判断能力在目标网站上是否真的生效。
+    function validateAll() {
+      const manifestValid = validateForm();
+      const codeValid = validateCode();
+      const stylesValid = validateStyles();
+      updateButtonStates();
+      return manifestValid && codeValid && stylesValid;
+    }
+
+    // Manifest 声明验证
     function validateForm() {
       let valid = true;
 
       // 验证必填字段
       const requiredFields = [
-        { id: 'pluginId', pattern: /^[a-z0-9-]+$/ },
+        { id: 'pluginId', pattern: /^[a-z0-9_-]+$/ },
         { id: 'pluginName', pattern: /.+/ },
         { id: 'pluginVersion', pattern: /^\d+\.\d+\.\d+$/ },
         { id: 'siteDomain', pattern: /.+/ },
@@ -1235,30 +1321,70 @@ export default MyPlugin;
         if (!isValid) valid = false;
       });
 
-      // 更新验证状态图标
-      const manifestIcon = document.getElementById('validManifest');
-      manifestIcon.textContent = valid ? '✓' : '✗';
-      manifestIcon.className = 'validation-icon ' + (valid ? 'valid' : 'invalid');
-
-      // 同步更新按钮可用状态
-      updateButtonStates();
+      setValidationState(
+        'validManifest',
+        valid,
+        valid ? 'Manifest 必填声明完整' : 'Manifest 存在缺失或格式错误'
+      );
 
       return valid;
     }
 
-    // 代码验证（简单语法检查）
+    // 插件代码声明验证：入口、默认导出、能力标记。
     function validateCode() {
-      const code = editorState.files['index.ts'] || '';
-      let valid = true;
+      const entryName = codeFilePriority.find(name =>
+        Object.hasOwn(editorState.files, name)
+      );
+      const code = entryName ? String(editorState.files[entryName] || '') : '';
+      const hasDefaultExport = /\bexport\s+default\b/.test(code)
+        || /\bexport\s*\{[\s\S]*?\bas\s+default\b[\s\S]*?\}/.test(code);
+      const markers = getCapabilityMarkers();
+      const missingMarkers = getDeclaredCapabilities().filter(key => !markers.has(key));
+      const errors = [];
 
-      // 简单检查：是否有 export
-      if (!code.includes('export')) {
-        valid = false;
+      if (!entryName) errors.push('缺少 index.ts、index.js、plugin.ts 或 plugin.js');
+      else if (!code.trim()) errors.push(`${entryName} 内容为空`);
+      if (code.trim() && !hasDefaultExport) errors.push('入口缺少默认导出');
+      if (missingMarkers.length > 0) {
+        errors.push(`缺少能力自声明：${missingMarkers.join(', ')}`);
       }
 
-      const codeIcon = document.getElementById('validCode');
-      codeIcon.textContent = valid ? '✓' : '?';
-      codeIcon.className = 'validation-icon ' + (valid ? 'valid' : 'pending');
+      const valid = errors.length === 0;
+      setValidationState(
+        'validCode',
+        valid,
+        valid ? `${entryName} 与能力自声明完整` : errors.join('；')
+      );
+
+      return valid;
+    }
+
+    // 样式文件声明验证：CSS 可选；存在时必须非空并标明 @capability 或 @foundation。
+    function validateStyles() {
+      const styleFiles = Object.entries(editorState.files)
+        .filter(([name]) => name.endsWith('.css'));
+      const errors = [];
+      const styleMarkerPattern = new RegExp(
+        `@capability\\s+(?:${capabilityKeys.join('|')})\\b|@foundation\\b`
+      );
+
+      styleFiles.forEach(([name, content]) => {
+        const css = String(content || '');
+        if (!css.trim()) errors.push(`${name} 内容为空`);
+        else if (!styleMarkerPattern.test(css)) {
+          errors.push(`${name} 缺少 @capability 或 @foundation 声明`);
+        }
+      });
+
+      const valid = errors.length === 0;
+      const successMessage = styleFiles.length === 0
+        ? '未提供独立样式文件，允许由插件代码内联样式'
+        : `${styleFiles.length} 个样式文件声明完整`;
+      setValidationState(
+        'validStyles',
+        valid,
+        valid ? successMessage : errors.join('；')
+      );
 
       return valid;
     }
@@ -1285,8 +1411,8 @@ export default MyPlugin;
 
     // 保存插件
     async function savePlugin() {
-      if (!validateForm()) {
-        alert('请检查表单填写是否正确');
+      if (!validateAll()) {
+        alert('请检查 Manifest、插件代码和样式声明');
         return;
       }
 
@@ -1324,8 +1450,8 @@ export default MyPlugin;
 
     // 另存为
     async function savePluginAs() {
-      if (!validateForm()) {
-        alert('请检查表单填写是否正确');
+      if (!validateAll()) {
+        alert('请检查 Manifest、插件代码和样式声明');
         return;
       }
 
@@ -1358,8 +1484,8 @@ export default MyPlugin;
 
     // 安装到应用
     async function installPlugin() {
-      if (!validateForm()) {
-        alert('请检查表单填写是否正确');
+      if (!validateAll()) {
+        alert('请检查 Manifest、插件代码和样式声明');
         return;
       }
 
@@ -1418,7 +1544,7 @@ export default MyPlugin;
       
       markClean();
       updatePreview();
-      validateForm();
+      validateAll();
       updateStatusBar();
     }
 

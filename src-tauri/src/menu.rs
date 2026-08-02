@@ -211,20 +211,20 @@ fn current_site_id<R: Runtime>(handle: &tauri::AppHandle<R>) -> String {
 // Re-export monitor module functions for convenience
 #[cfg(target_os = "macos")]
 use crate::monitor::{
-    calculate_center_position, get_current_monitor_index as get_current_screen_index,
-    get_macos_display_names, start_position_monitoring,
+    get_current_monitor_index as get_current_screen_index, get_macos_display_names,
+    move_main_window_to_monitor, start_position_monitoring,
 };
 
 #[cfg(target_os = "windows")]
 use crate::monitor::{
-    calculate_center_position, get_current_monitor_index as get_current_screen_index,
-    get_display_names, start_position_monitoring,
+    get_current_monitor_index as get_current_screen_index, get_display_names,
+    move_main_window_to_monitor, start_position_monitoring,
 };
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::monitor::{
-    calculate_center_position, get_current_monitor_index as get_current_screen_index,
-    get_display_names,
+    get_current_monitor_index as get_current_screen_index, get_display_names,
+    move_main_window_to_monitor,
 };
 
 /// Build menu items for available monitors (excluding current)
@@ -944,28 +944,8 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                                 return;
                             }
 
-                            // Get window size and calculate center position
-                            if let Some(win) = app.get_webview_window("main") {
-                                if let Ok(current_size) = win.outer_size() {
-                                    if let Some((x, y)) = calculate_center_position(
-                                        index,
-                                        (current_size.width, current_size.height),
-                                        app,
-                                    ) {
-                                        eprintln!("DEBUG: Moving window to ({}, {}) on monitor[{}]", x, y, index);
-                                        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x as f64, y as f64)));
-
-                                        // Rebuild menu after window move
-                                        // Wait a bit for the window to actually move
-                                        let app_clone = app.clone();
-                                        std::thread::spawn(move || {
-                                            std::thread::sleep(std::time::Duration::from_millis(200));
-                                            if let Err(e) = rebuild_full_menu(&app_clone) {
-                                                eprintln!("DEBUG: Failed to rebuild menu: {:?}", e);
-                                            }
-                                        });
-                                    }
-                                }
+                            if let Err(error) = move_main_window_to_monitor(app, index) {
+                                eprintln!("[Monitor] Failed to move main window: {error}");
                             }
                         }
                     }

@@ -119,6 +119,18 @@ describe('Plugin API', () => {
       expect(document.getElementById('plugin-test-plugin-shared-name')).toBeTruthy();
       expect(document.getElementById('plugin-another-plugin-shared-name')).toBeTruthy();
     });
+
+    it('exposes packaged CSS files as read-only plugin assets', () => {
+      const files = {
+        'reader.css': '.reader { columns: 2; }',
+        'toolbar.css': '.toolbar { display: none; }',
+      };
+      const assetApi = createPluginAPI(mockManifest, files);
+
+      expect(assetApi.style.getFile('reader.css')).toBe(files['reader.css']);
+      expect(assetApi.style.getFile('missing.css')).toBeNull();
+      expect(assetApi.style.listFiles()).toEqual(['reader.css', 'toolbar.css']);
+    });
   });
 
   describe('Storage API', () => {

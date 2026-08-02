@@ -1,0 +1,8 @@
+/*
+ * @capability hideToolbar
+ * [功能能力 3/6：隐藏工具栏]
+ * 「阅读 → 隐藏工具栏」开启时注入本文件，隐藏番茄侧边浮动工具栏。
+ */
+.reader-toolbar {
+  display: none !important;
+}

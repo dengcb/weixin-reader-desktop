@@ -98,7 +98,8 @@ async function buildPlugin(pluginId: string): Promise<void> {
   
   try {
     // 使用 Bun 编译 TypeScript
-    await $`bun build ${indexPath} --outfile=${pluginJsPath} --target=browser --minify-whitespace`;
+    // 保留可读格式：安装后的 plugin.js 会直接显示在应用内插件编辑器中。
+    await $`bun build ${indexPath} --outfile=${pluginJsPath} --target=browser`;
     console.log(`  ✓ Compiled to plugin.js`);
   } catch (e) {
     console.error(`❌ Failed to compile plugin:`, e);

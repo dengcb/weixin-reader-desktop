@@ -19,8 +19,11 @@ const createManager = () => {
     },
     enabled: true,
     keyboardHandler: null,
+    keyupHandler: null,
+    contextMenuHandler: null,
     menuKeyDebouncing: false,
     menuDebounceTimer: null,
+    lastMenuKeyAt: 0,
     retryTimer: null,
     initializationGeneration: 0,
     unsubscribeSettings: null,
@@ -95,6 +98,9 @@ describe('RemoteManager keyboard contract', () => {
 
   it('maps Enter, Home and the menu key to existing setting fields', () => {
     const { manager } = createManager();
+    const leakedMenuKeys: KeyboardEvent[] = [];
+    const siteKeyListener = (event: KeyboardEvent) => leakedMenuKeys.push(event);
+    window.addEventListener('keydown', siteKeyListener);
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', cancelable: true }));
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Home', cancelable: true }));
     const menuKey = new KeyboardEvent('keydown', {
@@ -103,17 +109,89 @@ describe('RemoteManager keyboard contract', () => {
       cancelable: true,
     });
     window.dispatchEvent(menuKey);
-    window.dispatchEvent(new KeyboardEvent('keydown', {
+    const repeatedMenuKey = new KeyboardEvent('keydown', {
       code: 'Unidentified',
       keyCode: 0,
       cancelable: true,
-    }));
+    });
+    window.dispatchEvent(repeatedMenuKey);
 
     expect(settingsStore.update).toHaveBeenCalledWith({ readerWide: true });
     expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
     expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
     expect(settingsStore.update).toHaveBeenCalledTimes(3);
     expect(menuKey.defaultPrevented).toBe(true);
+    expect(repeatedMenuKey.defaultPrevented).toBe(true);
+    expect(leakedMenuKeys).toEqual([]);
+    window.removeEventListener('keydown', siteKeyListener);
+    manager.destroy();
+  });
+
+  it('suppresses only the context menu caused by a recent remote menu key', () => {
+    const { manager } = createManager();
+    const ordinaryContextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    document.body.dispatchEvent(ordinaryContextMenu);
+    expect(ordinaryContextMenu.defaultPrevented).toBe(false);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'Unidentified',
+      keyCode: 0,
+      cancelable: true,
+    }));
+    let leakedContextMenus = 0;
+    const siteContextMenuListener = () => { leakedContextMenus++; };
+    window.addEventListener('contextmenu', siteContextMenuListener);
+    const remoteContextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    document.body.dispatchEvent(remoteContextMenu);
+    expect(remoteContextMenu.defaultPrevented).toBe(true);
+    expect(leakedContextMenus).toBe(0);
+
+    (manager as any).lastMenuKeyAt = Date.now() - 2000;
+    const laterContextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+    });
+    document.body.dispatchEvent(laterContextMenu);
+    expect(laterContextMenu.defaultPrevented).toBe(false);
+    expect(leakedContextMenus).toBe(1);
+    window.removeEventListener('contextmenu', siteContextMenuListener);
+    manager.destroy();
+  });
+
+  it('maps the real macOS Xiaomi menu sequence to one immediate toolbar toggle', () => {
+    const { manager } = createManager();
+    const contextMenu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      buttons: 0,
+      detail: 0,
+      clientX: 1,
+      clientY: 1,
+    });
+    document.body.dispatchEvent(contextMenu);
+    const keyup = new KeyboardEvent('keyup', {
+      key: '\u0010',
+      code: 'Unidentified',
+      keyCode: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(keyup);
+
+    expect(settingsStore.update).toHaveBeenCalledTimes(1);
+    expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
+    expect(contextMenu.defaultPrevented).toBe(true);
+    expect(keyup.defaultPrevented).toBe(true);
     manager.destroy();
   });
 
@@ -133,5 +211,10 @@ describe('RemoteManager keyboard contract', () => {
     manager.destroy();
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'PageDown' }));
     expect(nextPage).not.toHaveBeenCalled();
+
+    (manager as any).lastMenuKeyAt = Date.now();
+    const contextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(contextMenu);
+    expect(contextMenu.defaultPrevented).toBe(false);
   });
 });
