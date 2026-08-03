@@ -66,7 +66,10 @@ describe('CI and release contracts', () => {
     expect(workflow).toContain('actions/checkout@v6');
     expect(workflow).not.toContain('actions/checkout@v4');
     expect(workflow).not.toContain('--no-bundle');
-    expect(workflow.match(/tauri build/g)).toHaveLength(1);
+    expect(workflow.match(/tauri build/g)).toHaveLength(2);
+    expect(workflow).toContain('x86_64-pc-windows-msvc');
+    expect(workflow).toContain('aarch64-pc-windows-msvc');
+    expect(workflow).toContain('windows-11-arm');
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY');
     expect(workflow).toContain('environment: windows-release');
     expect(workflow).toMatch(/validate-release:[\s\S]*?permissions:\s*contents: write/);
@@ -77,7 +80,9 @@ describe('CI and release contracts', () => {
     expect(workflow).not.toContain('draft: false');
     expect(workflow).not.toContain('--bundles msi');
     expect(staging).toContain('30 * 1024 * 1024');
-    expect(staging).toContain('windows-x86_64-setup.exe');
+    expect(staging).toContain('x86_64');
+    expect(staging).toContain('aarch64');
+    expect(staging).toContain('STAGE_TARGET');
     expect(staging).toContain('sourceInstallerSignature');
   });
 
