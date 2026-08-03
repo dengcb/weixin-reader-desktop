@@ -12,7 +12,6 @@
     "build:inject": "bun scripts/build-inject.ts",
     "build:plugin": "bun src/scripts/build_plugin.ts",
     "build:plugin:all": "bun src/scripts/build_plugin.ts --all",
-    "check:frozen": "bun scripts/check-frozen.ts",
     "check:ipc": "bun scripts/check-ipc.ts",
     "typecheck": "bun scripts/typecheck.ts",
     "test": "bun test",

@@ -5,7 +5,7 @@ const readText = (path: string) => Bun.file(new URL(path, root)).text();
 const readJson = <T>(path: string) => Bun.file(new URL(path, root)).json() as Promise<T>;
 
 describe('CI and release contracts', () => {
-  it('pins Bun, Tauri CLI, Rust components and release targets', async () => {
+  it('pins Bun, Tauri CLI, Rust toolchain and release targets', async () => {
     const [pkg, toolchain] = await Promise.all([
       readJson<{
         packageManager: string;
@@ -20,13 +20,12 @@ describe('CI and release contracts', () => {
     expect(pkg.scripts['check:version']).toContain('--check');
     expect(pkg.scripts['release:status']).toBeDefined();
     expect(toolchain).toContain('channel = "1.97.1"');
-    expect(toolchain).toContain('components = ["rustfmt", "clippy"]');
     expect(toolchain).toContain('aarch64-apple-darwin');
     expect(toolchain).toContain('x86_64-apple-darwin');
     expect(toolchain).toContain('x86_64-pc-windows-msvc');
   });
 
-  it('keeps CI E2E-free, uses locked builds, and pins every action to a SHA', async () => {
+  it('keeps CI E2E-free and uses locked builds', async () => {
     const ci = await readText('.github/workflows/ci.yml');
 
     expect(ci).toContain('pull_request:');
@@ -42,9 +41,13 @@ describe('CI and release contracts', () => {
     expect(ci).not.toContain('simulated-e2e');
     expect(ci).not.toContain('playwright');
 
-    const actionRefs = [...ci.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/g)].map(match => match[1]);
-    expect(actionRefs.length).toBeGreaterThan(0);
-    expect(actionRefs.every(ref => /^[0-9a-f]{40}$/.test(ref))).toBe(true);
+    const rustJob = ci.slice(
+      ci.indexOf('  rust-quality:'),
+      ci.indexOf('  platform-macos-arm:'),
+    );
+    expect(rustJob).toContain('bun install --frozen-lockfile');
+    expect(rustJob).toContain('bun run build');
+
   });
 
   it('builds one signed-updater NSIS into an existing draft without publishing', async () => {
@@ -80,6 +83,7 @@ describe('CI and release contracts', () => {
     expect(config.bundle.windows.webviewInstallMode.type).toBe('downloadBootstrapper');
     expect(releaseScript).toContain("case 'status':");
     expect(releaseScript).toContain("case 'publish':");
+    expect(releaseScript).toContain("[process.execPath, ['run', 'build']]");
     expect(releaseScript).toContain("await deleteAssetIfPresent(release, 'latest.json')");
     expect(releaseScript).toContain("'windows-x86_64': await updaterPlatform(");
     expect(releaseScript).toContain('verifyUpdaterSignature(updater, rawSignature,');

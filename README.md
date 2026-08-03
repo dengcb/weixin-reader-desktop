@@ -314,22 +314,20 @@ bun test
 </tr>
 </table>
 
-完整质量门禁：
+必要质量门禁：
 
 ```bash
-bun run check:frozen  # 受保护的站点实现与样式
-bun run typecheck     # 严格 TypeScript 检查
-bun test              # Bun + happy-dom
-bun run check:ipc     # Rust handler / capability / permission 一致性
-bun run build         # 重新生成 inject.js 与 dist
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-bun run test:e2e      # Playwright 模拟 E2E
-git diff --check
+bun install --frozen-lockfile
+bun run check:version
+bun run typecheck
+bun test
+bun run check:ipc
+bun run build
+git diff --exit-code -- src/scripts/inject.js
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
-截至 2026-08-02：Bun 242 项通过；Rust 64 项通过、1 项真机显示器测试显式忽略；模拟 E2E 6 项通过。
+截至 2026-08-03：Bun 272 项通过；Rust 66 项通过、1 项真机显示器测试显式忽略。
 
 ---
 
@@ -515,7 +513,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 - 🏗 [插件与站点架构](docs/PLUGIN_ARCHITECTURE.md) - `ReaderSiteRuntime`、插件运行时与开发约束
 - 🔁 [事件与生命周期](docs/EVENT_BUS_REFACTOR.md) - EventBus、BaseManager 与资源清理规范
 - 🔐 [Tauri 2.11 与 IPC](docs/TAURI_2_11_UPGRADE.md) - Capability 拆分和命令一致性规则
-- 🧪 [测试指南](docs/TESTING.md) - 当前测试结构与完整质量门禁
+- 🧪 [测试指南](docs/TESTING.md) - 当前测试结构与必要质量门禁
 - ✍️ [Code signing policy](docs/CODE_SIGNING_POLICY.md) - Windows 签名角色、来源与发布约束
 - 📘 [2026 架构重构记录](docs/ARCHITECTURE_REFACTOR_2026.md) - 本次重构的动机、改动和兼容边界
 

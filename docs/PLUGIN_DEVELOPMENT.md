@@ -406,14 +406,13 @@ bun test plugins/fanqie/index.test.ts plugins/fanqie/pagination.test.ts
 bun test test/plugin_editor_validation.test.ts
 ```
 
-完整质量门禁：
+必要质量门禁：
 
 ```bash
 bun run typecheck
 bun test
-bun run check:frozen
 bun run build
-git diff --check
+git diff --exit-code -- src/scripts/inject.js
 ```
 
 静态测试只能证明本地回归。真实网站验收仍应覆盖：

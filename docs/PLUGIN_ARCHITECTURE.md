@@ -18,7 +18,7 @@ inject.ts
       ├─ SettingsStore              前端状态、合并视图、订阅、串行 patch
       ├─ PluginLoader
       │   ├─ PluginRegistry         唯一运行时注册表
-      │   ├─ WeReadSiteRuntime      桥接冻结的 WeReadAdapter
+      │   ├─ WeReadSiteRuntime      桥接既有 WeReadAdapter
       │   └─ PluginSiteRuntime      包装外部 ReaderPlugin
       ├─ SiteContext                Managers 的唯一站点入口
       └─ Managers                   路由、菜单、样式、翻页、遥控、恢复
@@ -272,7 +272,6 @@ URL 滚动位置不存进 settings：
 ```bash
 bun run build:plugin <pluginId>
 bun run build:plugin:all
-bun run check:frozen
 bun run typecheck
 bun test
 bun run check:ipc
@@ -296,7 +295,7 @@ bun run build
 
 六项能力键固定为：`doubleColumn`、`wideMode`、`hideToolbar`、`hideNavbar`、`chapterNav`、`progressTracker`。官方番茄插件和新建插件模板均遵守此规范。
 
-冻结文件清单由 `scripts/frozen-files.sha256` 维护。不要通过架构重构顺手修改微信读书进度算法、适配器、WeRead CSS、Fanqie 页面行为或插件模板页面行为；必须单独评估并更新冻结基线。
+微信读书进度算法、适配器、WeRead CSS、Fanqie 页面行为和插件模板允许正常维护，通过针对性测试和必要的真站验收保护行为边界。
 
 ## 相关文档
 

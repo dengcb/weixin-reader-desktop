@@ -189,7 +189,6 @@ ProgressBar 使用 `onWithHistory(PROGRESS_UPDATED)` 缓存最近进度。微信
 ```bash
 bun test
 bun run typecheck
-bun run check:frozen
 ```
 
 ## 维护检查表

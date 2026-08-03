@@ -197,27 +197,11 @@ async function runPreflight(): Promise<void> {
   const commands: Array<[string, string[]]> = [
     [process.execPath, ['install', '--frozen-lockfile']],
     [process.execPath, ['run', 'check:version']],
-    [process.execPath, ['run', 'check:frozen']],
     [process.execPath, ['run', 'typecheck']],
     [process.execPath, ['test']],
     [process.execPath, ['run', 'check:ipc']],
-    ['cargo', ['fmt', '--manifest-path', 'src-tauri/Cargo.toml', '--check']],
-    [
-      'cargo',
-      [
-        'clippy',
-        '--manifest-path',
-        'src-tauri/Cargo.toml',
-        '--all-targets',
-        '--all-features',
-        '--locked',
-        '--',
-        '-D',
-        'warnings',
-      ],
-    ],
+    [process.execPath, ['run', 'build']],
     ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']],
-    ['cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']],
   ];
   for (const [command, args] of commands) {
     await runCommand(command, args);

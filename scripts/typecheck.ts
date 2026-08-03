@@ -34,7 +34,7 @@ for (const line of output.split('\n').filter(Boolean)) {
 const missing = [...allowed].filter((item) => !observed.has(item));
 if (unexpected.length > 0 || missing.length > 0 || (exitCode !== 0 && output.length === 0)) {
   if (unexpected.length > 0) console.error(unexpected.join('\n'));
-  if (missing.length > 0) console.error(`Missing exact frozen-file whitelist entries:\n${missing.join('\n')}`);
+  if (missing.length > 0) console.error(`Missing exact TS6133 allowance entries:\n${missing.join('\n')}`);
   process.exit(1);
 }
-console.log(`TypeScript strict check passed with ${observed.size} exact frozen-file TS6133 entries.`);
+console.log(`TypeScript strict check passed with ${observed.size} exact TS6133 allowances.`);

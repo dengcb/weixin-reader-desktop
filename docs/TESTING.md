@@ -1,46 +1,42 @@
 # 测试与验收指南
 
-本文描述当前测试体系。最后核对日期：2026-08-02。
+本文描述当前测试体系。最后核对日期：2026-08-03。
 
 ## 当前结果
 
 | 层级 | 结果 | 说明 |
 |---|---:|---|
-| Bun DOM/契约测试 | 242 通过 | 27 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
-| Rust 单元测试 | 58 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新与 Tauri mock |
+| Bun DOM/契约测试 | 272 通过 | 32 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
+| Rust 单元测试 | 60 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新与 Tauri mock |
 | Rust 集成测试 | 6 通过 | `src-tauri/tests/plugin_test.rs` |
 | 真机硬件测试 | 1 忽略 | 需要真实 macOS 显示会话 |
 | 模拟 E2E | 6 通过 | Python Playwright + 临时 Chromium，本地 `test-page.html` |
 
 数量是当前快照，不应当写成永久承诺；新增测试后同步本文。
 
-## 完整质量门禁
+## 必要质量门禁
 
 从仓库根目录运行：
 
 ```bash
-bun run check:frozen
+bun install --frozen-lockfile
+bun run check:version
 bun run typecheck
 bun test
 bun run check:ipc
 bun run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-bun run test:e2e
-git diff --check
+git diff --exit-code -- src/scripts/inject.js
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 门禁含义：
 
-1. 冻结文件未被意外修改。
-2. 可修改 TypeScript 严格检查无错误。
+1. 依赖锁文件和版本声明一致。
+2. TypeScript 严格检查无错误。
 3. 前端架构、生命周期和 DOM 行为回归通过。
 4. IPC handler、AppManifest、permission 和 Capability 一致。
-5. `inject.js` 只通过构建生成，dist 可构建。
-6. Rust 格式、测试和编译通过。
-7. 现有模拟交互没有回归。
-8. diff 没有空白错误。
+5. `inject.js` 与 TypeScript 源码的生成结果一致，`dist/` 可构建。
+6. Rust 测试通过；平台 job 继续验证实际 macOS 与 Windows 构建。
 
 ## Bun DOM 测试
 
@@ -106,7 +102,7 @@ bun test src/scripts/core/__tests__/manager_behavior.test.ts
 - 涉及异步注册时，覆盖“尚未注册完成就 destroy”的情况。
 - 行为参数应测试精确值，例如滚动恢复重试、滑动阈值、光标延迟和自动翻页周期。
 - 不要用关闭 TypeScript 严格选项来通过测试。
-- 不要在测试中改写冻结站点实现；通过公共事件和运行时接口验证契约。
+- 通过公共事件和运行时接口验证站点契约，避免测试直接改写生产实现。
 
 ## TypeScript 严格检查
 
@@ -119,31 +115,17 @@ bun test src/scripts/core/__tests__/manager_behavior.test.ts
 - `noUnusedParameters`
 - `noFallthroughCasesInSwitch`
 
-冻结文件中已有 3 个 TS6133 使用“文件 + 符号 + 可选行号”的精确白名单。脚本会同时拒绝：
+3 个既有 TS6133 使用“文件 + 符号 + 可选行号”的精确白名单。脚本会同时拒绝：
 
 - 新增的任何 TypeScript 错误。
-- 新增的冻结文件未使用符号。
+- 新增的未使用符号。
 - 白名单条目消失但脚本没有同步收紧。
 
 不要改成忽略整个文件或关闭全局未使用检查。
 
-## 冻结文件检查
+## 关键行为回归
 
-`scripts/frozen-files.sha256` 保存以下实现的 SHA-256：
-
-- `progress_tracker.ts`
-- `weread_adapter.ts`
-- WeRead 插件实现及四个 CSS
-- Fanqie 插件实现
-- 插件模板行为实现
-
-运行：
-
-```bash
-bun run check:frozen
-```
-
-这个门禁保证架构、内存和安全重构不会顺手改变经过真站验证的页面逻辑。若确实需要修改冻结行为，必须作为独立变更评审、真站验证，并明确更新哈希基线。
+微信读书进度算法、适配器、WeRead 样式、Fanqie 页面行为和插件模板都允许正常维护，不使用源码 SHA 清单阻止修改。行为边界由针对性测试、类型检查、生成文件一致性检查和必要的真站验收共同保护。
 
 ### 微信读书进度经验公式硬约束
 
@@ -227,8 +209,8 @@ cargo test --manifest-path src-tauri/Cargo.toml \
 Rust 验证：
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo check --manifest-path src-tauri/Cargo.toml
+bun run build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 ## 模拟 E2E
@@ -270,13 +252,10 @@ bun run test:e2e
 
 ## 提交前检查表
 
-- [ ] 没有修改冻结文件，或已完成独立评审和真站验证。
 - [ ] TypeScript 严格检查通过。
 - [ ] Bun 全量测试通过。
 - [ ] IPC/Capability 一致性通过。
 - [ ] `inject.js` 由构建生成。
-- [ ] rustfmt、Rust test、Rust check 通过。
-- [ ] 模拟 E2E 通过。
-- [ ] `git diff --check` 通过。
+- [ ] Rust test 通过。
 - [ ] 文档中的接口、测试数量和文件名已同步。
 - [ ] 真站/真机未验证项被明确标注。

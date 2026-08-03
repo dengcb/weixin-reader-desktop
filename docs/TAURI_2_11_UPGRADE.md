@@ -82,8 +82,8 @@
 7. 运行完整一致性检查。
 
 ```bash
-cargo check --manifest-path src-tauri/Cargo.toml
 bun run check:ipc
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 不要手工维持一份绕开检查脚本的命令列表；`check:ipc` 会拒绝 handler、manifest、permission 或 Capability 中的残留与遗漏。
@@ -263,10 +263,7 @@ input, textarea, select {
 
 ```bash
 bun run check:ipc
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-git diff --check
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
 真实远程 ACL、更新下载、签名安装、窗口恢复和多显示器行为仍需要打包应用或真机验证；静态检查与单元测试不能替代这些验收。
