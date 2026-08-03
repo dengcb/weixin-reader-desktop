@@ -17,11 +17,11 @@ body.atreader-fanqie-paged {
 body.atreader-fanqie-paged {
   /*
    * 番茄原生阅读背景画在 .muye-reader-box 上，而它的外壳默认只有 960px。
-   * 参考微信读书：普通模式灰色书页占窗口 80%，32px 仅作为书页内部边距，
+   * 参考微信读书：普通模式灰色书页占窗口 80%，80px 仅作为书页内部边距，
    * 不再叠加到总宽度，避免书页向右压住原生工具栏。
    */
   --atreader-page-ratio: 80%;
-  --atreader-shell-padding: 32px;
+  --atreader-shell-padding: 80px;
   --atreader-shell-width: var(--atreader-page-ratio);
 }
 
@@ -93,6 +93,13 @@ body.atreader-fanqie-paged .atreader-fanqie-page-viewport > .muye-reader-content
 }
 
 body.atreader-fanqie-paged .muye-reader-content p {
+  /*
+   * 参考微信读书双栏：行距保持舒展，段落之间多留约四分之一行。
+   * 使用相对单位，番茄原生字号切换后仍按同一阅读节奏缩放。
+   */
+  margin-top: 0 !important;
+  margin-bottom: 1.25em !important;
+  line-height: 1.85 !important;
   orphans: 2;
   widows: 2;
 }
@@ -114,7 +121,7 @@ body.atreader-fanqie-paged .reader-toolbar {
 
 @media (max-width: 760px) {
   body.atreader-fanqie-paged {
-    --atreader-shell-padding: 16px;
+    --atreader-shell-padding: 32px;
   }
 
   body.atreader-fanqie-paged .atreader-fanqie-page-viewport {

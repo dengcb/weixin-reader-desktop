@@ -198,6 +198,16 @@ describe('MenuManager behavior', () => {
     await expect((manager as any).updateMenuEnabledStatus()).resolves.toBeUndefined();
   });
 
+  it('synchronizes the current document title after a cross-store page load', async () => {
+    const invokeMock = window.__TAURI__.core.invoke as ReturnType<typeof mock>;
+    const manager = createBareManager();
+    document.title = '番茄小说';
+
+    await (manager as any).syncCurrentDocumentTitle();
+
+    expect(invokeMock).toHaveBeenCalledWith('set_title', { title: '番茄小说' });
+  });
+
   it('releases every registered cancellation exactly once', () => {
     const manager = createBareManager();
     const cancellations = Array.from({ length: 5 }, () => mock(() => undefined));

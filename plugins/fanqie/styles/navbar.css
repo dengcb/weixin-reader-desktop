@@ -8,7 +8,24 @@
   display: none !important;
 }
 
-/* 原站把导航栏的 80px 预留在书页 padding-top: 13.2rem 中，需同步收回。 */
+/*
+ * 原站把导航栏的 80px 预留在书页 padding-top: 13.2rem 中。
+ * 隐藏导航后把章节头部移到接近微信读书的位置，同时保留适度上边距。
+ */
 .muye-reader-box {
-  padding-top: 5.2rem !important;
+  padding-top: 3.6rem !important;
+}
+
+/* 字数、更新时间属于导航型章节信息；隐藏导航时一并收起。 */
+.muye-reader-box-header .muye-reader-subtitle {
+  display: none !important;
+}
+
+/* 章节标题降为与底部页码相同的 12px，并给正文留出一段轻量呼吸区。 */
+.muye-reader-box-header .muye-reader-title {
+  margin: 0 0 24px !important;
+  color: var(--web-gray_40) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 18px !important;
 }

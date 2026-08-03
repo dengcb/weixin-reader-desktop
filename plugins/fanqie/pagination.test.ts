@@ -83,7 +83,9 @@ describe('Fanqie spread shell styles', () => {
     expect(readerCss).toContain('.reader-toolbar');
     expect(readerCss).toContain('--atreader-page-ratio: 80%');
     expect(readerCss).toContain('--atreader-shell-width: var(--atreader-page-ratio)');
-    expect(readerCss).toContain('--atreader-shell-padding: 32px');
+    expect(readerCss).toContain('--atreader-shell-padding: 80px');
+    expect(readerCss).toContain('line-height: 1.85 !important');
+    expect(readerCss).toContain('margin-bottom: 1.25em !important');
     expect(wideCss).toContain('--atreader-page-ratio: 90%');
     expect(wideCss).toContain('body.atreader-fanqie-paged');
     expect(wideCss).not.toContain('atreader-fanqie-wide');
@@ -96,10 +98,14 @@ describe('Fanqie spread shell styles', () => {
     expect(wideCss).not.toMatch(/1540px|1700px/);
   });
 
-  it('reclaims the native 80px navbar reservation when the navbar is hidden', () => {
+  it('compacts the complete chapter header when the navbar is hidden', () => {
     expect(navbarCss).toContain('.muye-reader-nav');
     expect(navbarCss).toContain('display: none !important');
     expect(navbarCss).toContain('.muye-reader-box');
-    expect(navbarCss).toContain('padding-top: 5.2rem !important');
+    expect(navbarCss).toContain('padding-top: 3.6rem !important');
+    expect(navbarCss).toContain('.muye-reader-subtitle');
+    expect(navbarCss).toContain('.muye-reader-title');
+    expect(navbarCss).toContain('font-size: 12px !important');
+    expect(navbarCss).toContain('margin: 0 0 24px !important');
   });
 });

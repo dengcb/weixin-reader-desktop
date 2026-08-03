@@ -103,6 +103,13 @@ export class MenuManager {
     // 3. 标记为已初始化
     this.initialized = true;
 
+    // IPCManager 会在启动监控时立即分发一次标题事件，而 MenuManager 的
+    // Tauri 监听注册是异步的。跨书店整页导航后，这次初始事件可能先于
+    // 本监听器发生，导致原生标题栏一直保留上一家书店的章节标题。
+    // IPC 就绪后主动同步当前文档标题，后续变化仍由 ipc:title-changed 驱动。
+    await this.syncCurrentDocumentTitle();
+    if (this.destroyed) return;
+
     // 5. 订阅设置变化
     this.unsubscribeSettings = settingsStore.subscribe(async (settings) => {
       // zoom 由 Rust 端菜单直接控制（按站点存储），前端不再 invoke set_zoom
@@ -186,6 +193,12 @@ export class MenuManager {
   }
 
   // Update window title
+  private async syncCurrentDocumentTitle() {
+    const title = document.title?.trim();
+    if (!title) return;
+    await this.updateWindowTitle(title);
+  }
+
   private async updateWindowTitle(title: string) {
     if (!window.__TAURI__) return;
 
