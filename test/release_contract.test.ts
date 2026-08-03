@@ -63,6 +63,9 @@ describe('CI and release contracts', () => {
     expect(workflow).toContain('--bundles nsis');
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY');
     expect(workflow).toContain('environment: windows-release');
+    expect(workflow).toMatch(/validate-release:[\s\S]*?permissions:\s*contents: write/);
+    expect(workflow).toContain('releases?per_page=100');
+    expect(workflow).not.toContain('releases/tags/${RELEASE_TAG}');
     expect(workflow).toContain('gh release upload');
     expect(workflow).not.toContain('latest.json');
     expect(workflow).not.toContain('draft: false');

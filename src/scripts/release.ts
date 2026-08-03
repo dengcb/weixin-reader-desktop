@@ -21,6 +21,33 @@ const owner = 'dengcb';
 const repo = 'weixin-reader-desktop';
 const workflowFile = 'release.yml';
 const repoUrl = `https://github.com/${owner}/${repo}`;
+const forceColor = Boolean(process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0');
+const colorEnabled = forceColor || (process.env.NO_COLOR === undefined && Boolean(process.stdout.isTTY));
+
+function color(code: number, text: string): string {
+  return colorEnabled ? `\u001B[${code}m${text}\u001B[0m` : text;
+}
+
+const ui = {
+  bold: (text: string) => color(1, text),
+  dim: (text: string) => color(2, text),
+  red: (text: string) => color(31, text),
+  green: (text: string) => color(32, text),
+  yellow: (text: string) => color(33, text),
+  cyan: (text: string) => color(36, text),
+};
+
+function logSuccess(message: string): void {
+  console.log(`${ui.green('✅')} ${ui.green(message)}`);
+}
+
+function logWarning(message: string): void {
+  console.warn(`${ui.yellow('⚠️')} ${ui.yellow(message)}`);
+}
+
+function logNext(message: string): void {
+  console.log(`${ui.cyan('➡️')} ${ui.bold(message)}`);
+}
 
 const macTargets = {
   'aarch64-apple-darwin': { platform: 'darwin-aarch64', arch: 'aarch64' },
@@ -142,9 +169,16 @@ async function runCommand(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  const childEnv = { ...env };
+  if (colorEnabled) {
+    childEnv.FORCE_COLOR = env.FORCE_COLOR ?? '1';
+    childEnv.CLICOLOR_FORCE = env.CLICOLOR_FORCE ?? '1';
+    childEnv.CARGO_TERM_COLOR = env.CARGO_TERM_COLOR ?? 'always';
+    if (forceColor) delete childEnv.NO_COLOR;
+  }
   const child = spawn(command, args, {
     cwd: rootDir,
-    env,
+    env: childEnv,
     stdio: ['inherit', 'pipe', 'pipe'],
     shell: false,
   });
@@ -163,9 +197,14 @@ async function runCommand(
 
 async function runStep(name: string, task: () => Promise<void>): Promise<void> {
   const startedAt = performance.now();
-  console.log(`\n[${name}]`);
-  await task();
-  console.log(`[${name}] 完成，用时 ${((performance.now() - startedAt) / 1000).toFixed(2)}s`);
+  console.log(`\n${ui.cyan('⏳')} ${ui.bold(name)}`);
+  try {
+    await task();
+    logSuccess(`${name}完成 ${ui.dim(`· ${((performance.now() - startedAt) / 1000).toFixed(2)}s`)}`);
+  } catch (error) {
+    console.error(`${ui.red('❌')} ${ui.red(`${name}失败`)}`);
+    throw error;
+  }
 }
 
 function requireReleaseCredentials(formalRelease: boolean): void {
@@ -185,7 +224,7 @@ function requireReleaseCredentials(formalRelease: boolean): void {
     throw new Error(`正式发布缺少签名或公证凭据：${missing}`);
   }
   if (!formalRelease && (missingApple.length > 0 || missingUpdater)) {
-    console.warn('单架构诊断构建缺少部分正式发布凭据，Tauri 可能拒绝 bundle。');
+    logWarning('单架构诊断构建缺少部分正式发布凭据，Tauri 可能拒绝 bundle。');
   }
   if (applePassword) process.env.APPLE_PASSWORD = applePassword;
   if (process.env.TAURI_SIGNING_PRIVATE_KEY && process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
@@ -263,7 +302,7 @@ async function notarizeAndStaple(record: MacReleaseRecord): Promise<void> {
   const dmgPath = join(releaseDir, record.installer.name);
   const applePassword = process.env.APPLE_APP_SPECIFIC_PASSWORD || process.env.APPLE_PASSWORD;
   if (!process.env.APPLE_ID || !applePassword || !process.env.APPLE_TEAM_ID) {
-    console.warn(`跳过 ${record.installer.name} 的 DMG 公证；这是诊断产物，不能正式上传。`);
+    logWarning(`跳过 ${record.installer.name} 的 DMG 公证；这是诊断产物，不能正式上传。`);
     return;
   }
   await runCommand('xcrun', [
@@ -303,7 +342,8 @@ async function runBuild(targets: MacTarget[]): Promise<void> {
   }
 
   if (!formalRelease) {
-    console.log('\n单架构诊断构建完成；这些产物不会生成正式发布元数据，不能用于 release:upload。');
+    console.log('');
+    logWarning('单架构诊断构建完成；这些产物不会生成正式发布元数据，不能用于 release:upload。');
     return;
   }
 
@@ -321,8 +361,9 @@ async function runBuild(targets: MacTarget[]): Promise<void> {
     platforms: records,
   };
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-  console.log(`\n正式 macOS 产物与元数据已写入 ${relPath(releaseDir)}。`);
-  console.log('下一步：bun run release:upload');
+  console.log('');
+  logSuccess(`正式 macOS 产物与元数据已写入 ${ui.cyan(relPath(releaseDir))}`);
+  logNext('下一步：bun run release:upload');
 }
 
 function loadMetadata(): ReleaseMetadata {
@@ -424,7 +465,7 @@ async function ensureTag(metadata: ReleaseMetadata): Promise<void> {
       method: 'POST',
       body: JSON.stringify({ ref: `refs/tags/${metadata.tag}`, sha: metadata.commit }),
     });
-    console.log(`已创建 tag ${metadata.tag} -> ${metadata.commit}`);
+    logSuccess(`已创建 tag ${ui.cyan(metadata.tag)} -> ${ui.dim(metadata.commit)}`);
   }
 }
 
@@ -486,7 +527,7 @@ async function uploadAsset(release: GitHubRelease, path: string): Promise<void> 
   if (!response.ok) {
     throw new GitHubApiError(response.status, `上传 ${name} 失败：${await response.text()}`);
   }
-  console.log(`已上传 ${name}`);
+  logSuccess(`已上传 ${ui.cyan(name)}`);
 }
 
 function macAssetNames(metadata: ReleaseMetadata): string[] {
@@ -534,19 +575,19 @@ async function runUpload(): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ ref: metadata.tag, inputs: { tag: metadata.tag } }),
   });
-  console.log(`已触发 Windows workflow：${metadata.tag}`);
+  logSuccess(`已触发 Windows workflow：${ui.cyan(metadata.tag)}`);
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     await Bun.sleep(1_500);
     const run = await latestWindowsRun(metadata);
     if (run && Date.parse(run.created_at) >= dispatchedAt - 5_000) {
-      console.log(`Workflow run: ${run.html_url}`);
-      console.log('等待其成功后运行 bun run release:status；确认资产后再运行 release:publish。');
+      console.log(`${ui.cyan('🔗')} Workflow run: ${run.html_url}`);
+      logNext('等待成功后运行 bun run release:status；确认资产后再运行 bun run release:publish');
       return;
     }
   }
-  console.log(`Workflow 页面：${repoUrl}/actions/workflows/${workflowFile}`);
-  console.log('dispatch 已接受，但 run 尚未出现在 API；稍后运行 bun run release:status。');
+  console.log(`${ui.cyan('🔗')} Workflow 页面：${repoUrl}/actions/workflows/${workflowFile}`);
+  logWarning('dispatch 已接受，但 run 尚未出现在 API；稍后运行 bun run release:status。');
 }
 
 function requireAsset(release: GitHubRelease, name: string): GitHubAsset {
@@ -604,8 +645,10 @@ async function runStatus(): Promise<void> {
       sha256: asset.digest?.replace(/^sha256:/, '') ?? hashes.get(asset.name) ?? '—',
     })),
   );
-  console.log(`Windows Authenticode: ${windowsInfo?.authenticodeStatus ?? '尚无 Windows 资产'}`);
-  console.log(`Release 状态: ${release.draft ? 'draft' : 'published'}`);
+  const authenticode = windowsInfo?.authenticodeStatus ?? '尚无 Windows 资产';
+  const authenticodeText = authenticode === 'Valid' ? ui.green(authenticode) : ui.yellow(authenticode);
+  console.log(`${ui.cyan('🔏')} Windows Authenticode: ${authenticodeText}`);
+  console.log(`${ui.cyan('📦')} Release 状态: ${release.draft ? ui.yellow('draft') : ui.green('published')}`);
 }
 
 async function verifyRemoteArtifact(
@@ -711,7 +754,11 @@ async function runPublish(): Promise<void> {
       version: metadata.version,
     })),
   );
-  console.log(`Windows Authenticode: ${windows.authenticodeStatus}`);
+  const authenticodeText =
+    windows.authenticodeStatus === 'Valid'
+      ? ui.green(windows.authenticodeStatus)
+      : ui.yellow(windows.authenticodeStatus);
+  console.log(`${ui.cyan('🔏')} Windows Authenticode: ${authenticodeText}`);
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(`发布需要交互确认；请在终端运行并输入完整 tag：${metadata.tag}`);
@@ -741,11 +788,23 @@ async function runPublish(): Promise<void> {
       body: releaseBody(metadata.version, windows.authenticodeStatus),
     }),
   });
-  console.log(`${metadata.tag} 已正式发布：${release.html_url}`);
+  logSuccess(`${metadata.tag} 已正式发布：${release.html_url}`);
 }
 
 async function main(): Promise<void> {
   const command = process.argv[2];
+  const startedAt = performance.now();
+  const label =
+    command === undefined
+      ? '构建 macOS ARM + Intel'
+      : command === 'upload'
+        ? '上传 macOS 并触发 Windows 构建'
+        : command === 'status'
+          ? '查看发布状态'
+          : command === 'publish'
+            ? '生成 latest.json 并正式发布'
+            : `单架构诊断：${command}`;
+  console.log(`${ui.cyan('🚀')} ${ui.bold(`艾特阅读发布流程 · ${label}`)}`);
   switch (command) {
     case undefined:
       await runBuild(['aarch64-apple-darwin', 'x86_64-apple-darwin']);
@@ -768,9 +827,10 @@ async function main(): Promise<void> {
     default:
       throw new Error(`未知 release 命令：${command}`);
   }
+  console.log(`\n${ui.green('✨')} ${ui.bold('流程完成')} ${ui.dim(`· ${((performance.now() - startedAt) / 1000).toFixed(2)}s`)}`);
 }
 
 main().catch((error) => {
-  console.error('\n发布流程失败：', error);
+  console.error(`\n${ui.red('💥')} ${ui.red('发布流程失败：')}`, error);
   process.exit(1);
 });

@@ -24,6 +24,8 @@ jobs:
     name: Validate tag and draft
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
     outputs:
       commit: ${{ steps.validate.outputs.commit }}
     steps:
@@ -50,8 +52,11 @@ jobs:
             echo "checkout commit does not match tag commit" >&2
             exit 1
           fi
-          is_draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')"
-          if [[ "${is_draft}" != "true" ]]; then
+          draft_count="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq --arg tag "${RELEASE_TAG}" '[.[] | select(.tag_name == $tag and .draft == true)] | length'
+          )"
+          if [[ "${draft_count}" != "1" ]]; then
             echo "${RELEASE_TAG} must have an existing draft release" >&2
             exit 1
           fi
