@@ -25,18 +25,20 @@ describe('CI and release contracts', () => {
     expect(toolchain).toContain('x86_64-pc-windows-msvc');
   });
 
-  it('keeps CI E2E-free and uses locked builds', async () => {
+  it('keeps push CI E2E-free, package-free, and limited to quality checks', async () => {
     const ci = await readText('.github/workflows/ci.yml');
 
     expect(ci).toContain('pull_request:');
-    expect(ci).toContain('workflow_call:');
-    expect(ci).toContain('Platform build / macOS ARM');
-    expect(ci).toContain('Platform build / macOS Intel');
-    expect(ci).toContain('Platform build / Windows x64');
-    expect(ci).toContain("github.event_name != 'pull_request' || inputs.full_matrix");
+    expect(ci).toContain('push:');
+    expect(ci).toContain('Frontend quality');
+    expect(ci).toContain('Rust quality');
     expect(ci).toContain('bun install --frozen-lockfile');
     expect(ci).toContain('git diff --exit-code -- src/scripts/inject.js');
     expect(ci).toContain('--locked');
+    expect(ci).not.toContain('tauri build');
+    expect(ci).not.toContain('Platform build /');
+    expect(ci).not.toContain('windows-2025');
+    expect(ci).not.toContain('macos-15-intel');
     expect(ci).not.toContain('test:e2e');
     expect(ci).not.toContain('simulated-e2e');
     expect(ci).not.toContain('playwright');
@@ -58,9 +60,9 @@ describe('CI and release contracts', () => {
 
     expect(workflow).toContain('workflow_dispatch:');
     expect(workflow).not.toContain('push:');
-    expect(workflow).toContain('uses: ./.github/workflows/ci.yml');
-    expect(workflow).toContain('full_matrix: true');
     expect(workflow).toContain('--bundles nsis');
+    expect(workflow).not.toContain('--no-bundle');
+    expect(workflow.match(/tauri build/g)).toHaveLength(1);
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY');
     expect(workflow).toContain('environment: windows-release');
     expect(workflow).toMatch(/validate-release:[\s\S]*?permissions:\s*contents: write/);

@@ -62,19 +62,9 @@ jobs:
           fi
           echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
 
-  quality:
-    name: Full release preflight
-    needs: validate-release
-    uses: ./.github/workflows/ci.yml
-    with:
-      full_matrix: true
-      checkout_ref: ${{ inputs.tag }}
-
   windows-nsis:
     name: Windows x64 NSIS
-    needs:
-      - validate-release
-      - quality
+    needs: validate-release
     runs-on: windows-2025
     timeout-minutes: 45
     permissions:
@@ -143,8 +133,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $draft = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" --jq '.draft'
-          if ($draft -ne 'true') { throw 'release is no longer a draft' }
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          $drafts = @($releases | Where-Object { $_.tag_name -eq $env:RELEASE_TAG -and $_.draft -eq $true })
+          if ($drafts.Count -ne 1) { throw 'release is no longer a draft' }
           Get-ChildItem release/windows -File | ForEach-Object {
             gh release upload $env:RELEASE_TAG $_.FullName --clobber
             if ($LASTEXITCODE -ne 0) { throw "failed to upload $($_.Name)" }
