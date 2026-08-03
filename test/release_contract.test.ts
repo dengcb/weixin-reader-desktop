@@ -32,6 +32,8 @@ describe('CI and release contracts', () => {
     expect(ci).toContain('push:');
     expect(ci).toContain('Frontend quality');
     expect(ci).toContain('Rust quality');
+    expect(ci).toContain('actions/checkout@v6');
+    expect(ci).not.toContain('actions/checkout@v4');
     expect(ci).toContain('bun install --frozen-lockfile');
     expect(ci).toContain('git diff --exit-code -- src/scripts/inject.js');
     expect(ci).toContain('--locked');
@@ -61,6 +63,8 @@ describe('CI and release contracts', () => {
     expect(workflow).toContain('workflow_dispatch:');
     expect(workflow).not.toContain('push:');
     expect(workflow).toContain('--bundles nsis');
+    expect(workflow).toContain('actions/checkout@v6');
+    expect(workflow).not.toContain('actions/checkout@v4');
     expect(workflow).not.toContain('--no-bundle');
     expect(workflow.match(/tauri build/g)).toHaveLength(1);
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY');
@@ -92,6 +96,9 @@ describe('CI and release contracts', () => {
     expect(releaseScript).toContain("await deleteAssetIfPresent(release, 'latest.json')");
     expect(releaseScript).toContain("'windows-x86_64': await updaterPlatform(");
     expect(releaseScript).toContain('verifyUpdaterSignature(updater, rawSignature,');
+    expect(releaseScript).toContain('/releases/download/${encodeURIComponent(release.tag_name)}');
+    expect(releaseScript).not.toContain('url: updaterAsset.browser_download_url');
+    expect(releaseScript).toContain('const publishedRelease = await githubRequest<GitHubRelease>');
     expect(releaseScript).toContain("prompt.question(`输入完整 tag");
     expect(releaseScript).toContain("draft: false");
   });

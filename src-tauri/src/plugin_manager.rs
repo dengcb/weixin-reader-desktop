@@ -14,6 +14,11 @@ const MAX_ARCHIVE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_ENTRY_BYTES: u64 = 4 * 1024 * 1024;
 static INSTALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// 插件 ID 与站点 ID 共用同一命名空间。内置站点永远不能被外部插件覆盖。
+pub const RESERVED_PLUGIN_IDS: &[(&str, &str)] = &[("weread", "微信读书")];
+pub const RESERVED_PLUGIN_DOMAINS: &[(&str, &str, &str)] =
+    &[("weread", "微信读书", "weread.qq.com")];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInfo {
     pub id: String,
@@ -48,6 +53,22 @@ pub struct PluginSiteConfig {
     pub home_url: String,
     #[serde(rename = "readerPattern")]
     pub reader_pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginInstallConflict {
+    pub kind: String,
+    pub blocking: bool,
+    pub message: String,
+    #[serde(default)]
+    pub existing_id: Option<String>,
+    #[serde(default)]
+    pub existing_name: Option<String>,
+    #[serde(default)]
+    pub existing_version: Option<String>,
+    #[serde(default)]
+    pub domains: Vec<String>,
 }
 
 pub fn validate_plugin_id(plugin_id: &str) -> Result<(), String> {
@@ -124,6 +145,16 @@ pub fn validate_plugin_manifest(manifest: &PluginInfo) -> Result<(), String> {
         for domain in domains {
             validate_plugin_domain(domain)?;
         }
+        let normalized = manifest_domains(manifest);
+        for (index, domain) in normalized.iter().enumerate() {
+            if normalized
+                .iter()
+                .skip(index + 1)
+                .any(|other| domains_overlap(domain, other))
+            {
+                return Err(format!("插件清单包含重复或重叠域名：{domain}"));
+            }
+        }
         let home = tauri::Url::parse(&site.home_url)
             .map_err(|_| "Plugin homeUrl must be a valid URL".to_string())?;
         if !matches!(home.scheme(), "https" | "http") || home.host_str().is_none() {
@@ -134,6 +165,161 @@ pub fn validate_plugin_manifest(manifest: &PluginInfo) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+pub fn manifest_domains(manifest: &PluginInfo) -> Vec<String> {
+    let Some(site) = &manifest.site else {
+        return Vec::new();
+    };
+    let values: Vec<&str> = match &site.domain {
+        Value::String(value) => vec![value],
+        Value::Array(values) => values.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    values
+        .into_iter()
+        .map(|value| {
+            value
+                .trim()
+                .trim_start_matches("*.")
+                .trim_start_matches('.')
+                .to_ascii_lowercase()
+        })
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn domains_overlap(left: &str, right: &str) -> bool {
+    left == right || left.ends_with(&format!(".{right}")) || right.ends_with(&format!(".{left}"))
+}
+
+/// 对所有安装入口执行同一套命名空间检查。
+///
+/// - 内置 ID 冲突不可继续；
+/// - 已安装的相同外部 ID 可以由用户明确确认后整体替换；
+/// - 不同 ID 声明重叠域名会导致运行时无法唯一选出插件，因此不可继续。
+pub fn inspect_install_conflicts(
+    candidate: &PluginInfo,
+    installed: &[PluginInfo],
+) -> Vec<PluginInstallConflict> {
+    let mut conflicts = Vec::new();
+
+    if let Some((_, name)) = RESERVED_PLUGIN_IDS
+        .iter()
+        .find(|(id, _)| *id == candidate.id)
+    {
+        conflicts.push(PluginInstallConflict {
+            kind: "reserved-id".to_string(),
+            blocking: true,
+            message: format!(
+                "插件 ID「{}」已由内置插件「{}」使用，请更换插件 ID。",
+                candidate.id, name
+            ),
+            existing_id: Some(candidate.id.clone()),
+            existing_name: Some((*name).to_string()),
+            existing_version: None,
+            domains: Vec::new(),
+        });
+    }
+
+    let candidate_domains = manifest_domains(candidate);
+    if !RESERVED_PLUGIN_IDS
+        .iter()
+        .any(|(id, _)| *id == candidate.id)
+    {
+        for (existing_id, existing_name, existing_domain) in RESERVED_PLUGIN_DOMAINS {
+            let overlapping: Vec<String> = candidate_domains
+                .iter()
+                .filter(|candidate_domain| domains_overlap(candidate_domain, existing_domain))
+                .cloned()
+                .collect();
+            if overlapping.is_empty() {
+                continue;
+            }
+            conflicts.push(PluginInstallConflict {
+                kind: "domain".to_string(),
+                blocking: true,
+                message: format!(
+                    "站点域名 {} 已与内置插件「{}」重叠；每个网站只能由一个插件接管。",
+                    overlapping.join("、"),
+                    existing_name
+                ),
+                existing_id: Some((*existing_id).to_string()),
+                existing_name: Some((*existing_name).to_string()),
+                existing_version: None,
+                domains: overlapping,
+            });
+        }
+    }
+    for existing in installed {
+        if existing.id == candidate.id {
+            conflicts.push(PluginInstallConflict {
+                kind: "existing-id".to_string(),
+                blocking: false,
+                message: format!(
+                    "已安装「{}」v{}；继续将完整覆盖现有插件。",
+                    existing.name, existing.version
+                ),
+                existing_id: Some(existing.id.clone()),
+                existing_name: Some(existing.name.clone()),
+                existing_version: Some(existing.version.clone()),
+                domains: Vec::new(),
+            });
+            // 同 ID 更新允许修改自己的域名，不与旧版本再判一次域名冲突。
+            continue;
+        }
+
+        let overlapping: Vec<String> = candidate_domains
+            .iter()
+            .filter(|candidate_domain| {
+                manifest_domains(existing)
+                    .iter()
+                    .any(|existing_domain| domains_overlap(candidate_domain, existing_domain))
+            })
+            .cloned()
+            .collect();
+        if overlapping.is_empty() {
+            continue;
+        }
+        conflicts.push(PluginInstallConflict {
+            kind: "domain".to_string(),
+            blocking: true,
+            message: format!(
+                "站点域名 {} 已与插件「{}」重叠；每个网站只能由一个插件接管。",
+                overlapping.join("、"),
+                existing.name
+            ),
+            existing_id: Some(existing.id.clone()),
+            existing_name: Some(existing.name.clone()),
+            existing_version: Some(existing.version.clone()),
+            domains: overlapping,
+        });
+    }
+
+    conflicts
+}
+
+pub fn get_install_conflicts<R: Runtime>(
+    app: &AppHandle<R>,
+    candidate: &PluginInfo,
+) -> Result<Vec<PluginInstallConflict>, String> {
+    let installed = get_installed_plugins(app)?;
+    Ok(inspect_install_conflicts(candidate, &installed))
+}
+
+pub fn reject_blocking_install_conflicts(
+    conflicts: &[PluginInstallConflict],
+) -> Result<(), String> {
+    let messages: Vec<&str> = conflicts
+        .iter()
+        .filter(|conflict| conflict.blocking)
+        .map(|conflict| conflict.message.as_str())
+        .collect();
+    if messages.is_empty() {
+        Ok(())
+    } else {
+        Err(messages.join("\n"))
+    }
 }
 
 pub fn manifest_matches_host(plugin: &PluginInfo, host: &str) -> bool {
@@ -224,7 +410,7 @@ fn is_zip_symlink(mode: Option<u32>) -> bool {
     mode.is_some_and(|value| value & 0o170000 == 0o120000)
 }
 
-fn replace_plugin_directory(
+pub(crate) fn replace_plugin_directory(
     staging: &Path,
     plugin_dir: &Path,
     backup: &Path,
@@ -318,6 +504,8 @@ pub fn install_plugin_from_file<R: Runtime>(
     file_path: &str,
 ) -> Result<PluginInfo, String> {
     let mut manifest = inspect_plugin_package(file_path)?;
+    let conflicts = get_install_conflicts(app, &manifest)?;
+    reject_blocking_install_conflicts(&conflicts)?;
     let root = ensure_plugins_dir(app)?;
     let plugin_dir = installed_plugin_dir(app, &manifest.id)?;
     let sequence = INSTALL_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -577,6 +765,95 @@ mod tests {
             builtin: false,
             enabled: false,
         }
+    }
+
+    fn installed_manifest(id: &str, name: &str, domain: Value) -> PluginInfo {
+        let mut manifest = web_manifest(domain);
+        manifest.id = id.to_string();
+        manifest.name = name.to_string();
+        manifest.enabled = true;
+        manifest
+    }
+
+    #[test]
+    fn install_conflicts_reserve_builtin_ids() {
+        let mut candidate = web_manifest(json!("weread.qq.com"));
+        candidate.id = "weread".to_string();
+
+        let conflicts = inspect_install_conflicts(&candidate, &[]);
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, "reserved-id");
+        assert!(conflicts[0].blocking);
+        assert!(reject_blocking_install_conflicts(&conflicts).is_err());
+    }
+
+    #[test]
+    fn install_conflicts_allow_confirmed_same_id_replacement() {
+        let candidate = web_manifest(json!("new.example.com"));
+        let installed = installed_manifest("demo-reader", "旧版插件", json!("old.example.com"));
+
+        let conflicts = inspect_install_conflicts(&candidate, &[installed]);
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, "existing-id");
+        assert!(!conflicts[0].blocking);
+        assert!(reject_blocking_install_conflicts(&conflicts).is_ok());
+    }
+
+    #[test]
+    fn install_conflicts_block_equal_and_parent_child_domains() {
+        let candidate = web_manifest(json!(["reader.example.com", "same.example.net"]));
+        let installed = vec![
+            installed_manifest("parent", "父域插件", json!("example.com")),
+            installed_manifest("same", "同域插件", json!("same.example.net")),
+        ];
+
+        let conflicts = inspect_install_conflicts(&candidate, &installed);
+
+        assert_eq!(conflicts.len(), 2);
+        assert!(conflicts.iter().all(|conflict| conflict.blocking));
+        assert!(conflicts
+            .iter()
+            .flat_map(|conflict| conflict.domains.iter())
+            .any(|domain| domain == "reader.example.com"));
+        assert!(conflicts
+            .iter()
+            .flat_map(|conflict| conflict.domains.iter())
+            .any(|domain| domain == "same.example.net"));
+    }
+
+    #[test]
+    fn install_conflicts_protect_builtin_domains_under_a_different_id() {
+        let mut candidate = web_manifest(json!(["reader.weread.qq.com"]));
+        candidate.id = "lookalike".to_string();
+
+        let conflicts = inspect_install_conflicts(&candidate, &[]);
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, "domain");
+        assert_eq!(conflicts[0].existing_id.as_deref(), Some("weread"));
+        assert!(conflicts[0].blocking);
+    }
+
+    #[test]
+    fn install_conflicts_allow_unrelated_domains() {
+        let candidate = web_manifest(json!("reader.example.com"));
+        let installed = installed_manifest("other", "其它插件", json!("example.org"));
+
+        assert!(inspect_install_conflicts(&candidate, &[installed]).is_empty());
+    }
+
+    #[test]
+    fn manifest_rejects_duplicate_or_overlapping_domains() {
+        assert!(validate_plugin_manifest(&web_manifest(json!([
+            "example.com",
+            "reader.example.com"
+        ])))
+        .is_err());
+        assert!(
+            validate_plugin_manifest(&web_manifest(json!(["example.com", "example.com"]))).is_err()
+        );
     }
 
     #[test]

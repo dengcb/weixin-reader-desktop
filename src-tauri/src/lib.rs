@@ -6,6 +6,7 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 mod commands;
 mod menu;
 pub mod monitor;
+mod plugin_installer;
 pub mod plugin_manager;
 mod reading_progress;
 mod settings;
@@ -83,7 +84,19 @@ fn clear_auto_flip_active(app_handle: tauri::AppHandle, _event_name: &str) {
 pub fn run() {
     let inject_script = include_str!("../../src/scripts/inject.js");
 
-    tauri::Builder::default()
+    let mut builder =
+        tauri::Builder::default().manage(plugin_installer::PendingPluginInstallState::default());
+
+    // 文件关联在 Windows/Linux 会启动一个新进程；必须最先注册单实例插件，
+    // 才能把 .atrd 路径转交给已经运行的应用。
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            plugin_installer::handle_external_arguments(app, &args, std::path::Path::new(&cwd));
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -202,6 +215,16 @@ pub fn run() {
             // Menu Init - AFTER main window is created
             menu::init(app)?;
 
+            // Windows/Linux 冷启动时，关联文件路径由命令行参数传入。
+            // macOS 使用下方的 RunEvent::Opened，不在这里重复处理。
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                let args: Vec<String> = std::env::args().collect();
+                let cwd = std::env::current_dir().unwrap_or_default();
+                plugin_installer::handle_external_arguments(app.handle(), &args, &cwd);
+            }
+            plugin_installer::focus_pending_plugin_install(app.handle())?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -225,6 +248,10 @@ pub fn run() {
             commands::save_plugin,
             commands::export_plugin,
             commands::install_plugin_from_editor,
+            plugin_installer::prepare_plugin_install,
+            plugin_installer::get_pending_plugin_install,
+            plugin_installer::confirm_pending_plugin_install,
+            plugin_installer::cancel_pending_plugin_install,
             update::check_update_manual,
             update::install_update_now,
             update::is_update_downloaded
@@ -253,6 +280,10 @@ pub fn run() {
                             menu::set_edit_menu_visible(app_handle, label == "plugin-editor");
                         }
                     }
+                }
+                // macOS 在冷启动和应用已运行时都通过 Opened 交付关联文件。
+                tauri::RunEvent::Opened { urls } => {
+                    plugin_installer::handle_opened_urls(app_handle, &urls);
                 }
                 _ => {}
             }

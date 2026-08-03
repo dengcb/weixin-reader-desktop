@@ -30,7 +30,7 @@ jobs:
       commit: ${{ steps.validate.outputs.commit }}
     steps:
       - name: Checkout exact tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
 
@@ -62,7 +62,7 @@ jobs:
           fi
           echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
 
-  windows-nsis:
+  windows-nsis-x64:
     name: Windows x64 NSIS
     needs: validate-release
     runs-on: windows-2025
@@ -72,7 +72,7 @@ jobs:
     environment: windows-release
     steps:
       - name: Checkout exact tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
 
@@ -117,18 +117,100 @@ jobs:
       - name: Standardize, sign-check, and size-check assets
         env:
           GITHUB_SHA: ${{ needs.validate-release.outputs.commit }}
+          STAGE_TARGET: x86_64-pc-windows-msvc
         shell: pwsh
         run: |
           bun scripts/stage-windows-release.ts
-          $installer = Get-ChildItem release/windows/*-setup.exe -File
+          $installer = Get-ChildItem release/windows/*-x86_64-setup.exe -File
           $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
-          $infoPath = 'release/windows/windows-release-info.json'
+          $infoPath = 'release/windows/windows-x86_64-release-info.json'
           $info = Get-Content $infoPath -Raw | ConvertFrom-Json
           $info.authenticodeStatus = $authenticode
           $info | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8NoBOM $infoPath
           Write-Host "Authenticode: $authenticode"
 
       - name: Upload only to the existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          $drafts = @($releases | Where-Object { $_.tag_name -eq $env:RELEASE_TAG -and $_.draft -eq $true })
+          if ($drafts.Count -ne 1) { throw 'release is no longer a draft' }
+          Get-ChildItem release/windows -File | ForEach-Object {
+            gh release upload $env:RELEASE_TAG $_.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "failed to upload $($_.Name)" }
+          }
+          gh release view $env:RELEASE_TAG --json url,isDraft,assets
+
+  windows-nsis-arm64:
+    name: Windows ARM64 NSIS
+    needs: validate-release
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    environment: windows-release
+    steps:
+      - name: Checkout exact tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-release-aarch64-pc-windows-msvc-${{ hashFiles('bun.lock', 'src-tauri/Cargo.lock') }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate local release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMIT: ${{ needs.validate-release.outputs.commit }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          gh release download $env:RELEASE_TAG --pattern release-metadata.json --dir release
+          $metadata = Get-Content release/release-metadata.json -Raw | ConvertFrom-Json
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($metadata.version -ne $version) { throw 'release metadata version mismatch' }
+          if ($metadata.tag -ne $env:RELEASE_TAG) { throw 'release metadata tag mismatch' }
+          if ($metadata.commit -ne $env:EXPECTED_COMMIT) { throw 'release metadata commit mismatch' }
+
+      - name: Build native ARM64 NSIS bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --bundles nsis --target aarch64-pc-windows-msvc -- --locked
+
+      - name: Standardize, sign-check, and size-check assets
+        env:
+          GITHUB_SHA: ${{ needs.validate-release.outputs.commit }}
+          STAGE_TARGET: aarch64-pc-windows-msvc
+        shell: pwsh
+        run: |
+          bun scripts/stage-windows-release.ts
+          $installer = Get-ChildItem release/windows/*-aarch64-setup.exe -File
+          $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
+          $infoPath = 'release/windows/windows-aarch64-release-info.json'
+          $info = Get-Content $infoPath -Raw | ConvertFrom-Json
+          $info.authenticodeStatus = $authenticode
+          $info | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8NoBOM $infoPath
+          Write-Host "Authenticode: $authenticode"
+
+      - name: Upload ARM64 assets to the existing draft
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh

@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>安装插件</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #172033;
+      --muted: #657089;
+      --border: #dfe4ee;
+      --accent: #2f6fed;
+      --accent-hover: #245dcc;
+      --warning: #a15c00;
+      --warning-bg: #fff5df;
+      --danger: #b42318;
+      --danger-bg: #fff0ee;
+      --success: #157347;
+      --shadow: 0 16px 44px rgba(35, 50, 84, .12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1f2229;
+        --card: #292d36;
+        --text: #edf1f8;
+        --muted: #aab2c2;
+        --border: #414754;
+        --accent: #78a7ff;
+        --accent-hover: #98bbff;
+        --warning: #ffd18a;
+        --warning-bg: #473719;
+        --danger: #ffb4aa;
+        --danger-bg: #4b2927;
+        --success: #88d8ad;
+        --shadow: 0 18px 48px rgba(0, 0, 0, .28);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 90% -10%, rgba(47, 111, 237, .15), transparent 38%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    main { max-width: 620px; margin: 0 auto; padding: 28px; }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      margin-bottom: 10px;
+    }
+    h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.02em; }
+    .lead { margin: 0 0 22px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .identity {
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 18px;
+      align-items: center;
+      padding: 22px;
+      border-bottom: 1px solid var(--border);
+    }
+    .icon-frame {
+      width: 76px;
+      height: 76px;
+      border-radius: 18px;
+      background: linear-gradient(145deg, #eef3ff, #e1e9fb);
+      border: 1px solid rgba(47, 111, 237, .16);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    .icon-frame img { width: 100%; height: 100%; object-fit: cover; }
+    .plugin-name { font-size: 21px; font-weight: 700; overflow-wrap: anywhere; }
+    .plugin-meta { margin-top: 7px; color: var(--muted); font-size: 13px; }
+    .plugin-description { margin-top: 9px; font-size: 13px; line-height: 1.55; }
+    .details { padding: 18px 22px; }
+    .row {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 12px;
+      padding: 8px 0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .label { color: var(--muted); }
+    .value { overflow-wrap: anywhere; }
+    .domains { display: flex; gap: 6px; flex-wrap: wrap; }
+    .domain {
+      background: rgba(47, 111, 237, .10);
+      color: var(--accent);
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .notices { display: grid; gap: 10px; margin-top: 14px; }
+    .notice {
+      border-radius: 12px;
+      padding: 11px 13px;
+      font-size: 12px;
+      line-height: 1.55;
+      border: 1px solid transparent;
+    }
+    .notice.warning { color: var(--warning); background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 25%, transparent); }
+    .notice.danger { color: var(--danger); background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger) 28%, transparent); }
+    .security {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 0 2px;
+    }
+    .status { min-height: 21px; margin: 14px 2px 0; font-size: 13px; }
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--success); }
+    .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    button {
+      appearance: none;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 18px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .cancel { background: var(--card); color: var(--text); }
+    .install { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 126px; }
+    .install:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    .loading { padding: 70px 24px; text-align: center; color: var(--muted); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">AT READER PLUGIN</div>
+    <h1>确认安装插件</h1>
+    <p class="lead">请核对插件身份和接管的网站。插件代码会在对应网站页面中运行。</p>
+
+    <div id="loading" class="card loading">正在检查插件包…</div>
+    <section id="content" hidden>
+      <div class="card">
+        <div class="identity">
+          <div class="icon-frame"><img id="siteIcon" alt="网站图标"></div>
+          <div>
+            <div class="plugin-name" id="pluginName">-</div>
+            <div class="plugin-meta"><span id="pluginVersion">-</span> · <span id="pluginAuthor">未知作者</span></div>
+            <div class="plugin-description" id="pluginDescription"></div>
+          </div>
+        </div>
+        <div class="details">
+          <div class="row"><div class="label">插件 ID</div><div class="value" id="pluginId">-</div></div>
+          <div class="row"><div class="label">接管网站</div><div class="domains" id="domains"></div></div>
+          <div class="row"><div class="label">网站首页</div><div class="value" id="homeUrl">-</div></div>
+          <div class="row"><div class="label">安装文件</div><div class="value" id="fileName">-</div></div>
+          <div class="row"><div class="label">文件大小</div><div class="value" id="fileSize">-</div></div>
+          <div class="row"><div class="label">SHA-256</div><div class="value hash" id="sha256">-</div></div>
+          <div class="notices" id="notices"></div>
+        </div>
+      </div>
+
+      <p class="security">只安装你信任来源的插件。艾特阅读会检查包结构、文件路径、体积、插件 ID 和域名冲突，但不会替插件作者担保其代码行为。</p>
+      <div class="status" id="status" aria-live="polite"></div>
+      <div class="actions">
+        <button class="cancel" id="cancelButton">取消</button>
+        <button class="install" id="installButton" disabled>安装插件</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const tauri = window.__TAURI__;
+      const invoke = tauri?.core?.invoke;
+      const listen = tauri?.event?.listen;
+      const currentWindow = tauri?.window?.getCurrentWindow?.();
+      const fallbackIcon = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="22" fill="#e7edfa"/><path fill="#5474ad" d="M69 45h-8V29a5 5 0 0 0-5-5H41v7a8 8 0 1 1-16 0v-7h-1a5 5 0 0 0-5 5v16h8a8 8 0 1 1 0 16h-8v6a5 5 0 0 0 5 5h15v-7a8 8 0 1 1 16 0v7h1a5 5 0 0 0 5-5v-6h8a8 8 0 1 0 0-16Z"/></svg>'
+      );
+      let preview = null;
+      let installing = false;
+
+      const el = id => document.getElementById(id);
+      const formatSize = bytes => bytes < 1024 * 1024
+        ? `${(bytes / 1024).toFixed(1)} KiB`
+        : `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+
+      function setIcon(data) {
+        const image = el('siteIcon');
+        const candidates = [data.iconUrl, data.faviconUrl, fallbackIcon].filter(Boolean);
+        let index = 0;
+        image.onerror = () => {
+          index += 1;
+          image.src = candidates[index] || fallbackIcon;
+        };
+        image.src = candidates[0] || fallbackIcon;
+      }
+
+      function render(data) {
+        preview = data;
+        el('loading').hidden = true;
+        el('content').hidden = false;
+        el('pluginName').textContent = data.plugin.name;
+        el('pluginVersion').textContent = `v${data.plugin.version}`;
+        el('pluginAuthor').textContent = data.plugin.author || '未知作者';
+        el('pluginDescription').textContent = data.plugin.description || '此插件未提供说明。';
+        el('pluginId').textContent = data.plugin.id;
+        el('homeUrl').textContent = data.plugin.site?.homeUrl || '-';
+        el('fileName').textContent = data.fileName;
+        el('fileSize').textContent = formatSize(data.fileSize);
+        el('sha256').textContent = data.sha256;
+        setIcon(data);
+
+        const domains = el('domains');
+        domains.replaceChildren();
+        (data.domains.length ? data.domains : ['未声明']).forEach(domain => {
+          const node = document.createElement('span');
+          node.className = 'domain';
+          node.textContent = domain;
+          domains.appendChild(node);
+        });
+
+        const notices = el('notices');
+        notices.replaceChildren();
+        data.conflicts.forEach(conflict => {
+          const node = document.createElement('div');
+          node.className = `notice ${conflict.blocking ? 'danger' : 'warning'}`;
+          node.textContent = conflict.message;
+          notices.appendChild(node);
+        });
+        if (!data.conflicts.length) {
+          const node = document.createElement('div');
+          node.className = 'notice warning';
+          node.textContent = '插件包未提供独立发布者签名，请确认文件来源可信。';
+          notices.appendChild(node);
+        }
+
+        const button = el('installButton');
+        button.textContent = data.replacesExisting ? '覆盖并安装' : '安装插件';
+        button.disabled = !data.canInstall;
+        el('status').textContent = data.canInstall ? '' : '存在不可继续的冲突，请由插件作者修改后重新打包。';
+        el('status').className = data.canInstall ? 'status' : 'status error';
+      }
+
+      async function load() {
+        try {
+          render(await invoke('get_pending_plugin_install'));
+        } catch (error) {
+          el('loading').textContent = `无法读取插件信息：${error}`;
+        }
+      }
+
+      async function closeWindow(cancel = true) {
+        if (cancel && preview) {
+          await invoke('cancel_pending_plugin_install', { token: preview.token }).catch(() => {});
+        }
+        await currentWindow?.close();
+      }
+
+      el('cancelButton').addEventListener('click', () => closeWindow(true));
+      el('installButton').addEventListener('click', async () => {
+        if (!preview?.canInstall || installing) return;
+        installing = true;
+        el('installButton').disabled = true;
+        el('cancelButton').disabled = true;
+        el('status').className = 'status';
+        el('status').textContent = '正在验证并安装…';
+        try {
+          const installed = await invoke('confirm_pending_plugin_install', { token: preview.token });
+          el('status').className = 'status success';
+          el('status').textContent = `“${installed.name}”已安装并启用。`;
+          setTimeout(() => closeWindow(false), 700);
+        } catch (error) {
+          installing = false;
+          el('cancelButton').disabled = false;
+          el('installButton').disabled = !preview.canInstall;
+          el('status').className = 'status error';
+          el('status').textContent = `安装失败：${error}`;
+        }
+      });
+
+      listen?.('plugin-install-preview-updated', event => render(event.payload)).catch(console.error);
+      load();
+    })();
+  </script>
+</body>
+</html>

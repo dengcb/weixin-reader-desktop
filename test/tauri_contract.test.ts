@@ -39,6 +39,36 @@ describe('Tauri application contracts', () => {
     expect(source).toContain('RotationStrategy::KeepSome(2)');
   });
 
+  it('registers .atrd as an owned plugin package type', async () => {
+    const [config, lib, installer, settings] = await Promise.all([
+      readJson<{
+        bundle: { fileAssociations: Array<{ ext: string[]; rank: string; mimeType: string }> };
+      }>('src-tauri/tauri.conf.json'),
+      readText('src-tauri/src/lib.rs'),
+      readText('src/windows/plugin-installer.html'),
+      readText('src/windows/settings.html'),
+    ]);
+
+    expect(config.bundle.fileAssociations).toEqual([
+      expect.objectContaining({
+        ext: ['atrd'],
+        rank: 'Owner',
+        mimeType: 'application/x-atreader-plugin',
+      }),
+    ]);
+    expect(lib).toContain('tauri_plugin_single_instance::init');
+    expect(lib).toContain('tauri::RunEvent::Opened { urls }');
+    expect(lib).toContain('plugin_installer::focus_pending_plugin_install(app.handle())?');
+    expect(installer).toContain('确认安装插件');
+    expect(installer).toContain('SHA-256');
+    expect(installer).toContain('plugin-install-preview-updated');
+    const installerScript = installer.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(installerScript).toBeDefined();
+    expect(() => new Function(installerScript!)).not.toThrow();
+    expect(settings).toContain("invoke('prepare_plugin_install', { path: file })");
+    expect(settings).not.toContain("invoke('install_plugin', { path: file })");
+  });
+
   it('defines no eager windows and never recreates obsolete about or update labels', async () => {
     const [config, lib, menu] = await Promise.all([
       readJson<{ app: { windows: unknown[] } }>('src-tauri/tauri.conf.json'),
@@ -56,6 +86,7 @@ describe('Tauri application contracts', () => {
       'src-tauri/capabilities/main-runtime.json',
       'src-tauri/capabilities/settings.json',
       'src-tauri/capabilities/plugin-editor.json',
+      'src-tauri/capabilities/plugin-installer.json',
       'src-tauri/capabilities/legal-documents.json',
     ];
     const capabilities = await Promise.all(paths.map(path => readJson<Capability>(path)));
@@ -65,6 +96,7 @@ describe('Tauri application contracts', () => {
       'main-runtime': ['main'],
       settings: ['settings'],
       'plugin-editor': ['plugin-editor'],
+      'plugin-installer': ['plugin-installer'],
       'legal-documents': ['privacy', 'terms'],
     });
     expect(capabilities[0].remote?.urls).toEqual(['https://*', 'http://*']);

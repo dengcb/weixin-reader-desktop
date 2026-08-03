@@ -16,6 +16,7 @@ const capabilityFiles = [
   'src-tauri/capabilities/main-runtime.json',
   'src-tauri/capabilities/settings.json',
   'src-tauri/capabilities/plugin-editor.json',
+  'src-tauri/capabilities/plugin-installer.json',
   'src-tauri/capabilities/legal-documents.json',
 ];
 const capabilityCommands = new Set<string>();

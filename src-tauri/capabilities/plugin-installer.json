@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin-installer",
+  "description": "Trusted local window for reviewing and confirming .atrd packages",
+  "windows": ["plugin-installer"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "allow-get-pending-plugin-install",
+    "allow-confirm-pending-plugin-install",
+    "allow-cancel-pending-plugin-install"
+  ]
+}

@@ -789,6 +789,7 @@
       }
       const invoke = tauri.core.invoke;
       const emit = tauri.event ? tauri.event.emit : (name) => console.warn("Emit not available:", name);
+      const listen = tauri.event?.listen;
       let settingsWriteQueue = Promise.resolve();
 
       function patchSettings(patch) {
@@ -1128,22 +1129,7 @@
           });
           
           if (file) {
-            const pluginInfo = await invoke('install_plugin', { path: file });
-            
-            // 启用新安装的插件
-            const settings = await invoke('get_settings');
-            let enabledPlugins = settings?.global?.enabledPlugins;
-            
-            // 如果有明确的列表，添加新插件
-            if (enabledPlugins !== undefined && !enabledPlugins.includes(pluginInfo.id)) {
-              enabledPlugins = [...enabledPlugins, pluginInfo.id];
-              await patchSettings({ global: { enabledPlugins } });
-            }
-            
-            // 触发事件通知主窗口
-            emit('plugins-updated');
-            
-            invoke('get_settings').then(renderPluginList);
+            await invoke('prepare_plugin_install', { path: file });
           }
         } catch (e) {
           console.error('Failed to install plugin:', e);
@@ -1154,6 +1140,11 @@
           }
         }
       });
+
+      // 安装确认窗口完成安装后，立即刷新当前列表。
+      if (listen) {
+        listen('plugins-updated', () => renderPluginList()).catch(console.error);
+      }
 
       // 新建插件按钮
       document.getElementById('createPluginBtn').addEventListener('click', () => {

@@ -28,6 +28,7 @@
         "main-runtime",
         "settings",
         "plugin-editor",
+        "plugin-installer",
         "legal-documents"
       ]
     }
@@ -42,10 +43,27 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["atrd"],
+        "name": "艾特阅读插件",
+        "description": "艾特阅读插件安装包",
+        "role": "Viewer",
+        "rank": "Owner",
+        "mimeType": "application/x-atreader-plugin",
+        "exportedType": {
+          "identifier": "com.dengcb.reader.atrd",
+          "conformsTo": ["public.data"]
+        }
+      }
+    ],
     "macOS": {
       "entitlements": "Entitlements.plist"
     },
     "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"]
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }

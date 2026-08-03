@@ -18,11 +18,18 @@ const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8
 const version = packageJson.version;
 const tag = process.env.RELEASE_TAG ?? `v${version}`;
 const commit = process.env.GITHUB_SHA ?? '';
+
+// 支持 x86_64 和 aarch64 两个 target，通过 STAGE_TARGET 环境变量传入
+const target = process.env.STAGE_TARGET ?? 'x86_64-pc-windows-msvc';
+const archLabel = target.startsWith('aarch64') ? 'aarch64' : 'x86_64';
+const platformLabel = `windows-${archLabel}`;
+const infoFileName = `windows-${archLabel}-release-info.json`;
+
 const bundleDir = join(
   rootDir,
   'src-tauri',
   'target',
-  'x86_64-pc-windows-msvc',
+  target,
   'release',
   'bundle',
   'nsis',
@@ -67,7 +74,7 @@ if (!existsSync(sourceInstallerSignature)) {
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
 
-const installerName = `weixin-reader-${version}-windows-x86_64-setup.exe`;
+const installerName = `weixin-reader-${version}-windows-${archLabel}-setup.exe`;
 const signatureName = `${installerName}.sig`;
 const installerPath = join(outputDir, installerName);
 const signaturePath = join(outputDir, signatureName);
@@ -76,15 +83,15 @@ copyFileSync(sourceInstallerSignature, signaturePath);
 
 const installerSize = assertSize(installerPath);
 const installerSha256 = sha256(installerPath);
-const checksumName = `weixin-reader-${version}-windows-x86_64-SHA256SUMS.txt`;
+const checksumName = `weixin-reader-${version}-windows-${archLabel}-SHA256SUMS.txt`;
 writeFileSync(join(outputDir, checksumName), `${installerSha256}  ${installerName}\n`);
 
 const info = {
   version,
   tag,
   commit,
-  target: 'x86_64-pc-windows-msvc',
-  platform: 'windows-x86_64',
+  target,
+  platform: platformLabel,
   authenticodeStatus: 'Unknown',
   installerAsset: installerName,
   updaterAsset: installerName,
@@ -94,7 +101,7 @@ const info = {
   updaterSize: installerSize,
   installerSha256,
 };
-writeFileSync(join(outputDir, 'windows-release-info.json'), `${JSON.stringify(info, null, 2)}\n`);
+writeFileSync(join(outputDir, infoFileName), `${JSON.stringify(info, null, 2)}\n`);
 
 console.log(`SHA-256: ${installerSha256}`);
-console.log(`已整理 Windows 发布产物：${outputDir}`);
+console.log(`已整理 Windows ${archLabel} 发布产物：${outputDir}`);

@@ -17,6 +17,7 @@
     "allow-get-settings",
     "allow-patch-settings",
     "allow-install-plugin",
+    "allow-prepare-plugin-install",
     "allow-uninstall-plugin",
     "allow-get-installed-plugins",
     "allow-load-plugin-for-edit",

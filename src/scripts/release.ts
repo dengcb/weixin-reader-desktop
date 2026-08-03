@@ -119,7 +119,7 @@ interface WindowsReleaseInfo {
   version: string;
   tag: string;
   commit: string;
-  platform: 'windows-x86_64';
+  platform: 'windows-x86_64' | 'windows-aarch64';
   authenticodeStatus: string;
   installerAsset: string;
   updaterAsset: string;
@@ -469,13 +469,13 @@ async function ensureTag(metadata: ReleaseMetadata): Promise<void> {
   }
 }
 
-function releaseBody(version: string, authenticodeStatus = 'NotSigned'): string {
+function releaseBody(version: string, x64Authenticode = 'NotSigned', arm64Authenticode = 'NotSigned'): string {
   const lines = [
     `艾特阅读 v${version}`,
     '',
     `[Code signing policy](${repoUrl}/blob/v${version}/docs/CODE_SIGNING_POLICY.md)`,
   ];
-  if (authenticodeStatus !== 'Valid') {
+  if (x64Authenticode !== 'Valid' || arm64Authenticode !== 'Valid') {
     lines.push(
       '',
       '> Windows 安装包暂未进行 Authenticode 发布者签名，可能触发 SmartScreen“未知发布者”提示。',
@@ -633,11 +633,16 @@ async function runStatus(): Promise<void> {
   );
 
   let windowsInfo: WindowsReleaseInfo | undefined;
-  if (release.assets.some((asset) => asset.name === 'windows-release-info.json')) {
-    windowsInfo = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-release-info.json');
+  if (release.assets.some((asset) => asset.name === 'windows-x86_64-release-info.json')) {
+    windowsInfo = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-x86_64-release-info.json');
+  }
+  let windowsArm64Info: WindowsReleaseInfo | undefined;
+  if (release.assets.some((asset) => asset.name === 'windows-aarch64-release-info.json')) {
+    windowsArm64Info = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-aarch64-release-info.json');
   }
   const hashes = metadataHashes(metadata);
   if (windowsInfo) hashes.set(windowsInfo.installerAsset, windowsInfo.installerSha256);
+  if (windowsArm64Info) hashes.set(windowsArm64Info.installerAsset, windowsArm64Info.installerSha256);
   console.table(
     release.assets.map((asset) => ({
       asset: asset.name,
@@ -645,9 +650,10 @@ async function runStatus(): Promise<void> {
       sha256: asset.digest?.replace(/^sha256:/, '') ?? hashes.get(asset.name) ?? '—',
     })),
   );
-  const authenticode = windowsInfo?.authenticodeStatus ?? '尚无 Windows 资产';
-  const authenticodeText = authenticode === 'Valid' ? ui.green(authenticode) : ui.yellow(authenticode);
-  console.log(`${ui.cyan('🔏')} Windows Authenticode: ${authenticodeText}`);
+  const x64Auth = windowsInfo?.authenticodeStatus ?? '尚无';
+  const arm64Auth = windowsArm64Info?.authenticodeStatus ?? '尚无';
+  const fmt = (s: string) => (s === 'Valid' ? ui.green(s) : ui.yellow(s));
+  console.log(`${ui.cyan('🔏')} Windows x64 Authenticode: ${fmt(x64Auth)}  ·  ARM64: ${fmt(arm64Auth)}`);
   console.log(`${ui.cyan('📦')} Release 状态: ${release.draft ? ui.yellow('draft') : ui.green('published')}`);
 }
 
@@ -678,7 +684,8 @@ async function updaterPlatform(
   ) as { plugins: { updater: { pubkey: string } } };
   verifyUpdaterSignature(updater, rawSignature, config.plugins.updater.pubkey);
   const signature = normalizeUpdaterSignature(rawSignature);
-  return { url: updaterAsset.browser_download_url, signature };
+  const url = `${repoUrl}/releases/download/${encodeURIComponent(release.tag_name)}/${encodeURIComponent(updaterAsset.name)}`;
+  return { url, signature };
 }
 
 async function runPublish(): Promise<void> {
@@ -695,7 +702,7 @@ async function runPublish(): Promise<void> {
   if (!release.draft) throw new Error(`${metadata.tag} 已经发布`);
 
   for (const name of macAssetNames(metadata)) requireAsset(release, name);
-  const windows = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-release-info.json');
+  const windows = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-x86_64-release-info.json');
   if (
     windows.version !== metadata.version ||
     windows.tag !== metadata.tag ||
@@ -709,6 +716,25 @@ async function runPublish(): Promise<void> {
     windows.updaterAsset,
     windows.signatureAsset,
     windows.checksumAsset,
+  ]) {
+    requireAsset(release, name);
+  }
+
+  // Windows ARM64 资产（与 x86_64 完全相同的验证流程）
+  const windowsArm64 = await readJsonAsset<WindowsReleaseInfo>(release, 'windows-aarch64-release-info.json');
+  if (
+    windowsArm64.version !== metadata.version ||
+    windowsArm64.tag !== metadata.tag ||
+    windowsArm64.commit !== metadata.commit ||
+    windowsArm64.platform !== 'windows-aarch64'
+  ) {
+    throw new Error('Windows ARM64 发布元数据与 release:all 元数据不一致');
+  }
+  for (const name of [
+    windowsArm64.installerAsset,
+    windowsArm64.updaterAsset,
+    windowsArm64.signatureAsset,
+    windowsArm64.checksumAsset,
   ]) {
     requireAsset(release, name);
   }
@@ -734,8 +760,14 @@ async function runPublish(): Promise<void> {
       windows.signatureAsset,
       windows.installerSha256,
     ),
+    'windows-aarch64': await updaterPlatform(
+      release,
+      windowsArm64.updaterAsset,
+      windowsArm64.signatureAsset,
+      windowsArm64.installerSha256,
+    ),
   };
-  if (Object.keys(platforms).sort().join(',') !== 'darwin-aarch64,darwin-x86_64,windows-x86_64') {
+  if (Object.keys(platforms).sort().join(',') !== 'darwin-aarch64,darwin-x86_64,windows-aarch64,windows-x86_64') {
     throw new Error('latest.json 平台集合不正确');
   }
   const latest = {
@@ -754,11 +786,10 @@ async function runPublish(): Promise<void> {
       version: metadata.version,
     })),
   );
-  const authenticodeText =
-    windows.authenticodeStatus === 'Valid'
-      ? ui.green(windows.authenticodeStatus)
-      : ui.yellow(windows.authenticodeStatus);
-  console.log(`${ui.cyan('🔏')} Windows Authenticode: ${authenticodeText}`);
+  const fmt = (s: string) => (s === 'Valid' ? ui.green(s) : ui.yellow(s));
+  console.log(
+    `${ui.cyan('🔏')} Windows Authenticode: x64=${fmt(windows.authenticodeStatus)}  ·  ARM64=${fmt(windowsArm64.authenticodeStatus)}`,
+  );
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(`发布需要交互确认；请在终端运行并输入完整 tag：${metadata.tag}`);
@@ -775,20 +806,24 @@ async function runPublish(): Promise<void> {
     windows.installerAsset,
     windows.signatureAsset,
     windows.checksumAsset,
-    'windows-release-info.json',
+    'windows-x86_64-release-info.json',
+    windowsArm64.installerAsset,
+    windowsArm64.signatureAsset,
+    windowsArm64.checksumAsset,
+    'windows-aarch64-release-info.json',
     'latest.json',
   ]) {
     requireAsset(release, name);
   }
-  await githubRequest(release.url, {
+  const publishedRelease = await githubRequest<GitHubRelease>(release.url, {
     method: 'PATCH',
     body: JSON.stringify({
       draft: false,
       make_latest: 'true',
-      body: releaseBody(metadata.version, windows.authenticodeStatus),
+      body: releaseBody(metadata.version, windows.authenticodeStatus, windowsArm64.authenticodeStatus),
     }),
   });
-  logSuccess(`${metadata.tag} 已正式发布：${release.html_url}`);
+  logSuccess(`${metadata.tag} 已正式发布：${publishedRelease.html_url}`);
 }
 
 async function main(): Promise<void> {

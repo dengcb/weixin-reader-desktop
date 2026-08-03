@@ -152,6 +152,8 @@ plugin.atrd
 - `id` 只能由小写 ASCII 字母、数字、`-`、`_` 组成，最长 64 字节。
 - Web 插件必须提供合法的 `site.domain`、HTTP(S) `homeUrl` 和非空 `readerPattern`。
 - `siteId` 永远等于 manifest 的 `id`，不能使用菜单顺序或临时编号。
+- `weread` 是内置微信读书保留 ID，外部插件不得使用；`weread.qq.com` 及其父子域名同样由内置插件保留。
+- 不同插件不得声明相同或父子重叠的域名；同一 manifest 内也不得重复声明重叠域名。
 - 外部插件必须 `export default` 一个实现 `ReaderPlugin` 的类。
 
 完整接口类型见 `src/scripts/core/plugin_types.ts`，模板见 `src/plugins/template/`，Fanqie 示例见 `plugins/fanqie/`。面向社区的开发步骤、能力自声明、样式组织和验收清单见 [`PLUGIN_DEVELOPMENT.md`](./PLUGIN_DEVELOPMENT.md)。
@@ -167,6 +169,9 @@ Rust 在临时目录完成全部校验后才替换已安装版本：
 - 路径最多四层，拒绝绝对路径、`..`、路径穿越、非法文件名和 ZIP 符号链接。
 - 插件根目录和已安装目录必须是真实目录，规范化后仍位于应用插件根目录内。
 - 暂存版本校验失败不会覆盖旧版本；替换失败时恢复旧目录。
+- 相同外部插件 ID 必须由用户明确确认后才会整体替换；插件设置和阅读进度继续按 ID 保留。
+- `.atrd` 已注册为桌面文件类型。双击后只打开安装确认窗口，展示网站图标、身份、域名、来源文件与 SHA-256；不会静默安装。
+- 安装确认和最终写入之间会再次核对文件 SHA-256、清单以及当前 ID/域名冲突。
 
 ### 编辑与导出
 
