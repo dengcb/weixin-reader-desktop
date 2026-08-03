@@ -51,7 +51,7 @@ export class ScrollState {
           return;
         }
         
-        if (Date.now() - start > timeoutMs) {
+        if (Date.now() - start >= timeoutMs) {
           log.warn(`[ScrollState] Timeout waiting for restoration (${timeoutMs}ms)`);
           resolve(); 
           return;
