@@ -417,7 +417,7 @@ body::before{
         <span id="download-text">下载艾特阅读</span>
       </a>
       <p class="download-meta">
-        macOS<span class="arch-badge" id="arch-badge">—</span>
+        <span id="platform-badge">检测中…</span>
         ·&nbsp;<span id="download-size">—</span>
         ·&nbsp;<a href="https://github.com/dengcb/weixin-reader-desktop/releases" style="color:inherit">全部版本</a>
       </p>
@@ -538,14 +538,29 @@ body::before{
   var RELEASES_PAGE = 'https://github.com/' + REPO + '/releases/latest';
   var btn = document.getElementById('download-btn');
   var txt = document.getElementById('download-text');
-  var badge = document.getElementById('arch-badge');
+  var badge = document.getElementById('platform-badge');
   var sizeEl = document.getElementById('download-size');
 
-  // 架构检测：多层策略，从最可靠到兜底
-  // 陷阱：Safari 的 navigator.userAgent 在 Apple Silicon 上仍报 "Intel Mac OS X"，
-  // navigator.platform 仍报 "MacIntel" —— 苹果为兼容性故意伪装，不能用 UA 判断。
-  function detectArch() {
-    // 策略 1：UA-CH 高熵提示（Chrome/Edge 系）
+  // 检测操作系统（优先级最高）
+  function detectOS() {
+    // 策略 1：UA-CH platform（Chrome/Edge 系）
+    if (navigator.userAgentData && navigator.userAgentData.platform) {
+      var p = navigator.userAgentData.platform.toLowerCase();
+      if (p === 'macos') return 'mac';
+      if (p === 'windows') return 'win';
+      if (p === 'linux') return 'linux';
+    }
+    // 策略 2：UA 字符串
+    var ua = navigator.userAgent;
+    if (/Win(dows|64)/.test(ua)) return 'win';
+    if (/Macintosh|Mac OS X/.test(ua)) return 'mac';
+    if (/Linux/.test(ua)) return 'linux';
+    return 'mac'; // 兜底
+  }
+
+  // macOS 架构检测（仅 mac 调用）
+  // Safari UA 在 Apple Silicon 上报 Intel，需用 UA-CH 或 WebGL
+  function detectMacArch() {
     if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
       return navigator.userAgentData.getHighEntropyValues(['architecture'])
         .then(function(h) {
@@ -556,7 +571,6 @@ body::before{
         })
         .catch(function() { return guessArchFromWebGL(); });
     }
-    // 策略 2：WebGL 渲染器特征（Safari/Firefox 主力方案）
     return Promise.resolve(guessArchFromWebGL());
   }
 
@@ -569,12 +583,22 @@ body::before{
       var r = '';
       if (dbg) r = gl.getParameter(dbg.UNMASKED_RENDERER_WGL) || '';
       if (!r) r = gl.getParameter(gl.RENDERER) || '';
-      // Apple Silicon GPU 报 "Apple M1"/"Apple M2"/"Apple GPU"
       if (/Apple M|Apple GPU/i.test(r)) return 'aarch64';
-      // Intel/AMD/Radeon = 传统 x86 Mac
       if (/Intel|AMD|Radeon/i.test(r)) return 'x86_64';
     } catch (e) {}
     return 'x86_64';
+  }
+
+  // 根据 OS + 架构，确定要找的 release asset 名称
+  function resolveAssetName(os, version) {
+    if (os === 'win') {
+      // Windows 目前只有 x86_64 NSIS
+      return 'weixin-reader-' + version + '-windows-x86_64-setup.exe';
+    }
+    if (os === 'linux') {
+      return null; // 暂无 Linux 构建
+    }
+    return null; // mac 的 asset 名依赖架构，外部处理
   }
 
   // 初始保底
@@ -582,23 +606,51 @@ body::before{
   txt.textContent = '下载艾特阅读';
   badge.textContent = '检测中…';
 
-  // 架构检测 + release 信息并行获取
+  var os = detectOS();
+
+  // 并行：mac 需要检测架构，win/linux 不需要
+  var archPromise;
+  if (os === 'mac') {
+    archPromise = detectMacArch();
+  } else {
+    archPromise = Promise.resolve(null);
+  }
+
   Promise.all([
-    detectArch(),
+    archPromise,
     fetch(API_URL).then(function(r){return r.json();}).catch(function(){return null;})
   ])
   .then(function(results){
     var arch = results[0];
     var data = results[1];
-    badge.textContent = arch === 'aarch64' ? 'Apple Silicon' : 'Intel';
+
+    // 设置平台标签
+    if (os === 'mac') {
+      badge.textContent = arch === 'aarch64' ? 'macOS · Apple Silicon' : 'macOS · Intel';
+    } else if (os === 'win') {
+      badge.textContent = 'Windows · x64';
+    } else {
+      badge.textContent = 'Linux';
+    }
 
     if (!data) { sizeEl.textContent = '—'; return; }
 
     var version = (data.tag_name || 'latest').replace(/^v/, '');
-    var dmgName = 'weixin-reader-' + version + '-' + arch + '.dmg';
+    var assetName;
+
+    if (os === 'mac') {
+      assetName = 'weixin-reader-' + version + '-' + arch + '.dmg';
+    } else if (os === 'win') {
+      assetName = 'weixin-reader-' + version + '-windows-x86_64-setup.exe';
+    } else {
+      assetName = null;
+    }
+
+    if (!assetName) { sizeEl.textContent = '—'; return; }
+
     var found = null;
     for (var i = 0; i < (data.assets || []).length; i++) {
-      if (data.assets[i].name === dmgName) { found = data.assets[i]; break; }
+      if (data.assets[i].name === assetName) { found = data.assets[i]; break; }
     }
     if (found) {
       btn.href = found.browser_download_url;
