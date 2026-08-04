@@ -558,9 +558,9 @@ body::before{
     return 'mac'; // 兜底
   }
 
-  // macOS 架构检测（仅 mac 调用）
+  // 架构检测（macOS 和 Windows ARM 都需要）
   // Safari UA 在 Apple Silicon 上报 Intel，需用 UA-CH 或 WebGL
-  function detectMacArch() {
+  function detectArch() {
     if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
       return navigator.userAgentData.getHighEntropyValues(['architecture'])
         .then(function(h) {
@@ -590,15 +590,17 @@ body::before{
   }
 
   // 根据 OS + 架构，确定要找的 release asset 名称
-  function resolveAssetName(os, version) {
+  function resolveAssetName(os, arch, version) {
     if (os === 'win') {
-      // Windows 目前只有 x86_64 NSIS
-      return 'weixin-reader-' + version + '-windows-x86_64-setup.exe';
+      // Windows ARM64 用 aarch64，其他用 x86_64
+      var winArch = arch === 'aarch64' ? 'aarch64' : 'x86_64';
+      return 'weixin-reader-' + version + '-windows-' + winArch + '-setup.exe';
     }
     if (os === 'linux') {
       return null; // 暂无 Linux 构建
     }
-    return null; // mac 的 asset 名依赖架构，外部处理
+    // mac
+    return 'weixin-reader-' + version + '-macos-' + arch + '.dmg';
   }
 
   // 初始保底
@@ -608,10 +610,10 @@ body::before{
 
   var os = detectOS();
 
-  // 并行：mac 需要检测架构，win/linux 不需要
+  // mac 和 win 都需要检测架构（win 要区分 ARM/x64）
   var archPromise;
-  if (os === 'mac') {
-    archPromise = detectMacArch();
+  if (os === 'mac' || os === 'win') {
+    archPromise = detectArch();
   } else {
     archPromise = Promise.resolve(null);
   }
@@ -628,7 +630,7 @@ body::before{
     if (os === 'mac') {
       badge.textContent = arch === 'aarch64' ? 'macOS · Apple Silicon' : 'macOS · Intel';
     } else if (os === 'win') {
-      badge.textContent = 'Windows · x64';
+      badge.textContent = arch === 'aarch64' ? 'Windows · ARM64' : 'Windows · x64';
     } else {
       badge.textContent = 'Linux';
     }
@@ -636,15 +638,7 @@ body::before{
     if (!data) { sizeEl.textContent = '—'; return; }
 
     var version = (data.tag_name || 'latest').replace(/^v/, '');
-    var assetName;
-
-    if (os === 'mac') {
-      assetName = 'weixin-reader-' + version + '-' + arch + '.dmg';
-    } else if (os === 'win') {
-      assetName = 'weixin-reader-' + version + '-windows-x86_64-setup.exe';
-    } else {
-      assetName = null;
-    }
+    var assetName = resolveAssetName(os, arch, version);
 
     if (!assetName) { sizeEl.textContent = '—'; return; }
 
