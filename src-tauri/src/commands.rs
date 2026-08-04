@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 摸鱼模式状态：true = 当前隐藏中
+static STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 static EDITOR_INSTALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -108,6 +112,53 @@ pub fn set_active_bookstore(app: AppHandle, site_id: String) {
 #[tauri::command]
 pub fn set_title(window: WebviewWindow, title: String) {
     let _ = window.set_title(&title);
+}
+
+/// 摸鱼键：切换窗口可见性
+/// 隐藏时：窗口不可见 + Windows 任务栏图标隐藏
+/// 恢复时：窗口可见 + 任务栏图标恢复 + 窗口获取焦点
+#[tauri::command]
+pub fn toggle_stealth<R: Runtime>(app: AppHandle<R>) {
+    let Some(win) = app.get_webview_window("main") else { return };
+
+    let was_hidden = STEALTH_ACTIVE.swap(true, Ordering::SeqCst);
+    if was_hidden {
+        // 当前是隐藏状态 → 恢复显示
+        #[cfg(target_os = "windows")]
+        let _ = win.set_skip_taskbar(false);
+        let _ = win.show();
+        let _ = win.set_focus();
+        STEALTH_ACTIVE.store(false, Ordering::SeqCst);
+    } else {
+        // 当前可见 → 隐藏
+        let _ = win.hide();
+        #[cfg(target_os = "windows")]
+        let _ = win.set_skip_taskbar(true);
+    }
+}
+
+/// 书店快捷键：按序号切换书店（1=微信读书，2=第一个插件站点，依此类推）
+#[tauri::command]
+pub fn switch_bookstore_by_index<R: Runtime>(app: AppHandle<R>, index: u8) {
+    let settings = crate::settings::read_settings(&app)
+        .unwrap_or_else(|_| crate::settings::default_settings());
+    let mut site_ids = Vec::new();
+    if crate::sites::is_site_enabled(&settings, crate::sites::WEREAD.id) {
+        site_ids.push(crate::sites::WEREAD.id.to_string());
+    }
+    if let Ok(plugins) = crate::plugin_manager::get_installed_plugins(&app) {
+        for plugin in plugins {
+            if plugin.site.is_some() && crate::sites::is_site_enabled(&settings, &plugin.id) {
+                site_ids.push(plugin.id);
+            }
+        }
+    }
+    // index 从 1 开始，转为 0-based
+    if index >= 1 {
+        if let Some(site_id) = site_ids.get((index - 1) as usize) {
+            crate::menu::switch_to_site(&app, site_id);
+        }
+    }
 }
 
 /// 前端注入脚本初始化完成时调用，通知 Rust 端按当前站点应用缩放

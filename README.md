@@ -5,11 +5,12 @@
 ### 🚀 基于 Tauri v2 + Rust 的高性能微信读书桌面客户端
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.2.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.3.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
-  <img src="https://img.shields.io/badge/Platform-macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows">
 </p>
 
 <p>
@@ -185,43 +186,37 @@ CPU 占用低
 
 <table>
 <tr>
-<th width="40%">芯片类型</th>
+<th width="40%">平台 / 芯片</th>
 <th width="60%">下载文件</th>
 </tr>
 <tr>
-<td>🍎 Apple Silicon (M1/M2/M3/M4)</td>
-<td><code>weixin-reader_x.x.x_aarch64.dmg</code></td>
+<td>🍎 macOS Apple Silicon (M1/M2/M3/M4)</td>
+<td><code>weixin-reader-x.x.x-macos-aarch64.dmg</code></td>
 </tr>
 <tr>
-<td>💻 Intel</td>
-<td><code>weixin-reader_x.x.x_x64.dmg</code></td>
+<td>💻 macOS Intel</td>
+<td><code>weixin-reader-x.x.x-macos-x86_64.dmg</code></td>
+</tr>
+<tr>
+<td>🪟 Windows x64 (Intel/AMD)</td>
+<td><code>weixin-reader-x.x.x-windows-x86_64-setup.exe</code></td>
+</tr>
+<tr>
+<td>🪟 Windows ARM64 (Snapdragon X)</td>
+<td><code>weixin-reader-x.x.x-windows-aarch64-setup.exe</code></td>
 </tr>
 </table>
 
-### 🔨 从源码构建
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/dengcb/weixin-reader-desktop.git
-cd weixin-reader-desktop
-
-# 2. 安装依赖
-bun install
-
-# 3. 构建发布版本
-bun release:arm    # Apple Silicon
-bun release:intel  # Intel
-```
-
 ### 🪟 Windows 构建
 
-正式 Windows 版本仅发布 x64 NSIS。维护者先在 macOS 完成两个架构的签名、公证和 draft 上传，再由 GitHub Actions 的原生 Windows x64 runner 构建 NSIS 并上传到同一 draft。GitHub 不会自动发布，三个平台资产齐全后仍需维护者手工生成 `latest.json` 并确认 publish。
-
-需要自行打包的用户应在 Windows x64 环境运行：
+正式版本通过 GitHub Actions 原生 runner 构建 x64 和 ARM64 两个 NSIS 安装包。需要自行打包的 Windows 开发者，在对应架构的 Windows 环境运行：
 
 ```bash
 bun install --frozen-lockfile
+# x64（Intel/AMD）
 bun run tauri build --bundles nsis --target x86_64-pc-windows-msvc -- --locked
+# ARM64（Snapdragon X 等）
+bun run tauri build --bundles nsis --target aarch64-pc-windows-msvc -- --locked
 ```
 
 ---
@@ -230,34 +225,17 @@ bun run tauri build --bundles nsis --target x86_64-pc-windows-msvc -- --locked
 
 ### 📋 环境准备
 
-<table>
-<tr>
-<td width="50%">
+需要 [Rust](https://rustup.rs/) 和 [Bun](https://bun.sh/)：
 
-**安装 Rust**
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf \
-  https://sh.rustup.rs | sh
+git clone https://github.com/dengcb/weixin-reader-desktop.git
+cd weixin-reader-desktop
+bun install
 ```
-
-</td>
-<td width="50%">
-
-**安装 Bun**
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
-
-</td>
-</tr>
-</table>
 
 ### ⚡ 开发命令
 
 ```bash
-# 安装依赖
-bun install
-
 # 🚀 启动开发模式（热重载 + 自动同步版本）
 bun start
 
@@ -280,54 +258,23 @@ bun run debug:intel  # Intel
 
 ```bash
 bun run release:all      # 正式构建 macOS ARM + Intel，生成发布元数据
-bun run release:upload   # 创建 tag/draft、上传 macOS、触发 Windows workflow
+bun run release:upload   # 创建 tag/draft、上传 macOS、触发 Windows x64 + ARM64 workflow
 bun run release:status   # 查看 Windows workflow、资产、SHA-256 和 Authenticode
-bun run release:publish  # 校验三个平台、生成 latest.json、输入完整 tag 后发布
+bun run release:publish  # 校验全部平台、生成 latest.json、输入完整 tag 后发布
 
 bun run release:arm      # 单架构诊断构建，不能直接正式上传
 bun run release:intel    # 单架构诊断构建，不能直接正式上传
 bun run release:clear    # 清理本地发布文件
 ```
 
-`release:all` 要求本机已有 Apple 签名/公证凭据与 `TAURI_SIGNING_PRIVATE_KEY`；`release:upload/status/publish` 要求具备仓库 Contents 与 Actions 权限的 `GH_TOKEN` 或 `GITHUB_TOKEN`。GitHub 的 `windows-release` Environment 需配置同一套 `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。Windows 首期未做 Authenticode 签名时，Release 会保留“未知发布者”说明。
-
 ### ✅ 测试
 
-<table>
-<tr>
-<td width="50%">
-
-**Rust 后端测试**
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml
+bun test                                    # TypeScript 前端
+cargo test --manifest-path src-tauri/Cargo.toml  # Rust 后端
 ```
 
-</td>
-<td width="50%">
-
-**TypeScript 前端测试**
-```bash
-bun test
-```
-
-</td>
-</tr>
-</table>
-
-必要质量门禁：
-
-```bash
-bun install --frozen-lockfile
-bun run check:version
-bun run typecheck
-bun test
-bun run check:ipc
-bun run build
-git diff --exit-code -- src/scripts/inject.js
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-```
-
-截至 2026-08-03：Bun 272 项通过；Rust 66 项通过、1 项真机显示器测试显式忽略。
+CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + build + IPC 检查 + inject.js 一致性校验）。
 
 ---
 

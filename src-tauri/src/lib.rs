@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)]
 
 use tauri::window::Color;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 mod commands;
 mod menu;
@@ -13,6 +13,30 @@ mod settings;
 mod sites;
 mod tracker_blocker;
 mod update;
+
+const LIBRARY_PAGE: &str = "library.html";
+const LIBRARY_SCHEME: &str = "atreader";
+const LIBRARY_PAGE_HTML: &[u8] = include_bytes!("../../src/windows/library.html");
+
+fn library_protocol_response(path: &str) -> tauri::http::Response<Vec<u8>> {
+    if path == "/library" {
+        tauri::http::Response::builder()
+            .header("content-type", "text/html; charset=utf-8")
+            .body(LIBRARY_PAGE_HTML.to_vec())
+            .expect("valid local library response")
+    } else {
+        tauri::http::Response::builder()
+            .status(404)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(b"Not Found".to_vec())
+            .expect("valid local error response")
+    }
+}
+
+enum MainStartupTarget {
+    Online(String),
+    Library,
+}
 
 fn selected_startup_site_id(settings: &serde_json::Value) -> &str {
     let remember_site = settings
@@ -30,7 +54,22 @@ fn selected_startup_site_id(settings: &serde_json::Value) -> &str {
         .unwrap_or(sites::WEREAD.id)
 }
 
+#[cfg(test)]
 fn resolve_startup_url<F>(settings: &serde_json::Value, mut resolve_home: F) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let site_id = selected_startup_site_id(settings);
+    sites::is_site_enabled(settings, site_id)
+        .then(|| resolve_site_url(settings, site_id, &mut resolve_home))
+        .flatten()
+}
+
+fn resolve_site_url<F>(
+    settings: &serde_json::Value,
+    site_id: &str,
+    resolve_home: &mut F,
+) -> Option<String>
 where
     F: FnMut(&str) -> Option<String>,
 {
@@ -39,8 +78,6 @@ where
         .and_then(|global| global.get("lastPage"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
-    let site_id = selected_startup_site_id(settings);
-
     if remember_page {
         settings
             .get("sites")
@@ -51,6 +88,99 @@ where
             .or_else(|| resolve_home(site_id))
     } else {
         resolve_home(site_id)
+    }
+}
+
+/// 首选记忆站点；若其已禁用，则依次尝试微信读书和已启用的外部站点。
+/// 没有任何在线站点可用时返回 None，由调用方打开本地默认页。
+fn resolve_enabled_startup_url<F>(
+    settings: &serde_json::Value,
+    external_site_ids: &[String],
+    mut resolve_home: F,
+) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let mut candidates = vec![selected_startup_site_id(settings).to_string()];
+    if !candidates.iter().any(|site_id| site_id == sites::WEREAD.id) {
+        candidates.push(sites::WEREAD.id.to_string());
+    }
+    for site_id in external_site_ids {
+        if !candidates.iter().any(|candidate| candidate == site_id) {
+            candidates.push(site_id.clone());
+        }
+    }
+
+    candidates.into_iter().find_map(|site_id| {
+        sites::is_site_enabled(settings, &site_id)
+            .then(|| resolve_site_url(settings, &site_id, &mut resolve_home))
+            .flatten()
+    })
+}
+
+fn installed_external_site_ids(app: &tauri::AppHandle) -> Vec<String> {
+    plugin_manager::get_installed_plugins(app)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|plugin| plugin.site.is_some())
+        .map(|plugin| plugin.id)
+        .collect()
+}
+
+fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> MainStartupTarget {
+    let external_site_ids = installed_external_site_ids(app);
+    resolve_enabled_startup_url(settings, &external_site_ids, |site_id| {
+        sites::resolve_home_url(app, site_id)
+    })
+    .map(MainStartupTarget::Online)
+    .unwrap_or(MainStartupTarget::Library)
+}
+
+#[cfg(target_os = "windows")]
+fn library_page_url() -> tauri::Url {
+    "http://atreader.localhost/library"
+        .parse()
+        .expect("valid local library URL")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn library_page_url() -> tauri::Url {
+    "atreader://localhost/library"
+        .parse()
+        .expect("valid local library URL")
+}
+
+fn navigate_to_library_when_no_online_site(app: &tauri::AppHandle) {
+    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
+    if !matches!(
+        main_startup_target(app, &settings),
+        MainStartupTarget::Library
+    ) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.navigate(library_page_url());
+    }
+}
+
+fn navigate_to_enabled_site_when_on_library(app: &tauri::AppHandle) {
+    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
+    let MainStartupTarget::Online(url) = main_startup_target(app, &settings) else {
+        return;
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let is_on_library = window
+        .url()
+        .ok()
+        .is_some_and(|current| {
+            current.scheme() == LIBRARY_SCHEME || current.path().ends_with(LIBRARY_PAGE)
+        });
+    if is_on_library {
+        if let Ok(url) = url.parse::<tauri::Url>() {
+            let _ = window.navigate(url);
+        }
     }
 }
 
@@ -96,6 +226,12 @@ pub fn run() {
         }));
     }
 
+    // 远程阅读页运行期间切换到默认页时，直接由专用本地协议返回编译进二进制的
+    // 页面内容，避免再次经 Tauri 前端资产协议请求 library.html。
+    builder = builder.register_uri_scheme_protocol(LIBRARY_SCHEME, |_context, request| {
+        library_protocol_response(request.uri().path())
+    });
+
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -121,29 +257,20 @@ pub fn run() {
             // Check if we should restore the last reader page directly (to avoid flash of homepage)
             println!("[Init] App starting... Inject script size: {} bytes", inject_script.len());
 
-            let url = {
+            let startup_target = {
                 let settings = settings::read_settings(app.handle())
                     .unwrap_or_else(|_| settings::default_settings());
-
-                // 启动 URL 解析（多站点，两个正交开关）：
-                // - 「记住书店，好看再来」(global.rememberSite) 决定回哪个站点：
-                //     开 → global.lastSiteId（无则 weread）；关 → 强制 weread
-                // - 「阅读不停，自动记录」(global.lastPage) 决定回页还是回首页：
-                //     开 → 该站点上次阅读页 sites[siteId].lastReaderUrl（无则站点首页）；关 → 站点首页
-                // 两个开关互不为前提，默认均为开（向后兼容）。
-                let resolved_url = resolve_startup_url(&settings, |site_id| {
-                    sites::resolve_home_url(app.handle(), site_id)
-                });
-
-                match resolved_url {
-                    Some(url_str) => {
-                        println!("[Init] Restoring startup URL: {}", url_str);
-                        WebviewUrl::External(url_str.parse().unwrap())
-                    }
-                    None => {
-                        println!("[Init] No startup URL resolved, loading weread homepage");
-                        WebviewUrl::External(sites::DEFAULT_SITE.home_url.parse().unwrap())
-                    }
+                main_startup_target(app.handle(), &settings)
+            };
+            let is_library = matches!(&startup_target, MainStartupTarget::Library);
+            let url = match startup_target {
+                MainStartupTarget::Online(url_str) => {
+                    println!("[Init] Restoring enabled online site: {}", url_str);
+                    WebviewUrl::External(url_str.parse().unwrap())
+                }
+                MainStartupTarget::Library => {
+                    println!("[Init] No enabled online site, loading local default page");
+                    WebviewUrl::CustomProtocol(library_page_url())
                 }
             };
 
@@ -190,12 +317,16 @@ pub fn run() {
             {
                 let settings = settings::read_settings(app.handle())
                     .unwrap_or_else(|_| settings::default_settings());
-                let site_id = selected_startup_site_id(&settings);
-                let zoom = settings.get("sites")
-                    .and_then(|s| s.get(site_id))
-                    .and_then(|s| s.get("zoom"))
-                    .and_then(|z| z.as_f64())
-                    .unwrap_or(0.75);
+                let zoom = if is_library {
+                    1.0
+                } else {
+                    let site_id = selected_startup_site_id(&settings);
+                    settings.get("sites")
+                        .and_then(|s| s.get(site_id))
+                        .and_then(|s| s.get("zoom"))
+                        .and_then(|z| z.as_f64())
+                        .unwrap_or(0.75)
+                };
                 let _ = win.set_zoom(zoom);
             }
 
@@ -214,6 +345,15 @@ pub fn run() {
 
             // Menu Init - AFTER main window is created
             menu::init(app)?;
+
+            // 禁用或卸载最后一个在线插件时，立即回到本地默认页，避免继续停留在
+            // 已无插件支撑的远程网站；恢复插件时再从默认页回到可用书店。
+            let navigation_handle = app.handle().clone();
+            app.listen("plugins-updated", move |_| {
+                commands::refresh_app_menu(&navigation_handle);
+                navigate_to_library_when_no_online_site(&navigation_handle);
+                navigate_to_enabled_site_when_on_library(&navigation_handle);
+            });
 
             // Windows/Linux 冷启动时，关联文件路径由命令行参数传入。
             // macOS 使用下方的 RunEvent::Opened，不在这里重复处理。
@@ -237,6 +377,8 @@ pub fn run() {
             reading_progress::get_reading_position,
             reading_progress::save_reading_position,
             commands::set_title,
+            commands::toggle_stealth,
+            commands::switch_bookstore_by_index,
             commands::apply_site_zoom,
             commands::get_app_name,
             commands::get_app_version,
@@ -385,5 +527,46 @@ mod tests {
         assert_eq!(resolve_startup_url(&unknown, home), None);
         assert_eq!(selected_startup_site_id(&json!({})), "weread");
         assert_eq!(selected_startup_site_id(&unknown), "missing");
+    }
+
+    #[test]
+    fn startup_uses_an_enabled_external_site_when_weread_is_disabled() {
+        let settings = json!({
+            "global": {
+                "enabledPlugins": ["fanqie"],
+                "lastSiteId": "weread"
+            }
+        });
+        assert_eq!(
+            resolve_enabled_startup_url(&settings, &["fanqie".to_string()], home),
+            Some("https://fanqienovel.com/".to_string())
+        );
+    }
+
+    #[test]
+    fn startup_has_no_online_target_when_every_plugin_is_disabled() {
+        let settings = json!({
+            "global": {
+                "enabledPlugins": [],
+                "lastSiteId": "weread"
+            }
+        });
+        assert_eq!(
+            resolve_enabled_startup_url(&settings, &["fanqie".to_string()], home),
+            None
+        );
+    }
+
+    #[test]
+    fn local_library_protocol_serves_the_embedded_default_page() {
+        let response = library_protocol_response("/library");
+
+        assert!(response.status().is_success());
+        assert_eq!(response.body().as_slice(), LIBRARY_PAGE_HTML);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(library_protocol_response("/missing").status(), 404);
     }
 }

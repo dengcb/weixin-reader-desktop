@@ -1,6 +1,9 @@
 fn main() {
     // Tell Cargo to rebuild if inject.js changes
     println!("cargo:rerun-if-changed=../src/scripts/inject.js");
+    // Tauri 会在编译期把 frontendDist 的资源嵌入应用；默认页新增或更新后必须
+    // 重新运行 build.rs，否则正在构建的壳找不到 library.html。
+    println!("cargo:rerun-if-changed=../dist/library.html");
 
     // Tauri 2.11+ 要求注册自定义命令到 AppManifest，
     // 否则远程 URL（如 weread.qq.com）的 invoke 调用会被 ACL 拒绝。
@@ -11,6 +14,8 @@ fn main() {
             "set_menu_item_enabled",
             "set_active_bookstore",
             "set_title",
+            "toggle_stealth",
+            "switch_bookstore_by_index",
             "apply_site_zoom",
             "get_app_name",
             "get_app_version",

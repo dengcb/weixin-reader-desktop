@@ -83,6 +83,8 @@ const expectedMainCommands = new Set([
   'set_menu_item_enabled',
   'set_active_bookstore',
   'set_title',
+  'toggle_stealth',
+  'switch_bookstore_by_index',
   'apply_site_zoom',
   'get_app_name',
   'get_settings',

@@ -1,8 +1,6 @@
 use crate::{commands, plugin_manager};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -19,7 +17,6 @@ pub struct PendingPluginInstallState {
 #[derive(Clone)]
 struct PendingPluginInstall {
     path: PathBuf,
-    sha256: String,
     preview: PluginInstallPreview,
 }
 
@@ -29,7 +26,6 @@ pub struct PluginInstallPreview {
     pub token: String,
     pub file_name: String,
     pub file_size: u64,
-    pub sha256: String,
     pub plugin: plugin_manager::PluginInfo,
     pub domains: Vec<String>,
     pub icon_url: Option<String>,
@@ -37,23 +33,6 @@ pub struct PluginInstallPreview {
     pub conflicts: Vec<plugin_manager::PluginInstallConflict>,
     pub can_install: bool,
     pub replaces_existing: bool,
-}
-
-fn package_sha256(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path)
-        .map_err(|error| format!("Failed to open plugin package for hashing: {error}"))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| format!("Failed to hash plugin package: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn safe_icon_url(value: Option<&str>) -> Option<String> {
@@ -91,7 +70,6 @@ fn build_preview(app: &AppHandle, path: &Path) -> Result<PluginInstallPreview, S
     let conflicts = plugin_manager::get_install_conflicts(app, &manifest)?;
     let metadata =
         fs::metadata(path).map_err(|error| format!("Failed to inspect plugin package: {error}"))?;
-    let sha256 = package_sha256(path)?;
     let token = format!(
         "{}-{}",
         std::process::id(),
@@ -110,7 +88,6 @@ fn build_preview(app: &AppHandle, path: &Path) -> Result<PluginInstallPreview, S
         token,
         file_name,
         file_size: metadata.len(),
-        sha256,
         domains: plugin_manager::manifest_domains(&manifest),
         icon_url: safe_icon_url(manifest.icon.as_deref()),
         favicon_url: favicon_url(&manifest),
@@ -151,7 +128,6 @@ pub fn request_plugin_install(app: &AppHandle, path: &Path) -> Result<(), String
     let preview = build_preview(app, &canonical)?;
     let pending = PendingPluginInstall {
         path: canonical,
-        sha256: preview.sha256.clone(),
         preview: preview.clone(),
     };
     let state = app.state::<PendingPluginInstallState>();
@@ -289,10 +265,6 @@ pub async fn confirm_pending_plugin_install(
         request.clone()
     };
 
-    let current_sha256 = package_sha256(&request.path)?;
-    if current_sha256 != request.sha256 {
-        return Err("插件文件在确认后发生变化，请重新打开并检查".to_string());
-    }
     let path_string = request.path.to_string_lossy();
     let manifest = plugin_manager::inspect_plugin_package(&path_string)?;
     let conflicts = plugin_manager::get_install_conflicts(&app, &manifest)?;

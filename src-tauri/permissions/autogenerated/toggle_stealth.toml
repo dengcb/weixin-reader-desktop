@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-stealth"
+description = "Enables the toggle_stealth command without any pre-configured scope."
+commands.allow = ["toggle_stealth"]
+
+[[permission]]
+identifier = "deny-toggle-stealth"
+description = "Denies the toggle_stealth command without any pre-configured scope."
+commands.deny = ["toggle_stealth"]

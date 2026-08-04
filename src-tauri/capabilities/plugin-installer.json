@@ -7,6 +7,7 @@
     "core:default",
     "core:event:default",
     "core:window:default",
+    "core:window:allow-close",
     "allow-get-pending-plugin-install",
     "allow-confirm-pending-plugin-install",
     "allow-cancel-pending-plugin-install"

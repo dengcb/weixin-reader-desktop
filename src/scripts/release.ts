@@ -50,8 +50,8 @@ function logNext(message: string): void {
 }
 
 const macTargets = {
-  'aarch64-apple-darwin': { platform: 'darwin-aarch64', arch: 'aarch64' },
-  'x86_64-apple-darwin': { platform: 'darwin-x86_64', arch: 'x86_64' },
+  'aarch64-apple-darwin': { platform: 'darwin-aarch64', arch: 'macos-aarch64' },
+  'x86_64-apple-darwin': { platform: 'darwin-x86_64', arch: 'macos-x86_64' },
 } as const;
 
 type MacTarget = keyof typeof macTargets;

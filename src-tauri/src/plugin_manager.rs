@@ -211,10 +211,14 @@ pub fn inspect_install_conflicts(
         conflicts.push(PluginInstallConflict {
             kind: "reserved-id".to_string(),
             blocking: true,
-            message: format!(
-                "插件 ID「{}」已由内置插件「{}」使用，请更换插件 ID。",
-                candidate.id, name
-            ),
+            message: if candidate.id == "weread" {
+                "微信读书为内置插件；如已卸载，请在插件管理中点击“恢复”，不能从外部插件包安装。".to_string()
+            } else {
+                format!(
+                    "插件 ID「{}」已由内置插件「{}」使用，请更换插件 ID。",
+                    candidate.id, name
+                )
+            },
             existing_id: Some(candidate.id.clone()),
             existing_name: Some((*name).to_string()),
             existing_version: None,
@@ -785,6 +789,7 @@ mod tests {
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].kind, "reserved-id");
         assert!(conflicts[0].blocking);
+        assert!(conflicts[0].message.contains("点击“恢复”"));
         assert!(reject_blocking_install_conflicts(&conflicts).is_err());
     }
 

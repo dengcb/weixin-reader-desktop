@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switch-bookstore-by-index"
+description = "Enables the switch_bookstore_by_index command without any pre-configured scope."
+commands.allow = ["switch_bookstore_by_index"]
+
+[[permission]]
+identifier = "deny-switch-bookstore-by-index"
+description = "Denies the switch_bookstore_by_index command without any pre-configured scope."
+commands.deny = ["switch_bookstore_by_index"]

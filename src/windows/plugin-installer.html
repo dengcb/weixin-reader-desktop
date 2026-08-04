@@ -108,7 +108,6 @@
       font-size: 12px;
       font-weight: 600;
     }
-    .hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
     .notices { display: grid; gap: 10px; margin-top: 14px; }
     .notice {
       border-radius: 12px;
@@ -171,7 +170,6 @@
           <div class="row"><div class="label">网站首页</div><div class="value" id="homeUrl">-</div></div>
           <div class="row"><div class="label">安装文件</div><div class="value" id="fileName">-</div></div>
           <div class="row"><div class="label">文件大小</div><div class="value" id="fileSize">-</div></div>
-          <div class="row"><div class="label">SHA-256</div><div class="value hash" id="sha256">-</div></div>
           <div class="notices" id="notices"></div>
         </div>
       </div>
@@ -225,7 +223,6 @@
         el('homeUrl').textContent = data.plugin.site?.homeUrl || '-';
         el('fileName').textContent = data.fileName;
         el('fileSize').textContent = formatSize(data.fileSize);
-        el('sha256').textContent = data.sha256;
         setIcon(data);
 
         const domains = el('domains');
@@ -245,13 +242,6 @@
           node.textContent = conflict.message;
           notices.appendChild(node);
         });
-        if (!data.conflicts.length) {
-          const node = document.createElement('div');
-          node.className = 'notice warning';
-          node.textContent = '插件包未提供独立发布者签名，请确认文件来源可信。';
-          notices.appendChild(node);
-        }
-
         const button = el('installButton');
         button.textContent = data.replacesExisting ? '覆盖并安装' : '安装插件';
         button.disabled = !data.canInstall;
@@ -283,16 +273,21 @@
         el('status').className = 'status';
         el('status').textContent = '正在验证并安装…';
         try {
-          const installed = await invoke('confirm_pending_plugin_install', { token: preview.token });
-          el('status').className = 'status success';
-          el('status').textContent = `“${installed.name}”已安装并启用。`;
-          setTimeout(() => closeWindow(false), 700);
+          await invoke('confirm_pending_plugin_install', { token: preview.token });
         } catch (error) {
           installing = false;
           el('cancelButton').disabled = false;
           el('installButton').disabled = !preview.canInstall;
           el('status').className = 'status error';
           el('status').textContent = `安装失败：${error}`;
+          return;
+        }
+        try {
+          await closeWindow(false);
+        } catch (error) {
+          console.error('插件已安装，但安装窗口关闭失败：', error);
+          el('status').className = 'status success';
+          el('status').textContent = '插件已安装，可以关闭此窗口。';
         }
       });
 
