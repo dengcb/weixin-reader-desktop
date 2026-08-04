@@ -424,6 +424,8 @@ pub fn run() {
                     }
                 }
                 // macOS 在冷启动和应用已运行时都通过 Opened 交付关联文件。
+                // Windows/Linux 没有此变体，需 cfg 门控。
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     plugin_installer::handle_opened_urls(app_handle, &urls);
                 }
