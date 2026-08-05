@@ -137,6 +137,29 @@ pub fn toggle_stealth<R: Runtime>(app: AppHandle<R>) {
     }
 }
 
+/// Windows 专属：切换菜单栏可见性（Ctrl+M）
+/// 不持久化，重启后恢复默认显示
+#[cfg(target_os = "windows")]
+static MENU_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(win) = app.get_webview_window("main") else { return };
+        let was_hidden = MENU_HIDDEN.swap(true, Ordering::SeqCst);
+        if was_hidden {
+            let _ = win.show_menu();
+            MENU_HIDDEN.store(false, Ordering::SeqCst);
+        } else {
+            let _ = win.hide_menu();
+        }
+    }
+    // 非 Windows 平台：空操作（macOS/Linux 菜单行为不同，不需要隐藏）
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
+}
+
 /// 书店快捷键：按序号切换书店（1=微信读书，2=第一个插件站点，依此类推）
 #[tauri::command]
 pub fn switch_bookstore_by_index<R: Runtime>(app: AppHandle<R>, index: u8) {

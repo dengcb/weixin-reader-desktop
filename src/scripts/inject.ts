@@ -20,12 +20,16 @@ async function main(): Promise<void> {
   (window as any).atreader_injected = true;
 
   // 书店快捷键：Cmd/Ctrl + 1~9 按序号切换书店
+  // Windows 菜单栏隐藏：Ctrl+M（macOS 不生效）
   // 摸鱼键（Cmd/Ctrl + `）已由 Rust 端全局热键注册，窗口隐藏后也能响应
   window.addEventListener('keydown', (e: KeyboardEvent) => {
     if (!(e.metaKey || e.ctrlKey)) return;
     if (e.key >= '1' && e.key <= '9') {
       e.preventDefault();
       invoke('switch_bookstore_by_index', { index: parseInt(e.key, 10) }).catch(() => {});
+    } else if (e.ctrlKey && e.key === 'm') {
+      e.preventDefault();
+      invoke('toggle_menu_bar').catch(() => {});
     }
   });
 

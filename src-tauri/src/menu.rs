@@ -406,7 +406,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
         )?
     };
 
-    // Windows: File Menu (stealth, settings, quit)
+    // Windows: File Menu (stealth, toggle menu bar, settings, quit)
     #[cfg(target_os = "windows")]
     let file_menu = Submenu::with_items(
         handle,
@@ -415,6 +415,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单", true, None::<&str>)?,
             &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
@@ -628,6 +629,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单", true, None::<&str>)?,
             &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
@@ -886,6 +888,13 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 if let Some(win) = app.get_webview_window("main") {
                     if let Ok(is_fullscreen) = win.is_fullscreen() {
                         let _ = win.set_fullscreen(!is_fullscreen);
+                        // Windows: 全屏时自动隐藏菜单栏，退出全屏时恢复
+                        #[cfg(target_os = "windows")]
+                        if !is_fullscreen {
+                            let _ = win.hide_menu();
+                        } else {
+                            let _ = win.show_menu();
+                        }
                     }
                 }
             }
@@ -944,6 +953,9 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             "stealth" => {
                 crate::commands::toggle_stealth(app.clone());
+            }
+            "toggle_menu" => {
+                crate::commands::toggle_menu_bar(app.clone());
             }
             "quit" => {
                 // Clear autoFlip.active before quitting

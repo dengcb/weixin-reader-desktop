@@ -402,6 +402,7 @@ pub fn run() {
             reading_progress::save_reading_position,
             commands::set_title,
             commands::toggle_stealth,
+            commands::toggle_menu_bar,
             commands::switch_bookstore_by_index,
             commands::apply_site_zoom,
             commands::get_app_name,
