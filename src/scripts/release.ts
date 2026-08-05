@@ -653,7 +653,7 @@ async function runStatus(): Promise<void> {
   const x64Auth = windowsInfo?.authenticodeStatus ?? '尚无';
   const arm64Auth = windowsArm64Info?.authenticodeStatus ?? '尚无';
   const fmt = (s: string) => (s === 'Valid' ? ui.green(s) : ui.yellow(s));
-  console.log(`${ui.cyan('🔏')} Windows x64 Authenticode: ${fmt(x64Auth)}  ·  ARM64: ${fmt(arm64Auth)}`);
+  console.log(`${ui.cyan('🔏')} Windows Authenticode: x64=${fmt(x64Auth)}  ·  ARM64=${fmt(arm64Auth)}`);
   console.log(`${ui.cyan('📦')} Release 状态: ${release.draft ? ui.yellow('draft') : ui.green('published')}`);
 }
 

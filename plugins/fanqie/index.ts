@@ -266,16 +266,21 @@ export class FanqiePlugin implements ReaderPlugin {
 
   private readonly handleKeyboard = (event: KeyboardEvent): void => {
     const markedEvent = event as ChapterNavigationEvent;
-    if (markedEvent.__atreaderChapterNavigation || !this.paginator?.isActive()) return;
+    if (markedEvent.__atreaderChapterNavigation) return;
+
+    const keyMatches = (key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown') => (
+      event.key === key || event.code === key
+    );
+    if (!this.paginator?.isActive()) return;
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.isContentEditable || target?.matches('input, textarea, select')) return;
 
-    if (event.key === 'ArrowRight') {
+    if (keyMatches('ArrowRight')) {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.nextPage();
-    } else if (event.key === 'ArrowLeft') {
+    } else if (keyMatches('ArrowLeft')) {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.prevPage();
@@ -283,9 +288,9 @@ export class FanqiePlugin implements ReaderPlugin {
      * @capability chapterNav
      * [功能能力 5/6：章节导航]
      * 这是纯交互能力，不需要 CSS；仅在双栏分页激活且能力开启时接管上下键。
-     */
+    */
     } else if (
-      event.key === 'ArrowUp'
+      keyMatches('ArrowUp')
       && this.manifest.capabilities.chapterNav === true
     ) {
       event.preventDefault();
@@ -293,7 +298,7 @@ export class FanqiePlugin implements ReaderPlugin {
       sessionStorage.setItem(PREVIOUS_CHAPTER_FLAG, String(Date.now()));
       this.triggerChapterNavigation('ArrowLeft');
     } else if (
-      event.key === 'ArrowDown'
+      keyMatches('ArrowDown')
       && this.manifest.capabilities.chapterNav === true
     ) {
       event.preventDefault();

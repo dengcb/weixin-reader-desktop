@@ -19,15 +19,11 @@ async function main(): Promise<void> {
   (window as any).wxrd_injected = true;
   (window as any).atreader_injected = true;
 
-  // 摸鱼键：Cmd/Ctrl + ` 切换窗口可见性
   // 书店快捷键：Cmd/Ctrl + 1~9 按序号切换书店
-  // 最早期注册，不依赖任何 Manager 初始化
+  // 摸鱼键（Cmd/Ctrl + `）已由 Rust 端全局热键注册，窗口隐藏后也能响应
   window.addEventListener('keydown', (e: KeyboardEvent) => {
     if (!(e.metaKey || e.ctrlKey)) return;
-    if (e.key === '`') {
-      e.preventDefault();
-      invoke('toggle_stealth').catch(() => {});
-    } else if (e.key >= '1' && e.key <= '9') {
+    if (e.key >= '1' && e.key <= '9') {
       e.preventDefault();
       invoke('switch_bookstore_by_index', { index: parseInt(e.key, 10) }).catch(() => {});
     }

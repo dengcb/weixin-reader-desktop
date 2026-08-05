@@ -381,7 +381,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
     // macOS-only: App Menu with hide/show items
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?;
+        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?;
         let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
         let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
         let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
@@ -415,7 +415,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
+            &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
         ],
@@ -594,7 +594,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     // macOS: App Menu with hide/show items
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?;
+        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?;
         let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
         let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
         let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
@@ -628,7 +628,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
+            &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
         ],

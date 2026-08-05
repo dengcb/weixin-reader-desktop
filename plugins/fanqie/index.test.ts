@@ -237,6 +237,33 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
     document.removeEventListener('keydown', captureNativeKey);
   });
 
+  it('also recognizes standard direction codes when the key value is unavailable', async () => {
+    history.replaceState({}, '', '/reader/chapter-keyboard-code');
+    readerMarkup();
+    const { api } = createApi();
+    const plugin = new FanqiePlugin();
+    const nativeKeys: string[] = [];
+    const captureNativeKey = (event: KeyboardEvent) => {
+      if (event.target === document) nativeKeys.push(event.key);
+    };
+    document.addEventListener('keydown', captureNativeKey);
+
+    plugin.onLoad(api);
+    await Promise.resolve();
+
+    const up = new KeyboardEvent('keydown', { code: 'ArrowUp', cancelable: true });
+    const down = new KeyboardEvent('keydown', { code: 'ArrowDown', cancelable: true });
+    document.body.dispatchEvent(up);
+    document.body.dispatchEvent(down);
+
+    expect(nativeKeys).toEqual(['ArrowLeft', 'ArrowRight']);
+    expect(up.defaultPrevented).toBe(true);
+    expect(down.defaultPrevented).toBe(true);
+
+    plugin.onUnload();
+    document.removeEventListener('keydown', captureNativeKey);
+  });
+
   it('leaves up and down untouched when chapter navigation capability is off', async () => {
     history.replaceState({}, '', '/reader/chapter-keyboard-disabled');
     readerMarkup();

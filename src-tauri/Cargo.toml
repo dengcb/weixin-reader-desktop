@@ -43,6 +43,7 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.4.3"
+tauri-plugin-global-shortcut = "2.3"
 
 [[bin]]
 name = "weixin-reader"

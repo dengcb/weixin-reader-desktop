@@ -365,6 +365,30 @@ pub fn run() {
             }
             plugin_installer::focus_pending_plugin_install(app.handle())?;
 
+            // 摸鱼键全局热键：Cmd/Ctrl + `
+            // 必须用全局热键，因为窗口 hide() 后不接收键盘事件，窗口内 keydown 监听失效
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+                // macOS = Cmd+`，Windows/Linux = Ctrl+`
+                #[cfg(target_os = "macos")]
+                let mod_key = Modifiers::SUPER;
+                #[cfg(not(target_os = "macos"))]
+                let mod_key = Modifiers::CONTROL;
+                let stealth_key = Shortcut::new(Some(mod_key), Code::Backquote);
+                let stealth_handle = app.handle().clone();
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |_app, shortcut, event| {
+                            if shortcut == &stealth_key && event.state() == ShortcutState::Pressed {
+                                commands::toggle_stealth(stealth_handle.clone());
+                            }
+                        })
+                        .build(),
+                )?;
+                app.global_shortcut().register(stealth_key)?;
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
