@@ -92,7 +92,7 @@ body::before{
 /* ===== 下载按钮 ===== */
 .download-area{
   margin-top:8px;
-  margin-bottom:40px;
+  margin-bottom:0;
 }
 
 .btn-primary{
@@ -137,9 +137,22 @@ body::before{
   color:var(--bamboo);
 }
 
+/* ===== 产品截图 ===== */
+.screenshot{
+  padding:0 20px 20px;
+  text-align:center;
+}
+
+.screenshot-img{
+  max-width:100%;
+  border-radius:10px;
+  border:1px solid var(--line);
+  box-shadow:0 8px 30px rgba(0,0,0,.08);
+}
+
 /* ===== 特性区 ===== */
 .features{
-  padding:50px 0;
+  padding:40px 0 20px;
   border-top:1px solid var(--line);
 }
 
@@ -181,8 +194,9 @@ body::before{
   transform:translateY(-4px);
 }
 
-.feature-card .icon{
-  font-size:30px;
+.feature-card .icon svg{
+  width:36px;
+  height:36px;
   margin-bottom:14px;
 }
 
@@ -300,9 +314,13 @@ body::before{
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:32px;
   background:var(--paper);
   border:1px solid var(--line);
+}
+
+.plugin-icon svg{
+  width:36px;
+  height:36px;
 }
 
 .plugin-info{
@@ -424,23 +442,28 @@ body::before{
     </div>
   </header>
 
+  <!-- ===== 产品截图 ===== -->
+  <section class="screenshot">
+    <img src="https://raw.githubusercontent.com/dengcb/weixin-reader-desktop/main/screen.jpg" alt="艾特阅读产品截图" class="screenshot-img">
+  </section>
+
   <!-- ===== 特性卡片 ===== -->
   <section class="features">
     <h2 class="section-title">为何选择</h2>
     <p class="section-sub">轻 · 快 · 安</p>
     <div class="feature-grid">
       <div class="feature-card">
-        <div class="icon">📦</div>
+        <div class="icon"><svg viewBox="0 0 100 100"><g stroke="#349f66" stroke-width="6" stroke-linecap="round" fill="none"><ellipse cx="50" cy="50" rx="42" ry="12" transform="rotate(45 50 50)"/><ellipse cx="50" cy="50" rx="42" ry="12" transform="rotate(-45 50 50)"/></g></svg></div>
         <h3>极致轻量</h3>
         <p>安装包仅 ~5MB<br>内存占用低至 100MB<br>较 Electron 降低 80%</p>
       </div>
       <div class="feature-card">
-        <div class="icon">⚡</div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#349f66" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
         <h3>原生性能</h3>
         <p>基于 Rust + Tauri v2 构建<br>瞬间启动<br>CPU 占用极低</p>
       </div>
       <div class="feature-card">
-        <div class="icon">🔒</div>
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="#349f66" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
         <h3>安全可靠</h3>
         <p>完全开源 MIT 协议<br>无广告 · 无跟踪<br>数据直连官方接口</p>
       </div>
@@ -501,7 +524,7 @@ body::before{
     <p class="section-sub">一个壳，切换多个书城</p>
 
     <div class="plugin-card">
-      <div class="plugin-icon">🍅</div>
+      <div class="plugin-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="36" height="36"><circle cx="50" cy="58" r="38" fill="#F44336"/><path d="M32 45 C35 38 45 36 50 38 C42 40 36 46 32 55 Z" fill="#FFCDD2" opacity="0.6"/><path d="M50 25 C42 18 30 18 25 22 C32 28 42 28 47 28 Z" fill="#4CAF50"/><path d="M50 25 C58 18 70 18 75 22 C68 28 58 28 53 28 Z" fill="#4CAF50"/><path d="M50 26 C50 15 47 10 50 8 C53 10 50 15 50 26 Z" fill="#388E3C"/></svg></div>
       <div class="plugin-info">
         <h3>番茄小说</h3>
         <p class="plugin-desc">官方范例插件，完整实现双栏分页、宽屏模式、工具栏隐藏、章节导航和阅读进度追踪。</p>
