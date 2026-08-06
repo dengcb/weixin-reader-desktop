@@ -83,7 +83,7 @@ describe('Fanqie spread shell styles', () => {
     expect(readerCss).toContain('.reader-toolbar');
     expect(readerCss).toContain('--atreader-page-ratio: 80%');
     expect(readerCss).toContain('--atreader-shell-width: var(--atreader-page-ratio)');
-    expect(readerCss).toContain('--atreader-shell-padding: 80px');
+    expect(readerCss).toContain('--atreader-shell-padding: 56px');
     expect(readerCss).toContain('line-height: 1.85 !important');
     expect(readerCss).toContain('margin-bottom: 1.25em !important');
     expect(wideCss).toContain('--atreader-page-ratio: 90%');

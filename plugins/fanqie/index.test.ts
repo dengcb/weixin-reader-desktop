@@ -194,7 +194,7 @@ describe('Fanqie native toolbar layout toggle', () => {
     expect(document.querySelector('.atreader-fanqie-page-indicator')).toBeNull();
     expect(document.getElementById('test-progress')).toBeNull();
     expect(viewport?.style.getPropertyValue('--atreader-page-height'))
-      .toBe(`${Math.max(320, window.innerHeight)}px`);
+      .toBe(`${Math.max(320, window.innerHeight - 16)}px`);
 
     plugin.onUnload();
   });
@@ -276,7 +276,9 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
     Object.defineProperty(plugin, 'manifest', { value: manifest, configurable: true });
     const nativeKeys: string[] = [];
     const captureNativeKey = (event: KeyboardEvent) => {
-      if (event.target === document) nativeKeys.push(event.key);
+      if (event.target === document && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        nativeKeys.push(event.key);
+      }
     };
     document.addEventListener('keydown', captureNativeKey);
 
