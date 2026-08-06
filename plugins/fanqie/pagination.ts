@@ -252,8 +252,8 @@ export class FanqiePaginator {
       ? (this.openAtEnd ? 1 : 0)
       : this.getPositionRatio();
     const top = Math.max(0, viewport.getBoundingClientRect().top);
-    // 页码关闭后不保留不可见占位，让正文一直延伸到窗口底部。
-    const bottomInset = this.progressVisible ? PROGRESS_INDICATOR_INSET : 0;
+    // 页码关闭后留少量底边空白（16px），避免正文紧贴窗口底部。
+    const bottomInset = this.progressVisible ? PROGRESS_INDICATOR_INSET : 16;
     const pageHeight = Math.max(MIN_PAGE_HEIGHT, window.innerHeight - top - bottomInset);
     viewport.style.setProperty('--atreader-page-height', `${Math.round(pageHeight)}px`);
     content.style.setProperty('--atreader-page-offset', '0px');

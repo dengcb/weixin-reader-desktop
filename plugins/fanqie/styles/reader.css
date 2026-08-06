@@ -21,7 +21,7 @@ body.atreader-fanqie-paged {
    * 不再叠加到总宽度，避免书页向右压住原生工具栏。
    */
   --atreader-page-ratio: 80%;
-  --atreader-shell-padding: 80px;
+  --atreader-shell-padding: 56px;
   --atreader-shell-width: var(--atreader-page-ratio);
 }
 
@@ -60,7 +60,7 @@ body.atreader-fanqie-paged .muye-reader-nav {
 }
 
 body.atreader-fanqie-paged .atreader-fanqie-page-viewport {
-  --atreader-column-gap: clamp(40px, 5vw, 72px);
+  --atreader-column-gap: clamp(56px, 7vw, 96px);
   box-sizing: border-box !important;
   width: calc(
     100%
