@@ -160,6 +160,25 @@ pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
     let _ = app;
 }
 
+/// Windows 专属：全屏切换时同步菜单栏状态（menu.rs 调用）
+/// 全屏自动隐藏菜单时标记为 hidden，退出全屏自动恢复时标记为 visible，
+/// 确保 toggle_menu_bar 的原子状态与实际菜单状态一致。
+#[cfg(target_os = "windows")]
+pub fn sync_menu_hidden_for_fullscreen(hidden: bool) {
+    MENU_HIDDEN.store(hidden, Ordering::SeqCst);
+}
+
+/// 模拟菜单点击（Windows"瞒天过海"快捷键方案）
+///
+/// 背景：Windows + WebView2 下 muda 菜单 accelerator 全面失效，Edge 引擎在
+/// 菜单消息循环之前消费了所有 Ctrl 系列键盘事件。前端 keydown 监听捕获后
+/// 调用此命令，复用菜单点击逻辑，用户感知不到差异。
+/// macOS 上菜单 accelerator 正常工作，此命令仅供前端模拟调用。
+#[tauri::command]
+pub fn simulate_menu_click<R: Runtime>(app: AppHandle<R>, action: String) {
+    crate::menu::handle_menu_action(&app, &action);
+}
+
 /// 书店快捷键：按序号切换书店（1=微信读书，2=第一个插件站点，依此类推）
 #[tauri::command]
 pub fn switch_bookstore_by_index<R: Runtime>(app: AppHandle<R>, index: u8) {

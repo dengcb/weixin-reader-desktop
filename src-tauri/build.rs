@@ -16,6 +16,7 @@ fn main() {
             "set_title",
             "toggle_stealth",
             "toggle_menu_bar",
+            "simulate_menu_click",
             "switch_bookstore_by_index",
             "apply_site_zoom",
             "get_app_name",

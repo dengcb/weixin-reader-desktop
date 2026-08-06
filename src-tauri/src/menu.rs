@@ -362,6 +362,123 @@ fn build_monitor_menu_items<R: Runtime>(
     Ok(monitor_items)
 }
 
+/// 处理菜单动作（菜单点击和前端快捷键模拟共用）
+///
+/// 背景：Windows + WebView2 下 muda 菜单 accelerator 全面失效（Edge 引擎在菜单
+/// 消息循环之前消费了所有 Ctrl 系列键盘事件），前端需要通过 keydown 监听模拟
+/// 快捷键，调用此函数复用菜单点击逻辑。
+/// macOS 上菜单 accelerator 正常工作，此函数仅供菜单点击和前端模拟调用。
+pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    match id {
+        "refresh" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.eval("window.location.reload()");
+            }
+        }
+        "back" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.eval("window.history.back()");
+            }
+        }
+        "forward" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.eval("window.history.forward()");
+            }
+        }
+        "reader_wide" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", "reader_wide");
+            }
+        }
+        "hide_cursor" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", "hide_cursor");
+            }
+        }
+        "hide_toolbar" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", "hide_toolbar");
+            }
+        }
+        "hide_navbar" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", "hide_navbar");
+            }
+        }
+        "auto_flip" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", "auto_flip");
+            }
+        }
+        "zoom_in" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let site_id = current_site_id(app);
+                let current = get_current_zoom(app, &site_id);
+                let next = next_zoom_level(current, true);
+                let _ = win.set_zoom(next);
+                save_zoom(app, &site_id, next);
+                let pct = (next * 100.0).round() as i32;
+                let _ = win.emit("show-toast", format!("{}%", pct));
+            }
+        }
+        "zoom_out" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let site_id = current_site_id(app);
+                let current = get_current_zoom(app, &site_id);
+                let next = next_zoom_level(current, false);
+                let _ = win.set_zoom(next);
+                save_zoom(app, &site_id, next);
+                let pct = (next * 100.0).round() as i32;
+                let _ = win.emit("show-toast", format!("{}%", pct));
+            }
+        }
+        "zoom_reset" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let site_id = current_site_id(app);
+                let _ = win.set_zoom(1.0);
+                save_zoom(app, &site_id, 1.0);
+                let _ = win.emit("show-toast", "100%");
+            }
+        }
+        "toggle_fullscreen" => {
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(is_fullscreen) = win.is_fullscreen() {
+                    let _ = win.set_fullscreen(!is_fullscreen);
+                    // Windows: 全屏时自动隐藏菜单栏，退出全屏时恢复
+                    #[cfg(target_os = "windows")]
+                    if !is_fullscreen {
+                        let _ = win.hide_menu();
+                        crate::commands::sync_menu_hidden_for_fullscreen(true);
+                    } else {
+                        let _ = win.show_menu();
+                        crate::commands::sync_menu_hidden_for_fullscreen(false);
+                    }
+                }
+            }
+        }
+        "settings" => {
+            // 通过 simulate_menu_click（前端 invoke）调用时，WebView2 正在处理
+            // keydown 事件，直接在此创建新窗口会死锁。放到 async_runtime 的下一轮
+            // 执行，让 WebView2 先完成 keydown 处理。菜单点击路径不受影响（同步调用
+            // 时 spawn 也能正常工作，只是延后了一轮事件循环）。
+            let app_clone = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(win) = app_clone.get_webview_window("settings") {
+                    let _ = win.set_focus();
+                } else {
+                     let _ = WebviewWindowBuilder::new(&app_clone, "settings", WebviewUrl::App("settings.html".into()))
+                        .title("设置")
+                        .inner_size(720.0, 600.0)
+                        .center()
+                        .resizable(false)
+                        .build();
+                }
+            });
+        }
+        _ => {}
+    }
+}
+
 /// Rebuild the entire menu (called after window moves)
 /// This recreates the menu with updated monitor items based on current window position
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -381,7 +498,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
     // macOS-only: App Menu with hide/show items
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?;
+        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?;
         let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
         let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
         let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
@@ -415,8 +532,8 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单", true, None::<&str>)?,
-            &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单\tCtrl+H", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
         ],
@@ -595,7 +712,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     // macOS: App Menu with hide/show items
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?;
+        let stealth = MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?;
         let hide = PredefinedMenuItem::hide(handle, Some("隐藏"))?;
         let hide_others = PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?;
         let show_all = PredefinedMenuItem::show_all(handle, Some("显示全部"))?;
@@ -629,8 +746,8 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单", true, None::<&str>)?,
-            &MenuItem::with_id(handle, "stealth", "摸鱼", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单\tCtrl+H", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
         ],
@@ -813,90 +930,12 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     app.on_menu_event(move |app, event| {
         let id = event.id.as_ref();
         match id {
-            "refresh" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.eval("window.location.reload()");
-                }
-            }
-            "back" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.eval("window.history.back()");
-                }
-            }
-            "forward" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.eval("window.history.forward()");
-                }
-            }
-            "reader_wide" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.emit("menu-action", "reader_wide");
-                }
-            }
-            "hide_cursor" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.emit("menu-action", "hide_cursor");
-                }
-            }
-            "hide_toolbar" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.emit("menu-action", "hide_toolbar");
-                }
-            }
-            "hide_navbar" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.emit("menu-action", "hide_navbar");
-                }
-            }
-            "auto_flip" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.emit("menu-action", "auto_flip");
-                }
-            }
-            "zoom_in" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(app);
-                    let current = get_current_zoom(app, &site_id);
-                    let next = next_zoom_level(current, true);
-                    let _ = win.set_zoom(next);
-                    save_zoom(app, &site_id, next);
-                    let pct = (next * 100.0).round() as i32;
-                    let _ = win.emit("show-toast", format!("{}%", pct));
-                }
-            }
-            "zoom_out" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(app);
-                    let current = get_current_zoom(app, &site_id);
-                    let next = next_zoom_level(current, false);
-                    let _ = win.set_zoom(next);
-                    save_zoom(app, &site_id, next);
-                    let pct = (next * 100.0).round() as i32;
-                    let _ = win.emit("show-toast", format!("{}%", pct));
-                }
-            }
-            "zoom_reset" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let site_id = current_site_id(app);
-                    let _ = win.set_zoom(1.0);
-                    save_zoom(app, &site_id, 1.0);
-                    let _ = win.emit("show-toast", "100%");
-                }
-            }
-            "toggle_fullscreen" => {
-                // Windows/Linux: Toggle fullscreen manually
-                if let Some(win) = app.get_webview_window("main") {
-                    if let Ok(is_fullscreen) = win.is_fullscreen() {
-                        let _ = win.set_fullscreen(!is_fullscreen);
-                        // Windows: 全屏时自动隐藏菜单栏，退出全屏时恢复
-                        #[cfg(target_os = "windows")]
-                        if !is_fullscreen {
-                            let _ = win.hide_menu();
-                        } else {
-                            let _ = win.show_menu();
-                        }
-                    }
-                }
+            // 以下动作已提取到 handle_menu_action，供菜单点击和前端快捷键模拟共用
+            "refresh" | "back" | "forward" | "reader_wide" | "hide_cursor"
+            | "hide_toolbar" | "hide_navbar" | "auto_flip"
+            | "zoom_in" | "zoom_out" | "zoom_reset"
+            | "toggle_fullscreen" | "settings" => {
+                handle_menu_action(app, id);
             }
             "about" => {
                 // Open settings window and navigate to about section
@@ -937,18 +976,6 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                             .resizable(false)
                             .build();
                     }
-                }
-            }
-            "settings" => {
-                if let Some(win) = app.get_webview_window("settings") {
-                    let _ = win.set_focus();
-                } else {
-                     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-                        .title("设置")
-                        .inner_size(720.0, 600.0)
-                        .center()
-                        .resizable(false)
-                        .build();
                 }
             }
             "stealth" => {

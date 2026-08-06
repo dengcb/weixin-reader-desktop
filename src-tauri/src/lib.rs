@@ -403,6 +403,7 @@ pub fn run() {
             commands::set_title,
             commands::toggle_stealth,
             commands::toggle_menu_bar,
+            commands::simulate_menu_click,
             commands::switch_bookstore_by_index,
             commands::apply_site_zoom,
             commands::get_app_name,

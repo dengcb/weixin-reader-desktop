@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-simulate-menu-click"
+description = "Enables the simulate_menu_click command without any pre-configured scope."
+commands.allow = ["simulate_menu_click"]
+
+[[permission]]
+identifier = "deny-simulate-menu-click"
+description = "Denies the simulate_menu_click command without any pre-configured scope."
+commands.deny = ["simulate_menu_click"]
