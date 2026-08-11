@@ -1,0 +1,7 @@
+# SignPath GitHub policy for release-signing
+# 正式签名策略：要求 GitHub-hosted runner
+# 不禁止 re-run，允许构建失败后重跑
+
+github-policies:
+  runners:
+    require_github_hosted: true

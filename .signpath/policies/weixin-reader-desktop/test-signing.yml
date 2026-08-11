@@ -1,0 +1,5 @@
+# SignPath GitHub policy for test-signing
+# 测试签名策略，不强制 runner 或 branch ruleset 限制
+# 正式签名策略见 release-signing.yml
+
+github-policies: {}

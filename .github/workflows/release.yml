@@ -169,7 +169,10 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: 'release/windows-signed'
 
-      - name: Finalize installer (signed or unsigned) and compute hashes
+      - name: Finalize installer (signed or unsigned), re-sign updater, and compute hashes
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: pwsh
         run: |
           $installer = Get-ChildItem release/windows/*-x86_64-setup.exe -File
@@ -182,6 +185,10 @@ jobs:
               Write-Host "Replaced with SignPath signed installer"
             }
           }
+          # Authenticode 签名改变了安装包内容，必须用 Tauri signer 对最终文件重新生成 updater .sig
+          bunx tauri signer sign $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "tauri signer sign failed" }
+          Write-Host "Re-generated updater signature for $($installer.Name)"
           # 计算 SHA256 + Authenticode 状态
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
@@ -304,7 +311,10 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: 'release/windows-signed'
 
-      - name: Finalize installer (signed or unsigned) and compute hashes
+      - name: Finalize installer (signed or unsigned), re-sign updater, and compute hashes
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: pwsh
         run: |
           $installer = Get-ChildItem release/windows/*-aarch64-setup.exe -File
@@ -317,6 +327,10 @@ jobs:
               Write-Host "Replaced with SignPath signed installer"
             }
           }
+          # Authenticode 签名改变了安装包内容，必须用 Tauri signer 对最终文件重新生成 updater .sig
+          bunx tauri signer sign $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "tauri signer sign failed" }
+          Write-Host "Re-generated updater signature for $($installer.Name)"
           # 计算 SHA256 + Authenticode 状态
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
