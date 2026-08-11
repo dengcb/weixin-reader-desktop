@@ -9,6 +9,7 @@ import { injectCSS, removeCSS } from './utils';
 import { settingsStore } from './settings_store';
 import { EventBus } from './event_bus';
 import { log as coreLog } from './logger';
+import { showToast } from './toast';
 import type {
   PluginAPI,
   StyleAPI,
@@ -17,6 +18,7 @@ import type {
   MenuAPI,
   StorageAPI,
   LogAPI,
+  ToastAPI,
   ContentAPI,
   MenuItem,
   PluginManifest,
@@ -308,6 +310,16 @@ const createContentAPI = (_pluginId: string): ContentAPI => {
 };
 
 /**
+ * 为插件创建壳级 Toast API。
+ * Toast 不加插件前缀，确保所有站点使用同一套系统提示样式。
+ */
+const createToastAPI = (): ToastAPI => ({
+  show(text: string): void {
+    showToast(text);
+  },
+});
+
+/**
  * 为指定插件创建完整的 PluginAPI 实例
  * 每个插件获得独立的命名空间
  */
@@ -325,6 +337,7 @@ export const createPluginAPI = (
     menu: createMenuAPI(pluginId),
     storage: createStorageAPI(pluginId),
     log: createLogAPI(pluginId),
+    toast: createToastAPI(),
     content: createContentAPI(pluginId),
   };
 };

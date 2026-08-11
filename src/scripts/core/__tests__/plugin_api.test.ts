@@ -63,6 +63,8 @@ describe('Plugin API', () => {
       expect(api.menu).toBeDefined();
       expect(api.storage).toBeDefined();
       expect(api.log).toBeDefined();
+      expect(api.toast).toBeDefined();
+      expect(api.toast.show).toBeInstanceOf(Function);
       expect(api.content).toBeDefined();
     });
   });

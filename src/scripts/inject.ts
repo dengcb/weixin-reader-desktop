@@ -48,6 +48,15 @@ async function main(): Promise<void> {
   };
 
   window.addEventListener('keydown', (e: KeyboardEvent) => {
+    // Windows F11 全屏：WebView2 同样会拦截单功能键，菜单 accelerator 不生效。
+    // 走前端 keydown 模拟 simulate_menu_click，与 Ctrl 快捷键同一套障眼法。
+    if (isWindows && e.key === 'F11') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      invoke('simulate_menu_click', { action: 'toggle_fullscreen' }).catch(() => {});
+      return;
+    }
+
     if (!(e.metaKey || e.ctrlKey)) return;
 
     // 书店快捷键 Ctrl+1~7（跨平台）

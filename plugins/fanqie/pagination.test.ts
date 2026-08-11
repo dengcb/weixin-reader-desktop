@@ -73,6 +73,45 @@ describe('Fanqie paginator DOM ownership', () => {
     expect(document.querySelector('.atreader-fanqie-page-indicator')).toBeNull();
     expect(document.body.classList.contains(FANQIE_PAGED_CLASS)).toBe(false);
   });
+
+  it('does not reset the old chapter to its first page before new content arrives', async () => {
+    const host = document.createElement('section');
+    const content = document.createElement('main');
+    content.className = 'muye-reader-content';
+    content.textContent = 'chapter one';
+    Object.defineProperties(content, {
+      clientWidth: { configurable: true, value: 100 },
+      scrollWidth: { configurable: true, value: 300 },
+    });
+    host.append(content);
+    document.body.append(host);
+
+    let chapterKey = 'chapter-1';
+    const paginator = new FanqiePaginator({ getChapterKey: () => chapterKey });
+    paginator.enable();
+    paginator.nextPage();
+    expect(content.style.getPropertyValue('--atreader-page-offset')).toBe('-164px');
+
+    chapterKey = 'chapter-2';
+    paginator.prepareChapterTransition();
+    expect(content.style.visibility).toBe('hidden');
+    const chapterHeader = document.createElement('div');
+    chapterHeader.textContent = 'chapter two header';
+    document.body.append(chapterHeader);
+    await new Promise(resolve => setTimeout(resolve, 240));
+
+    // 章节标识先变化时，仍应停留在旧章节末页，不能先回到旧章节首页。
+    expect(content.style.getPropertyValue('--atreader-page-offset')).toBe('-164px');
+
+    content.textContent = 'chapter two';
+    (paginator as unknown as { refreshContent: (records: MutationRecord[]) => void }).refreshContent([
+      { target: content } as unknown as MutationRecord,
+    ]);
+    expect(content.style.getPropertyValue('--atreader-page-offset')).toBe('0px');
+    expect(content.style.visibility).toBe('');
+
+    paginator.destroy();
+  });
 });
 
 describe('Fanqie spread shell styles', () => {

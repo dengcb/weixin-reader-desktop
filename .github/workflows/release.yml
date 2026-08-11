@@ -7,6 +7,14 @@ on:
         description: Existing draft release tag, for example v1.1.0
         required: true
         type: string
+      signing-policy:
+        description: SignPath signing policy
+        required: false
+        default: release-signing
+        type: choice
+        options:
+          - release-signing
+          - test-signing
 
 permissions:
   contents: read
@@ -76,6 +84,20 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
+      - name: Check SignPath availability
+        id: check-signpath
+        env:
+          SIGNPATH_TOKEN: '${{ secrets.SIGNPATH_API_TOKEN }}'
+        shell: bash
+        run: |
+          if [ -n "$SIGNPATH_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "SignPath signing enabled"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "SignPath signing skipped (no API token)"
+          fi
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -121,13 +143,55 @@ jobs:
         shell: pwsh
         run: |
           bun scripts/stage-windows-release.ts
+
+      # SignPath Authenticode 签名（Secret 未配置时自动跳过，回退到 NotSigned）
+      # NSIS 安装包在 Windows 上未签名时会触发 SmartScreen "未知发布者" 警告。
+      # SignPath Foundation 为 OSS 项目提供免费代码签名证书。
+      - name: Upload unsigned installer as GitHub artifact
+        if: steps.check-signpath.outputs.available == 'true'
+        id: upload-unsigned-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: weixin-reader-x64-unsigned
+          path: release/windows/*-x86_64-setup.exe
+          if-no-files-found: error
+
+      - name: Sign with SignPath
+        if: steps.check-signpath.outputs.available == 'true'
+        id: signpath-x64
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'weixin-reader-desktop'
+          signing-policy-slug: '${{ inputs.signing-policy }}'
+          github-artifact-id: '${{ steps.upload-unsigned-x64.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'release/windows-signed'
+
+      - name: Finalize installer (signed or unsigned) and compute hashes
+        shell: pwsh
+        run: |
           $installer = Get-ChildItem release/windows/*-x86_64-setup.exe -File
+          # 如果 SignPath 签名成功，用签名后的文件替换原始文件
+          $signedDir = 'release/windows-signed'
+          if (Test-Path $signedDir) {
+            $signed = Get-ChildItem "$signedDir/*-x86_64-setup.exe" -File
+            if ($signed) {
+              Copy-Item $signed.FullName $installer.FullName -Force
+              Write-Host "Replaced with SignPath signed installer"
+            }
+          }
+          # 计算 SHA256 + Authenticode 状态
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
           $infoPath = 'release/windows/windows-x86_64-release-info.json'
           $info = Get-Content $infoPath -Raw | ConvertFrom-Json
+          $info.installerSha256 = $hash
           $info.authenticodeStatus = $authenticode
           $info | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8NoBOM $infoPath
           Write-Host "Authenticode: $authenticode"
+          Write-Host "SHA256: $hash"
 
       - name: Upload only to the existing draft
         env:
@@ -156,6 +220,20 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
+
+      - name: Check SignPath availability
+        id: check-signpath
+        env:
+          SIGNPATH_TOKEN: '${{ secrets.SIGNPATH_API_TOKEN }}'
+        shell: bash
+        run: |
+          if [ -n "$SIGNPATH_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "SignPath signing enabled"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "SignPath signing skipped (no API token)"
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -202,13 +280,53 @@ jobs:
         shell: pwsh
         run: |
           bun scripts/stage-windows-release.ts
+
+      # SignPath Authenticode 签名（与 x64 job 完全对称）
+      - name: Upload unsigned installer as GitHub artifact
+        if: steps.check-signpath.outputs.available == 'true'
+        id: upload-unsigned-arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: weixin-reader-arm64-unsigned
+          path: release/windows/*-aarch64-setup.exe
+          if-no-files-found: error
+
+      - name: Sign with SignPath
+        if: steps.check-signpath.outputs.available == 'true'
+        id: signpath-arm64
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: 'weixin-reader-desktop'
+          signing-policy-slug: '${{ inputs.signing-policy }}'
+          github-artifact-id: '${{ steps.upload-unsigned-arm64.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'release/windows-signed'
+
+      - name: Finalize installer (signed or unsigned) and compute hashes
+        shell: pwsh
+        run: |
           $installer = Get-ChildItem release/windows/*-aarch64-setup.exe -File
+          # 如果 SignPath 签名成功，用签名后的文件替换原始文件
+          $signedDir = 'release/windows-signed'
+          if (Test-Path $signedDir) {
+            $signed = Get-ChildItem "$signedDir/*-aarch64-setup.exe" -File
+            if ($signed) {
+              Copy-Item $signed.FullName $installer.FullName -Force
+              Write-Host "Replaced with SignPath signed installer"
+            }
+          }
+          # 计算 SHA256 + Authenticode 状态
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           $authenticode = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
           $infoPath = 'release/windows/windows-aarch64-release-info.json'
           $info = Get-Content $infoPath -Raw | ConvertFrom-Json
+          $info.installerSha256 = $hash
           $info.authenticodeStatus = $authenticode
           $info | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8NoBOM $infoPath
           Write-Host "Authenticode: $authenticode"
+          Write-Host "SHA256: $hash"
 
       - name: Upload ARM64 assets to the existing draft
         env:

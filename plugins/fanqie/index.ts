@@ -137,6 +137,10 @@ export class FanqiePlugin implements ReaderPlugin {
     window.addEventListener('ipc:route-changed', routeChanged);
     this.cleanupFunctions.push(() => window.removeEventListener('ipc:route-changed', routeChanged));
 
+    const chapterChanged = () => this.paginator?.prepareChapterTransition();
+    window.addEventListener('ipc:chapter-changed', chapterChanged);
+    this.cleanupFunctions.push(() => window.removeEventListener('ipc:chapter-changed', chapterChanged));
+
     const unsubscribe = api.settings.subscribe(settings => this.applySettings(settings));
     this.cleanupFunctions.push(unsubscribe);
     this.startToolbarEnhancement();
@@ -293,6 +297,7 @@ export class FanqiePlugin implements ReaderPlugin {
       keyMatches('ArrowUp')
       && this.manifest.capabilities.chapterNav === true
     ) {
+      this.api?.toast.show('上一章');
       event.preventDefault();
       event.stopImmediatePropagation();
       sessionStorage.setItem(PREVIOUS_CHAPTER_FLAG, String(Date.now()));
@@ -301,6 +306,7 @@ export class FanqiePlugin implements ReaderPlugin {
       keyMatches('ArrowDown')
       && this.manifest.capabilities.chapterNav === true
     ) {
+      this.api?.toast.show('下一章');
       event.preventDefault();
       event.stopImmediatePropagation();
       this.triggerChapterNavigation('ArrowRight');

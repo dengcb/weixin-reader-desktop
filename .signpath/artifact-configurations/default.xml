@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath Artifact Configuration for 艾特阅读 NSIS 安装包
+
+  NSIS exe 本身是 PE 格式文件，直接对其做 Authenticode 签名即可。
+  文件名格式为 weixin-reader-{version}-windows-{arch}-setup.exe，
+  用通配符匹配所有版本和架构。
+
+  参考文档: https://docs.signpath.io/trusted-build-systems/github
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="*-setup.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

@@ -19,6 +19,7 @@ const readerMarkup = () => {
 
 const createApi = (settings: Record<string, unknown> = {}) => {
   const stored = new Map<string, unknown>();
+  const toastMessages: string[] = [];
   const styleFiles: Record<string, string> = {
     'reader.css': 'body.atreader-fanqie-paged { overflow: hidden; }',
     'progress.css': '.atreader-fanqie-page-indicator { position: fixed; }',
@@ -56,9 +57,10 @@ const createApi = (settings: Record<string, unknown> = {}) => {
       async remove(key: string) { stored.delete(key); },
       async keys() { return [...stored.keys()]; },
     },
+    toast: { show(text: string) { toastMessages.push(text); } },
     log: { debug() {}, info() {}, warn() {}, error() {} },
   } as unknown as PluginAPI;
-  return { api, stored };
+  return { api, stored, toastMessages };
 };
 
 describe('Fanqie native toolbar layout toggle', () => {
@@ -212,7 +214,7 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
   it('maps up and down to native previous and next chapter keys when enabled', async () => {
     history.replaceState({}, '', '/reader/chapter-keyboard');
     readerMarkup();
-    const { api } = createApi();
+    const { api, toastMessages } = createApi();
     const plugin = new FanqiePlugin();
     const nativeKeys: string[] = [];
     const captureNativeKey = (event: KeyboardEvent) => {
@@ -229,6 +231,7 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
     document.body.dispatchEvent(down);
 
     expect(nativeKeys).toEqual(['ArrowLeft', 'ArrowRight']);
+    expect(toastMessages).toEqual(['上一章', '下一章']);
     expect(up.defaultPrevented).toBe(true);
     expect(down.defaultPrevented).toBe(true);
     expect(sessionStorage.getItem('atreader-fanqie-open-previous-at-end')).not.toBeNull();

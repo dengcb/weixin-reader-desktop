@@ -33,7 +33,7 @@
 
 保留 `withGlobalTauri: true` 兼容现有页面脚本；安全边界由 Capability 和命令内部校验共同承担。
 
-## 当前 23 个命令
+## 当前 27 个命令
 
 ### main-runtime
 
@@ -42,6 +42,10 @@
 - `set_menu_item_enabled`
 - `set_active_bookstore`
 - `set_title`
+- `toggle_stealth`
+- `toggle_menu_bar`
+- `simulate_menu_click`
+- `switch_bookstore_by_index`
 - `apply_site_zoom`
 - `get_app_name`
 - `get_settings`
@@ -155,6 +159,7 @@ Rust 原生菜单等内部写入可以调用 `settings::update_setting(app, path
 - `main`
 - `settings`
 - `plugin-editor`
+- `plugin-installer`
 - `privacy`
 - `terms`
 
@@ -251,6 +256,145 @@ input, textarea, select {
 - 后台下载成功后标记待重启，菜单显示“重启并安装”。
 - 手动安装或已下载状态调用 `app.restart()`。
 - 更新命令只授权本地设置窗口；远程主页面无法调用更新器。
+
+## Windows 快捷键「瞒天过海」方案
+
+### 问题与根因
+
+muda 菜单 accelerator 在 Windows + WebView2 上**全面失效**。WebView2 内嵌的 Edge 引擎在 Win32 菜单消息循环之前消费了所有 Ctrl 系列键盘事件和 F11 等单功能键，菜单 accelerator 收不到任何键盘事件。这不是个别键冲突，是 muda + WebView2 的平台限制。
+
+macOS 不受影响——WKWebView 不拦截这些键，Cmd 系列快捷键走系统级事件处理。
+
+### 解决方案
+
+菜单里**照常显示快捷键提示文字**（accelerator 参数照常传 `CmdOrCtrl+X`，Windows 上这个字符串只用于显示），实际触发改为**前端 keydown 监听**：
+
+1. `menu.rs` 提取 `pub fn handle_menu_action(app, id)` 为公共函数，包含所有可触发的菜单动作。
+2. `commands.rs` 新增 `simulate_menu_click(action)` 命令，调 `handle_menu_action`。
+3. 前端 `inject.ts` 在 capture 阶段监听 keydown，匹配 Ctrl+X 或 F11 后 `preventDefault` + `stopImmediatePropagation` 拦住 WebView2 默认行为，再 `invoke('simulate_menu_click', { action })`。
+4. `isWindows` 判断（`navigator.userAgent.includes('Windows')`）保证 macOS 完全不进入此分支。
+
+用户看到的菜单和 macOS 一样有快捷键提示，功能也能正常工作——「瞒天过海」。
+
+### 当前 Windows 快捷键映射
+
+| 快捷键 | 菜单动作 | 说明 |
+|--------|---------|------|
+| Ctrl+, | settings | 走 `async_runtime::spawn` 创建窗口，避免 WebView2 keydown 期间死锁 |
+| Ctrl+R | refresh | |
+| Ctrl+[ | back | 需 e.code fallback（BracketLeft），e.key 可能被 WebView2 吞掉 |
+| Ctrl+] | forward | 同上 |
+| Ctrl+I | auto_flip | |
+| Ctrl+= | zoom_in | |
+| Ctrl+- | zoom_out | |
+| Ctrl+0 | zoom_reset | |
+| Ctrl+9 | reader_wide | |
+| Ctrl+8 | hide_cursor | |
+| Ctrl+O | hide_toolbar | preventDefault 拦住 WebView2 的打开文件对话框 |
+| Ctrl+P | hide_navbar | preventDefault 拦住 WebView2 的打印对话框 |
+| F11 | toggle_fullscreen | 单功能键，WebView2 同样拦截 |
+
+### 菜单栏隐藏（Ctrl+H，Windows 专属）
+
+Windows 上菜单栏嵌入窗口顶部，不像 macOS 在系统顶部菜单栏。`Ctrl+H` 隐藏/恢复菜单栏（`win.hide_menu()` / `win.show_menu()`）。
+
+- accelerator 绑 `None`，菜单文字用 `\t` 手写 `Ctrl+H` 提示（`MenuItem::with_id(handle, "toggle_menu", "隐藏菜单\tCtrl+H", true, None::<&str>)?`）。
+- 前端 keydown 唯一触发路径，避免 accelerator + keydown 双重触发。
+- 全屏自动隐藏菜单时必须调 `sync_menu_hidden_for_fullscreen(true/false)` 同步原子状态，否则 Ctrl+H 需要按两次才能恢复。
+
+## 摸鱼键与全局热键
+
+### 摸鱼键（Cmd/Ctrl + `）
+
+隐藏窗口再恢复。用 `tauri-plugin-global-shortcut` 注册全局热键（不是菜单 accelerator），窗口隐藏后仍可响应——窗口内 keydown 监听在 `win.hide()` 后失效，全局热键是唯一可靠方案。
+
+```rust
+#[cfg(target_os = "macos")]
+let mod_key = Modifiers::SUPER;
+#[cfg(not(target_os = "macos"))]
+let mod_key = Modifiers::CONTROL;
+let stealth_key = Shortcut::new(Some(mod_key), Code::Backquote);
+```
+
+- macOS：Cmd+`，首次使用需授权辅助功能权限。
+- Windows：Ctrl+`，同时隐藏任务栏图标（`set_skip_taskbar(true)`）。
+- 菜单里显示「摸鱼」项，accelerator 绑 `CmdOrCtrl+\`` 用于显示提示。全局热键和菜单 accelerator 不会重复触发——macOS 上全局热键优先，Windows 上菜单 accelerator 被 WebView2 吃掉不生效。
+- `STEALTH_ACTIVE` 原子状态保证幂等。
+
+### 书店快捷键（Ctrl+1~7，跨平台）
+
+前端 keydown 监听，不走菜单 accelerator。序号 1-based 映射：1=微信读书，2=第一个插件站点，依此类推。8/9/0 被其他快捷键占用（隐藏光标/阅读变宽/实际大小），书店快捷键只用 1~7。
+
+## 平台条件编译注意
+
+### `RunEvent::Opened` 是 macOS 专有变体
+
+`tauri::RunEvent::Opened { urls }` 对应 macOS 的 `application:openURLs:` 文件关联机制。**Windows/Linux 上这个枚举变体不存在**，直接编译报错 `no variant named Opened found for enum RunEvent`。必须 `#[cfg(target_os = "macos")]` 门控。
+
+Windows/Linux 的 `.atrd` 文件关联走 `tauri-plugin-single-instance` 的 `args` 回调，不依赖 `Opened`。
+
+```rust
+#[cfg(target_os = "macos")]
+tauri::RunEvent::Opened { urls } => {
+    plugin_installer::handle_opened_urls(app_handle, &urls);
+}
+_ => {}
+```
+
+### `tauri-plugin-dialog` 2.7.2+ 的 MessageDialogResult 类型变更
+
+`blocking_show_with_result()` 的返回类型从 `bool` 变成了 `MessageDialogResult` 枚举。不能再用 `!` 取反，需要用 `!= MessageDialogResult::Ok` 判断。
+
+```rust
+// ❌ 旧写法（dialog 2.4.x）
+if !confirmed { return Err("用户取消".to_string()); }
+
+// ✅ 新写法（dialog 2.7.2+）
+if confirmed != tauri_plugin_dialog::MessageDialogResult::Ok {
+    return Err("用户取消".to_string());
+}
+```
+
+## NSIS 安装包配置
+
+### 安装程序图标
+
+默认 NSIS 用 Tauri 的蓝色 logo。在 `tauri.conf.json` 的 `windows.nsis` 里配置：
+
+```json
+"nsis": {
+  "installerIcon": "icons/icon.ico",
+  "languages": ["SimpChinese", "English"]
+}
+```
+
+### 多语言
+
+`languages` 数组控制 NSIS 安装界面语言。第一个是默认语言（中文 Windows 上自动选中）。当前配置为简体中文 + 英文。
+
+### Windows ARM64 构建
+
+两个 NSIS job 并行构建，完全对称：
+
+| Job | Runner | Target | Stage 脚本 |
+|-----|--------|--------|-----------|
+| `windows-nsis-x64` | `windows-2025` | `x86_64-pc-windows-msvc` | `STAGE_TARGET=x86_64-pc-windows-msvc` |
+| `windows-nsis-arm64` | `windows-11-arm` | `aarch64-pc-windows-msvc` | `STAGE_TARGET=aarch64-pc-windows-msvc` |
+
+`scripts/stage-windows-release.ts` 通过 `STAGE_TARGET` 环境变量参数化，自动选择架构标识和输出文件名。两个架构产出完全对称的文件集：标准化 exe + `.sig` + SHA256SUMS + release-info.json。
+
+## 发布资产命名规范
+
+所有平台的安装包文件名统一为 `{appId}-{version}-{platform}-{arch}-setup.{ext}` 格式：
+
+| 平台 | 文件名模式 |
+|------|----------|
+| macOS Apple Silicon | `weixin-reader-{ver}-macos-aarch64.dmg` |
+| macOS Intel | `weixin-reader-{ver}-macos-x86_64.dmg` |
+| Windows x64 | `weixin-reader-{ver}-windows-x86_64-setup.exe` |
+| Windows ARM64 | `weixin-reader-{ver}-windows-aarch64-setup.exe` |
+
+macOS 资产在 `release.ts` 的 `macTargets` 里定义，`arch` 字段驱动文件名生成。Windows 资产在 `stage-windows-release.ts` 里参数化生成。`latest.json` 的平台 key（`darwin-aarch64` 等）是 Tauri updater 协议的标准标识，不能改。
 
 ## 日志与性能
 

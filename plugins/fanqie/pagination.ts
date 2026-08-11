@@ -57,6 +57,7 @@ export class FanqiePaginator {
   private domReadyHandler: (() => void) | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingMutations: MutationRecord[] = [];
   private enabled = false;
   private progressVisible = true;
   private pageIndex = 0;
@@ -66,6 +67,7 @@ export class FanqiePaginator {
   private chapterKey = '';
   private openAtEnd = false;
   private lastNotification = '';
+  private chapterTransitionPending = false;
 
   constructor(options: FanqiePaginatorOptions = {}) {
     this.onPositionChange = options.onPositionChange;
@@ -138,6 +140,7 @@ export class FanqiePaginator {
     this.pageStride = 0;
     this.positionRatio = 0;
     this.lastNotification = '';
+    this.setChapterTransitionPending(false);
 
     window.requestAnimationFrame(() => {
       const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
@@ -175,6 +178,18 @@ export class FanqiePaginator {
     this.openAtEnd = true;
   }
 
+  /**
+   * 在站点已经确认章节切换、但正文 DOM 尚未完成替换时隐藏旧章节，
+   * 避免用户看到旧章节末页或旧章节首页的过渡残影。
+   */
+  prepareChapterTransition(): void {
+    if (!this.enabled) return;
+    // 章节事件也可能只更新标题、不改变 URL；清空旧 key 让下一次正文更新
+    // 一定按“新章节”处理，而不是沿用旧章节页码。
+    this.chapterKey = '';
+    this.setChapterTransitionPending(true);
+  }
+
   private readonly handleResize = (): void => {
     if (!this.enabled) return;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -198,14 +213,21 @@ export class FanqiePaginator {
     window.scrollTo({ top: 0, behavior: 'instant' });
     window.addEventListener('resize', this.handleResize);
     if (this.progressVisible) this.ensureIndicator();
-    this.bodyObserver = new MutationObserver(() => {
+    this.bodyObserver = new MutationObserver(records => {
+      this.pendingMutations.push(...records);
       if (this.mutationTimer) clearTimeout(this.mutationTimer);
       this.mutationTimer = setTimeout(() => {
         this.mutationTimer = null;
-        this.refreshContent();
+        const pendingMutations = this.pendingMutations;
+        this.pendingMutations = [];
+        this.refreshContent(pendingMutations);
       }, 80);
     });
-    this.bodyObserver.observe(document.body, { childList: true, subtree: true });
+    this.bodyObserver.observe(document.body, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
     this.refreshContent();
   }
 
@@ -214,21 +236,37 @@ export class FanqiePaginator {
     this.indicator = document.createElement('div');
     this.indicator.className = 'atreader-fanqie-page-indicator';
     this.indicator.setAttribute('aria-live', 'polite');
+    if (this.chapterTransitionPending) this.indicator.style.visibility = 'hidden';
     document.body?.append(this.indicator);
   }
 
-  private refreshContent(): void {
+  private refreshContent(records: MutationRecord[] = []): void {
     if (!this.enabled) return;
     const nextContent = document.querySelector<HTMLElement>(FANQIE_CONTENT_SELECTOR);
     const nextChapterKey = this.getChapterKey();
     const contentChanged = nextContent !== this.content;
     const chapterChanged = nextChapterKey !== this.chapterKey;
 
+    // 番茄可能先更新 URL/章节头部，再异步替换正文。此时不要把仍属于旧章节的
+    // 内容重排到第 1 页，否则用户会短暂看到“旧章节首页 → 新章节首页”的闪烁。
+    // 等正文节点或其子树真正发生变化后，再确认章节切换并执行首屏定位。
+    const chapterContentChanged = contentChanged || (
+      nextContent !== null
+      && records.some(record => nextContent.contains(record.target))
+    );
+    if (chapterChanged && !chapterContentChanged) {
+      this.setChapterTransitionPending(true);
+      return;
+    }
+
+    if (this.chapterTransitionPending) this.setChapterTransitionPending(false);
+
     if (contentChanged) {
       this.resetContent();
       this.bindContent(nextContent);
     }
     if (chapterChanged) {
+      this.setChapterTransitionPending(false);
       this.chapterKey = nextChapterKey;
       this.pageIndex = 0;
       this.positionRatio = 0;
@@ -318,6 +356,7 @@ export class FanqiePaginator {
   private resetContent(): void {
     if (!this.content) return;
     this.content.style.removeProperty('--atreader-page-offset');
+    this.content.style.removeProperty('visibility');
     this.viewport?.style.removeProperty('--atreader-page-height');
     if (this.viewport?.parentNode && this.content.parentNode === this.viewport) {
       this.viewport.parentNode.insertBefore(this.content, this.viewport);
@@ -327,10 +366,22 @@ export class FanqiePaginator {
     this.content = null;
   }
 
+  private setChapterTransitionPending(pending: boolean): void {
+    this.chapterTransitionPending = pending;
+    if (this.content) {
+      if (pending) this.content.style.setProperty('visibility', 'hidden');
+      else this.content.style.removeProperty('visibility');
+    }
+    if (this.indicator) {
+      this.indicator.style.visibility = pending ? 'hidden' : '';
+    }
+  }
+
   private clearTimers(): void {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     if (this.mutationTimer) clearTimeout(this.mutationTimer);
     this.resizeTimer = null;
     this.mutationTimer = null;
+    this.pendingMutations = [];
   }
 }

@@ -221,6 +221,15 @@ export interface LogAPI {
 }
 
 /**
+ * 壳级 Toast API
+ * 所有插件都可以使用，用于提示用户无法仅靠界面变化确认的状态。
+ */
+export interface ToastAPI {
+  /** 在阅读窗口中央显示一条短暂提示 */
+  show(text: string): void;
+}
+
+/**
  * 内容 API（未来 Local 插件使用）
  * 提供内容渲染相关能力
  */
@@ -252,6 +261,8 @@ export interface PluginAPI {
   storage: StorageAPI;
   /** 日志系统 */
   log: LogAPI;
+  /** 壳级 Toast 提示 */
+  toast: ToastAPI;
   /** 内容渲染（未来 Local 插件使用） */
   content: ContentAPI;
 }

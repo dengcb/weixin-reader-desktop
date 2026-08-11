@@ -5,7 +5,7 @@
 ### 🚀 基于 Tauri v2 + Rust 的高性能微信读书桌面客户端
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.4.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.5.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -461,7 +461,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 - 🔁 [事件与生命周期](docs/EVENT_BUS_REFACTOR.md) - EventBus、BaseManager 与资源清理规范
 - 🔐 [Tauri 2.11 与 IPC](docs/TAURI_2_11_UPGRADE.md) - Capability 拆分和命令一致性规则
 - 🧪 [测试指南](docs/TESTING.md) - 当前测试结构与必要质量门禁
-- ✍️ [Code signing policy](docs/CODE_SIGNING_POLICY.md) - Windows 签名角色、来源与发布约束
+- ✍️ [软件签名](docs/CODE_SIGNING_POLICY.md) - Windows 签名角色、来源与发布约束
 - 📘 [2026 架构重构记录](docs/ARCHITECTURE_REFACTOR_2026.md) - 本次重构的动机、改动和兼容边界
 
 ---
@@ -509,6 +509,12 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 </td>
 </tr>
 </table>
+
+---
+
+## 🙏 致谢
+
+Windows 代码签名由 [SignPath Foundation](https://signpath.org/) 免费提供 —— 感谢他们为开源项目消除 SmartScreen "未知发布者" 警告。
 
 ---
 
