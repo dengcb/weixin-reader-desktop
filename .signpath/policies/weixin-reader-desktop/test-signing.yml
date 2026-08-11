@@ -1,5 +1,7 @@
 # SignPath GitHub policy for test-signing
-# 测试签名策略，不强制 runner 或 branch ruleset 限制
+# 测试签名策略：只要求 GitHub-hosted runner，其他不限
 # 正式签名策略见 release-signing.yml
 
-github-policies: {}
+github-policies:
+  runners:
+    require_github_hosted: true
