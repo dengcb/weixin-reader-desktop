@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildToc } from './toc';
+import { buildToc, findTopLevelGroup } from './toc';
 
 describe('目录建树', () => {
   test('平铺数组保持深度优先顺序，树节点持有平铺位置', () => {
@@ -46,5 +46,46 @@ describe('目录建树', () => {
   test('多语言标签取第一个非空值', () => {
     const { flat } = buildToc([{ label: { en: '', zh: '目录' }, href: 'x' }]);
     expect(flat[0]!.label).toBe('目录');
+  });
+
+  test('全书仅一个顶层分组时展开其子级（合成包装“不分卷”不入目录）', () => {
+    const { flat, tree } = buildToc([
+      {
+        label: '不分卷',
+        href: 'Html_0.html',
+        subitems: [
+          { label: '第1章', href: 'c1' },
+          { label: '第2章', href: 'c2' },
+        ],
+      },
+    ]);
+
+    expect(flat.map(item => item.label)).toEqual(['第1章', '第2章']);
+    expect(tree.map(node => node.label)).toEqual(['第1章', '第2章']);
+    expect(tree[0]!.position).toBe(0);
+  });
+
+  test('顶层分组仅在当前位置为其严格后代时返回标签', () => {
+    const { tree } = buildToc([
+      {
+        label: '第一部',
+        href: 'part1',
+        subitems: [
+          { label: '第1章', href: 'p1c1' },
+          {
+            label: '卷一',
+            href: 'p1v1',
+            subitems: [{ label: '第2章', href: 'p1c2' }],
+          },
+        ],
+      },
+      { label: '附录', href: 'appendix' },
+    ]);
+
+    expect(findTopLevelGroup(tree, 1)).toBe('第一部');
+    expect(findTopLevelGroup(tree, 3)).toBe('第一部');
+    expect(findTopLevelGroup(tree, 0)).toBeNull();
+    expect(findTopLevelGroup(tree, 4)).toBeNull();
+    expect(findTopLevelGroup([], 0)).toBeNull();
   });
 });

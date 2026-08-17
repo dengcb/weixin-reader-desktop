@@ -65,7 +65,32 @@ export const chapterBreakCss = (hashes: string[]): string => {
 export const sanitizeEpubMarkup = (markup: string, mediaType: string, extraCss = ''): string => {
   if (!EPUB_DOCUMENT_TYPES.has(mediaType)) return markup;
   const parserType = mediaType === 'text/html' ? 'text/html' : 'application/xml';
-  const doc = new DOMParser().parseFromString(markup, parserType);
+  let doc = new DOMParser().parseFromString(markup, parserType);
+  if (parserType === 'application/xml' && mediaType !== 'image/svg+xml') {
+    // 三类非严格 XHTML 在 XML 解析下会损坏：含 &nbsp; 等 HTML 实体、未闭合
+    // 标签（如 <br>）、或缺少 xmlns 声明。前两者报 parsererror，后者虽解析
+    // 成功但元素不在 XHTML 命名空间，渲染时 <p>/<br> 失去块级与换行语义，
+    // 全文塌成一行。回退按 HTML 解析：宽容上述问题并自动赋 XHTML 命名空间；
+    // SVG 文档根元素本就不属 XHTML 命名空间，不适用此检查。
+    const root = doc.documentElement;
+    // 大写标签（如 Calibre 输出的 <P>）：XML 大小写敏感，XHTML 命名空间只有
+    // 小写 p，大写 P 是未知元素、无块级样式，全文塌成一行；回退 HTML 解析
+    // 会自动小写化所有标签。
+    const hasUppercaseTag = root !== null && Array.from(root.getElementsByTagName('*'))
+      .some(node => node.localName !== node.localName.toLowerCase());
+    const broken = doc.querySelector('parsererror') !== null
+      || hasUppercaseTag
+      || (root !== null && root.localName.toLowerCase() === 'html'
+        && root.namespaceURI !== XHTML_NAMESPACE);
+    if (broken) {
+      doc = new DOMParser().parseFromString(markup, 'text/html');
+      // HTML 解析会把源码里字面的 xmlns 当普通属性保留，序列化时与命名空间
+      // 声明重复产出非法 XML；命名空间已由解析器正确赋值，字面属性是冗余的。
+      for (const node of [doc.documentElement, ...doc.querySelectorAll('*')]) {
+        if (node?.hasAttribute('xmlns')) node.removeAttribute('xmlns');
+      }
+    }
+  }
   removeExecutableContent(doc);
   if (mediaType !== 'image/svg+xml') {
     prependCsp(doc);

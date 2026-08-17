@@ -8,7 +8,7 @@ import { EPUB_DOCUMENT_TYPES, chapterBreakCss as buildChapterBreakCss, sanitizeE
 import { resolveLocalKeyboardAction } from './keyboard';
 import { PositionHistory } from './position_history';
 import { splitTxtChapters, txtChapterToXHTML, type TxtChapter } from './txt';
-import { buildToc, type FlatTocItem, type TocTreeNode } from './toc';
+import { buildToc, findTopLevelGroup, type FlatTocItem, type TocTreeNode } from './toc';
 
 // 固定提交的上游原生 ES modules；源码与 LICENSE 位于 third-party/foliate-js。
 // @ts-expect-error vendored JavaScript module has no TypeScript declarations
@@ -113,7 +113,7 @@ const DEFAULT_TYPOGRAPHY: LocalTypography = {
   fontSize: 28,
   lineHeight: 1.8,
   paragraphSpacing: 1,
-  pagePaddingX: 0,
+  pagePaddingX: 20,
 };
 
 // 正文默认细体：macOS 苹方/宋体、Windows 雅黑均有 Light 字重可用；
@@ -474,7 +474,7 @@ class LocalReader implements LocalReaderController {
     else {
       renderer.setAttribute('flow', 'paginated');
       renderer.setAttribute('margin', '54px');
-      renderer.setAttribute('gap', '8%');
+      renderer.setAttribute('gap', '3%');
       renderer.setAttribute('max-block-size', '1440px');
     }
     renderer.addEventListener('load', (event) => this.onSectionLoad(event as CustomEvent<{ doc: Document; index: number }>));
@@ -757,15 +757,13 @@ class LocalReader implements LocalReaderController {
     return position;
   }
 
-  private currentChapterLabel(): string {
-    const item = this.toc[this.currentTocPosition()];
-    return item?.label.trim() || `第 ${this.currentSection + 1} 章`;
-  }
-
   private updateTitles(): void {
     if (!this.metadata) return;
-    element('bookTitle').textContent = this.metadata.title;
-    element('chapterTitle').textContent = this.currentChapterLabel();
+    // 分级书显示“一级名 | 二级名”：壳的窗口标题已含书名，导航栏不重复书名；
+    // 平铺书或正停在一级分组自身锚点时保持书名。
+    const position = this.currentTocPosition();
+    element('bookTitle').textContent = findTopLevelGroup(this.tocTree, position) ?? this.metadata.title;
+    element('chapterTitle').textContent = this.toc[position]?.label.trim() || `第 ${this.currentSection + 1} 章`;
     document.title = `《${this.metadata.title}》 - 艾特阅读`;
   }
 
@@ -822,18 +820,26 @@ class LocalReader implements LocalReaderController {
   }
 
   /**
-   * 书页宽度按窗口百分比计算（非宽屏 80%、宽屏 90%，对齐番茄范例），而非绝对
-   * 像素。foliate 的 max-inline-size 是“每栏”宽度：双栏时目标总宽按 2 栏
-   * 加 8% 栏间距折算到单栏；280px 下限保证窄窗口可读。窗口变化时重算。
+   * 书页宽度按窗口百分比计算（非宽屏 80%、宽屏 90%，对齐番茄范例），且百分比
+   * 指的是“正文文字”的总宽。foliate 会在容器内叠加 iframe 两侧 gap/2 的硬
+   * 编码 padding 与双栏栏间距（gap 实际值 = g/(1-g)，见 paginator.js），文字
+   * 总宽 = 容器宽 × (1 - 栏数×gf)，这里按该公式反推容器宽度；外层 grid 两侧
+   * 还需保留 gap 比例的边轨，取二者较小值。上下 margin 不在此函数职责内。
    */
   private applyPageSize(): void {
     if (this.fixedLayout || !this.renderer) return;
+    const GAP_RATIO = 0.03;
+    const gapFactor = GAP_RATIO / (1 - GAP_RATIO);
     const ratio = settingsStore.getSite('local').readerWide ? 0.9 : 0.8;
-    const available = element('readerStage').clientWidth * ratio;
-    const perColumn = this.typography.columnMode === 'double'
-      ? available / 2.08
-      : available;
-    this.renderer.setAttribute('max-inline-size', `${Math.max(280, Math.floor(perColumn))}px`);
+    const columns = this.typography.columnMode === 'double' ? 2 : 1;
+    const stageWidth = element('readerStage').clientWidth;
+    const target = stageWidth * ratio;
+    const containerWidth = Math.min(
+      target / (1 - columns * gapFactor),
+      stageWidth * (1 - GAP_RATIO),
+    );
+    const perColumn = Math.max(280, Math.floor(containerWidth / columns));
+    this.renderer.setAttribute('max-inline-size', `${perColumn}px`);
   }
 
   private applyTypography(): void {

@@ -877,7 +877,7 @@ fn ensure_default_settings<R: Runtime>(app: &AppHandle<R>) {
             ("fontSize", json!(28)),
             ("lineHeight", json!(1.8)),
             ("paragraphSpacing", json!(1)),
-            ("pagePaddingX", json!(0)),
+            ("pagePaddingX", json!(20)),
         ];
         for (key, value) in defaults {
             let _ =

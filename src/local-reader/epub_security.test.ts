@@ -36,6 +36,44 @@ describe('本地 EPUB 内容安全', () => {
     expect(chapterBreakCss(['x"y'])).toBe('[id="x\\"y"], [name="x\\"y"] { break-before: column; }');
   });
 
+  it('非严格 XHTML 回退 HTML 解析：缺 xmlns、HTML 实体、未闭合标签', () => {
+    const noXmlns = sanitizeEpubMarkup(
+      '<html><head><title>t</title></head><body><p>一</p><p>二<br/>三</p></body></html>',
+      'application/xhtml+xml',
+    );
+    expect(noXmlns).toContain('xmlns="http://www.w3.org/1999/xhtml"');
+    expect(noXmlns).toContain('<p>一</p>');
+    expect(noXmlns).toContain('二<br />三');
+
+    const entity = sanitizeEpubMarkup(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>甲&nbsp;乙</p></body></html>',
+      'application/xhtml+xml',
+    );
+    expect(entity).not.toContain('parsererror');
+    expect(entity).toContain('甲');
+    expect(entity).toContain('乙');
+    expect(entity.match(/xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g)).toHaveLength(1);
+
+    const unclosed = sanitizeEpubMarkup(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>甲<br>乙</p></body></html>',
+      'application/xhtml+xml',
+    );
+    expect(unclosed).not.toContain('parsererror');
+    expect(unclosed).toContain('乙');
+    expect(unclosed).toContain("script-src 'none'");
+  });
+
+  it('大写标签（Calibre 风格 <P>）回退 HTML 解析小写化，恢复块级段落', () => {
+    const out = sanitizeEpubMarkup(
+      `<?xml version='1.0' encoding='utf-8'?>\r\n<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body><strong>第1章</strong>\r\n<P>第一段</P>\r\n<P>第二段</P></body></html>`,
+      'application/xhtml+xml',
+    );
+    expect(out).not.toMatch(/<P[ >]/);
+    expect((out.match(/<p[ >]/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('第一段');
+    expect(out).toContain('第二段');
+  });
+
   it('在消毒后注入额外章节分栏样式', () => {
     const sanitized = sanitizeEpubMarkup(
       '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body><h1 id="c1">章</h1></body></html>',
