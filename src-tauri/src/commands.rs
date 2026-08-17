@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 /// 摸鱼模式状态：true = 当前隐藏中
 static STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -119,7 +119,9 @@ pub fn set_title(window: WebviewWindow, title: String) {
 /// 恢复时：窗口可见 + 任务栏图标恢复 + 窗口获取焦点
 #[tauri::command]
 pub fn toggle_stealth<R: Runtime>(app: AppHandle<R>) {
-    let Some(win) = app.get_webview_window("main") else { return };
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
 
     let was_hidden = STEALTH_ACTIVE.swap(true, Ordering::SeqCst);
     if was_hidden {
@@ -146,7 +148,9 @@ static MENU_HIDDEN: AtomicBool = AtomicBool::new(false);
 pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
     #[cfg(target_os = "windows")]
     {
-        let Some(win) = app.get_webview_window("main") else { return };
+        let Some(win) = app.get_webview_window("main") else {
+            return;
+        };
         let was_hidden = MENU_HIDDEN.swap(true, Ordering::SeqCst);
         if was_hidden {
             let _ = win.show_menu();
@@ -238,7 +242,7 @@ use crate::plugin_manager;
 
 /// 插件变更后重建应用菜单（使「书店」菜单随外部插件增减即时出现/消失）
 /// rebuild_full_menu 仅在 macOS/Windows 存在，其它平台为空操作
-pub(crate) fn refresh_app_menu(app: &AppHandle) {
+pub(crate) fn refresh_app_menu<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         if let Err(e) = crate::menu::rebuild_full_menu(app) {
@@ -443,6 +447,9 @@ pub async fn get_runtime_plugin<R: Runtime>(
     let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
         return Ok(None);
     };
+    if host == "atreader.localhost" {
+        return Ok(None);
+    }
     let settings = crate::settings::read_settings(&app)
         .unwrap_or_else(|_| crate::settings::default_settings());
     let enabled = settings

@@ -30,6 +30,7 @@ export class PluginLoader {
 
   /** 当前外部插件包内可由插件代码读取的 CSS 文件。 */
   private externalStyleFiles = new Map<string, Readonly<Record<string, string>>>();
+  private forcedPluginId: string | undefined;
   
   private constructor() {}
   
@@ -54,13 +55,14 @@ export class PluginLoader {
   /**
    * 初始化并加载所有插件
    */
-  async initialize(): Promise<void> {
+  async initialize(forcedPluginId?: string): Promise<void> {
     if (this.initialized) {
       log.warn('[PluginLoader] Already initialized');
       return;
     }
     
     log.info('[PluginLoader] Initializing...');
+    this.forcedPluginId = forcedPluginId;
     
     const registry = getPluginRegistry();
     
@@ -71,7 +73,8 @@ export class PluginLoader {
         const pluginId = plugin.manifest.id;
         
         // 检查是否启用
-        if (!settingsStore.isPluginEnabled(pluginId)) {
+        const alwaysEnabled = plugin.manifest.builtin && plugin.manifest.sourceType === 'local';
+        if (!alwaysEnabled && !settingsStore.isPluginEnabled(pluginId)) {
           log.info(`[PluginLoader] Skipping disabled builtin plugin: ${pluginId}`);
           // 工厂可能在构造时建立了站点内部监听（WeRead 进度桥接器）。
           plugin.onUnload();
@@ -84,10 +87,11 @@ export class PluginLoader {
       }
     }
     
-    // 2. 加载外部插件（已安装的 .atrd）
-    await this.loadExternalPlugins();
+    // 2. 强制本地运行时由可信页面独占，不读取任何远程网页插件代码。
+    if (!this.forcedPluginId) await this.loadExternalPlugins();
     
     // 3. 自动激活匹配当前页面的插件
+    if (forcedPluginId) registry.setActivePlugin(forcedPluginId);
     const activePlugin = registry.getActivePlugin();
     
     if (activePlugin) {
@@ -115,8 +119,12 @@ export class PluginLoader {
       return false;
     }
     
+    const { plugin } = registered;
+    const manifest = plugin.manifest;
+
     // 检查插件是否启用（用户可能已卸载/禁用该插件）
-    if (!settingsStore.isPluginEnabled(pluginId)) {
+    const alwaysEnabled = manifest.builtin && manifest.sourceType === 'local';
+    if (!alwaysEnabled && !settingsStore.isPluginEnabled(pluginId)) {
       log.info(`[PluginLoader] Plugin '${pluginId}' is disabled by settings, skipping`);
       return false;
     }
@@ -125,9 +133,6 @@ export class PluginLoader {
       log.debug(`[PluginLoader] Plugin '${pluginId}' already loaded`);
       return true;
     }
-    
-    const { plugin } = registered;
-    const manifest = plugin.manifest;
     
     log.info(`[PluginLoader] Loading plugin: ${manifest.id} (${manifest.name})`);
     registry.updateState(pluginId, 'loading');
@@ -349,7 +354,8 @@ export class PluginLoader {
         const plugin = factory();
         const pluginId = plugin.manifest.id;
         
-        if (!settingsStore.isPluginEnabled(pluginId)) {
+        const alwaysEnabled = plugin.manifest.builtin && plugin.manifest.sourceType === 'local';
+        if (!alwaysEnabled && !settingsStore.isPluginEnabled(pluginId)) {
           log.info(`[PluginLoader] Skipping disabled plugin during hot reload: ${pluginId}`);
           plugin.onUnload();
           continue;
@@ -361,10 +367,11 @@ export class PluginLoader {
       }
     }
     
-    // 3.5 重新加载外部插件（.atrd）
-    await this.loadExternalPlugins();
+    // 3.5 本地阅读页不读取外部网页插件。
+    if (!this.forcedPluginId) await this.loadExternalPlugins();
     
     // 4. 自动激活匹配当前页面的插件
+    if (this.forcedPluginId) registry.setActivePlugin(this.forcedPluginId);
     const activePlugin = registry.getActivePlugin();
     
     if (activePlugin) {

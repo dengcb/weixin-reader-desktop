@@ -16,6 +16,7 @@ const handlerCommands = new Set([...handlerBlock.matchAll(/(?:\w+::)+(\w+)/g)].m
 
 const capabilityFiles = [
   'src-tauri/capabilities/main-runtime.json',
+  'src-tauri/capabilities/local-reader.json',
   'src-tauri/capabilities/settings.json',
   'src-tauri/capabilities/plugin-editor.json',
   'src-tauri/capabilities/plugin-installer.json',
@@ -24,6 +25,7 @@ const capabilityFiles = [
 const capabilityCommands = new Set<string>();
 const capabilityIdentifiers = new Set<string>();
 let mainRuntimePermissions: string[] = [];
+let localReaderPermissions: string[] = [];
 for (const file of capabilityFiles) {
   const capability = await Bun.file(file).json() as {
     identifier?: string;
@@ -33,6 +35,11 @@ for (const file of capabilityFiles) {
   if (capability.identifier) capabilityIdentifiers.add(capability.identifier);
   if (file.endsWith('main-runtime.json')) {
     mainRuntimePermissions = (capability.permissions ?? []).filter(
+      (permission): permission is string => typeof permission === 'string',
+    );
+  }
+  if (file.endsWith('local-reader.json')) {
+    localReaderPermissions = (capability.permissions ?? []).filter(
       (permission): permission is string => typeof permission === 'string',
     );
   }
@@ -109,6 +116,37 @@ if (missingMainCommands.length > 0) {
 }
 if (unexpectedMainCommands.length > 0) {
   messages.push(`main-runtime unexpected command: ${unexpectedMainCommands.join(', ')}`);
+}
+const expectedLocalCommands = new Set([
+  'log_to_file',
+  'update_menu_state',
+  'set_menu_item_enabled',
+  'set_active_bookstore',
+  'set_title',
+  'toggle_menu_bar',
+  'simulate_menu_click',
+  'switch_bookstore_by_index',
+  'apply_site_zoom',
+  'get_app_name',
+  'get_settings',
+  'patch_settings',
+  'get_local_book',
+  'get_local_reading_progress',
+  'save_local_reading_progress',
+  'local_sha1',
+]);
+const localCommands = new Set(
+  localReaderPermissions
+    .filter((permission) => permission.startsWith('allow-'))
+    .map((permission) => permission.slice(6).replaceAll('-', '_')),
+);
+const missingLocalCommands = difference(expectedLocalCommands, localCommands);
+const unexpectedLocalCommands = difference(localCommands, expectedLocalCommands);
+if (missingLocalCommands.length > 0) {
+  messages.push(`local-reader missing command: ${missingLocalCommands.join(', ')}`);
+}
+if (unexpectedLocalCommands.length > 0) {
+  messages.push(`local-reader unexpected command: ${unexpectedLocalCommands.join(', ')}`);
 }
 if (messages.length > 0) {
   console.error(`IPC consistency check failed:\n${messages.join('\n')}`);

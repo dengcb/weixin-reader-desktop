@@ -7,6 +7,7 @@
 
 import { createWeReadSiteRuntime } from '../../scripts/core/reader_site_runtime';
 import type { ReaderSiteRuntime } from '../../scripts/core/reader_site_runtime';
+import { createLocalSiteRuntime } from './local';
 
 /**
  * 内置插件工厂函数列表
@@ -16,6 +17,7 @@ import type { ReaderSiteRuntime } from '../../scripts/core/reader_site_runtime';
  */
 export const builtinPluginFactories: Array<() => ReaderSiteRuntime> = [
   createWeReadSiteRuntime,
+  createLocalSiteRuntime,
 ];
 
 /**
@@ -28,3 +30,4 @@ export const createBuiltinPlugins = (): ReaderSiteRuntime[] => {
 // 导出内置插件供直接引用
 export { createWeReadPlugin } from './weread';
 export { createWeReadSiteRuntime } from '../../scripts/core/reader_site_runtime';
+export { createLocalSiteRuntime } from './local';

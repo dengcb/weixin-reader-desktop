@@ -117,7 +117,7 @@ export class AutoFlipper {
       return;
     }
 
-    if (this.siteContext.isDoubleColumn) {
+    if (this.siteContext.isPaginated) {
       this.startDoubleColumnLogic(runtime);
     } else {
       this.startSingleColumnLogic(runtime);
@@ -134,8 +134,8 @@ export class AutoFlipper {
 
     this.doubleTimer = setInterval(() => {
       if (!this.isActive || currentGeneration !== this.generation) return;
-      // 检测是否切换到单栏模式
-      if (!this.siteContext.isDoubleColumn) {
+      // 检测是否切换到滚动模式
+      if (!this.siteContext.isPaginated) {
         this.switchMode(() => this.startSingleColumnLogic(adapter));
         return;
       }
@@ -192,8 +192,8 @@ export class AutoFlipper {
         return;
     }
 
-    // 检测是否切换到双栏模式
-    if (this.siteContext.isDoubleColumn) {
+    // 检测是否切换到整页分页模式
+    if (this.siteContext.isPaginated) {
       this.switchMode(() => this.startDoubleColumnLogic(adapter));
       return;
     }

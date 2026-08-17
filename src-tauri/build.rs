@@ -1,6 +1,12 @@
 fn main() {
     // Tell Cargo to rebuild if inject.js changes
     println!("cargo:rerun-if-changed=../src/scripts/inject.js");
+    println!("cargo:rerun-if-changed=../src/scripts/local_reader.js");
+    println!("cargo:rerun-if-changed=../src/scripts/local_reader_bootstrap.js");
+    println!("cargo:rerun-if-changed=../src/windows/local-reader.html");
+    println!("cargo:rerun-if-changed=../src/windows/local-reader.css");
+    println!("cargo:rerun-if-changed=../third-party/foliate-js/LICENSE");
+    println!("cargo:rerun-if-changed=../THIRD-PARTY-NOTICES.md");
     // Tauri 会在编译期把 frontendDist 的资源嵌入应用；默认页新增或更新后必须
     // 重新运行 build.rs，否则正在构建的壳找不到 library.html。
     println!("cargo:rerun-if-changed=../dist/library.html");
@@ -37,6 +43,11 @@ fn main() {
             "patch_settings",
             "get_reading_position",
             "save_reading_position",
+            "get_local_book",
+            "get_local_reading_progress",
+            "save_local_reading_progress",
+            "local_sha1",
+            "clear_local_history",
             "check_update_manual",
             "install_update_now",
             "is_update_downloaded",

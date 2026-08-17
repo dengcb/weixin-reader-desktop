@@ -262,8 +262,8 @@ export class IPCManager extends BaseManager {
       const settings = settingsStore.get();
       if (!settings.lastPage) return;
 
-      // 单栏模式才保存滚动位置
-      if (this.siteContext.isDoubleColumn) return;
+      // 分页阅读器自行保存结构化位置，只有滚动模式保存 window.scrollY。
+      if (this.siteContext.isPaginated) return;
 
       // 恢复期间不保存
       if (!ScrollState.isRestorationComplete()) return;

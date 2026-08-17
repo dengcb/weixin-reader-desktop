@@ -67,6 +67,10 @@ export class SiteContext {
     return this.cachedIsDoubleColumn;
   }
 
+  get isPaginated(): boolean {
+    return this.currentRuntime?.isPaginated?.() ?? this.isDoubleColumn;
+  }
+
   get siteId(): string { return this.currentRuntime?.id ?? 'unknown'; }
 
   onDoubleColumnChange(callback: (value: boolean) => void): () => void {

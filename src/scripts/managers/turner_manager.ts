@@ -89,7 +89,7 @@ export class TurnerManager {
     const settings = settingsStore.get();
     const isDoubleColumn = this.siteContext.isDoubleColumn;
     const hideNavbar = settings.hideNavbar === true;
-    const shouldShowProgressBar = isDoubleColumn && hideNavbar;
+    const shouldShowProgressBar = this.siteContext.siteId !== 'local' && isDoubleColumn && hideNavbar;
 
     this.progressBar.setVisibility(shouldShowProgressBar);
   }

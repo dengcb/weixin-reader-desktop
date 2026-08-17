@@ -172,6 +172,38 @@ Rust 原生菜单等内部写入可以调用 `settings::update_setting(app, path
 3. 若需要自定义命令，走完整 IPC 一致性流程。
 4. 判断它是可信本地页面还是远程网页，禁止复用过宽权限。
 
+## 编程式全屏退出后 WKWebView 丢失键盘响应（macOS）
+
+### 现象与根因
+
+用菜单或蓝牙遥控器触发编程式全屏（`win.set_fullscreen()`）退出后：
+
+- 键盘组合键（Cmd 系菜单快捷键）依然正常——它们走 NSWindow 的 key equivalents 机制，不依赖 first responder。
+- 单键（遥控器 Enter/PageUp/方向键、页面 keydown）全部丢失，macOS 发出“蹦蹦蹦”警告音——它们走 responder chain，需要 WKWebView 是 first responder。
+- 系统快捷键（Cmd+Ctrl+F）触发的全屏无此问题，因为由窗口系统直接处理，响应链从未中断。
+
+根因：退出全屏的动画与窗口层级重建后，NSWindow 的 firstResponder 不再是 WKWebView。
+
+### 无效方案（实证排除，勿重试）
+
+| 尝试 | 为什么无效 |
+|------|----------|
+| `win.set_focus()` | 只是 makeKeyAndOrderFront，改不了 firstResponder |
+| eval `window.focus()` | 只 focus 窗口对象，无关 AppKit 层 |
+| eval 隐藏 input 的 DOM `.focus()` | 改的是网页内焦点，够不着 NSWindow |
+| 在 `set_fullscreen()` 调用后立即聚焦 | 全屏动画还在进行，聚焦被布局过程冲掉 |
+
+### 有效方案：objc 直接调 makeFirstResponder
+
+唯一有效的修复等价于 wry 内部 `focus()` 的实现——`window.makeFirstResponder(wkwebview)`，但 Tauri 2.11 未暴露该 API。用 objc 从 NSWindow 的 contentView 子视图里找到 WKWebView 实例直接调（见 `menu.rs` 的 `make_webview_first_responder`）。
+
+时机也关键：不能在第一次 Resized（动画中）就聚焦，要等 `windowDidExitFullscreen` 之后 tao 补发的第二次 Resized——那才是全屏退出流程彻底完成的信号。`watch_fullscreen_exit` 用三态原子状态机（0=未全屏 1=全屏中 2=待聚焦）区分这两次 Resized。
+
+### 铁律
+
+- macOS 上凡涉及编程式全屏/窗口层级变更后需要键盘输入的场景，都必须恢复 WKWebView 的 first responder。
+- 判断依据：如果“组合键好使但单键失灵”，就是 firstResponder 丢失，直接上 objc 方案，不要在 JS 层浪费时间。
+
 ## 编辑菜单（macOS）
 
 ### 问题与根因

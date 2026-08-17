@@ -516,6 +516,8 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 Windows 代码签名由 [SignPath Foundation](https://signpath.org/) 免费提供 —— 感谢他们为开源项目消除 SmartScreen "未知发布者" 警告。
 
+本地 EPUB 阅读使用 [foliate-js](https://github.com/johnfactotum/foliate-js) 核心模块，采用 MIT License。第三方许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
 ---
 
 ## 📄 开源协议

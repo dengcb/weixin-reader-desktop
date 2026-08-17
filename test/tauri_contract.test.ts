@@ -80,6 +80,21 @@ describe('Tauri application contracts', () => {
     expect(installerCapability.permissions).toContain('core:window:allow-close');
   });
 
+  it('declares Simplified Chinese as the only macOS application localization', async () => {
+    const [config, infoPlist, localizedInfoPlist] = await Promise.all([
+      readJson<{ bundle: { resources: Record<string, string> } }>('src-tauri/tauri.conf.json'),
+      readText('src-tauri/Info.plist'),
+      readText('src-tauri/infoplist/zh-Hans.lproj/InfoPlist.strings'),
+    ]);
+
+    expect(infoPlist).toContain('<key>CFBundleDevelopmentRegion</key>');
+    expect(infoPlist).toContain('<string>zh-Hans</string>');
+    expect(infoPlist).toContain('<key>CFBundleLocalizations</key>');
+    expect(config.bundle.resources['infoplist/zh-Hans.lproj/InfoPlist.strings'])
+      .toBe('zh-Hans.lproj/InfoPlist.strings');
+    expect(localizedInfoPlist).toContain('CFBundleDisplayName = "艾特阅读";');
+  });
+
   it('defines no eager windows and never recreates obsolete about or update labels', async () => {
     const [config, lib, menu] = await Promise.all([
       readJson<{ app: { windows: unknown[] } }>('src-tauri/tauri.conf.json'),
@@ -127,6 +142,7 @@ describe('Tauri application contracts', () => {
   it('scopes each capability to its intended window and remote pages only to main', async () => {
     const paths = [
       'src-tauri/capabilities/main-runtime.json',
+      'src-tauri/capabilities/local-reader.json',
       'src-tauri/capabilities/settings.json',
       'src-tauri/capabilities/plugin-editor.json',
       'src-tauri/capabilities/plugin-installer.json',
@@ -137,6 +153,7 @@ describe('Tauri application contracts', () => {
 
     expect(scopes).toEqual({
       'main-runtime': ['main'],
+      'local-reader': ['main'],
       settings: ['settings'],
       'plugin-editor': ['plugin-editor'],
       'plugin-installer': ['plugin-installer'],
@@ -144,6 +161,46 @@ describe('Tauri application contracts', () => {
     });
     expect(capabilities[0].remote?.urls).toEqual(['https://*', 'http://*']);
     expect(capabilities.slice(1).every(item => item.remote === undefined)).toBe(true);
+  });
+
+  it('keeps local TXT and EPUB as a secondary bookstore compatibility feature', async () => {
+    const [config, menu, settings, localPage, localCapability, notices, license] = await Promise.all([
+      readJson<{
+        bundle: {
+          fileAssociations: Array<{ ext: string[] }>;
+          resources: Record<string, string>;
+        };
+      }>('src-tauri/tauri.conf.json'),
+      readText('src-tauri/src/menu.rs'),
+      readText('src/windows/settings.html'),
+      readText('src/windows/local-reader.html'),
+      readJson<Capability>('src-tauri/capabilities/local-reader.json'),
+      readText('THIRD-PARTY-NOTICES.md'),
+      readText('third-party/foliate-js/LICENSE'),
+    ]);
+
+    expect(config.bundle.fileAssociations.flatMap(item => item.ext)).toEqual(['atrd']);
+    expect(menu).toContain('Submenu::new(manager, "自家书屋", true)');
+    expect(menu).toContain('"打开本地图书…"');
+    expect(menu).toContain('open_local_book_');
+    expect(settings).toContain('<div class="section-title" style="margin-top: 32px;">本地书屋</div>');
+    expect(settings).toContain('<div class="setting-desc">清除本地书屋里的阅读历史记录</div>');
+    expect(settings).toContain('msg.textContent = \'清除本地书屋里的阅读历史记录\'');
+    expect(settings).toContain('id="clearLocalHistoryBtn">清空历史记录</button>');
+    expect(localPage.match(/class="tool-button"/g)).toHaveLength(4);
+    expect(localPage).toContain('id="pageProgress"');
+    expect(localCapability.remote).toBeUndefined();
+    expect(localCapability.permissions).toContain('allow-get-local-book');
+    expect(localCapability.permissions).not.toContain('dialog:default');
+    expect(config.bundle.resources['../third-party/foliate-js/LICENSE']).toBe(
+      'licenses/foliate-js/LICENSE',
+    );
+    expect(notices).toContain('78914aef4466eb960965702401634c2cb348e9b1');
+    expect(license).toContain('Copyright (c) 2022 John Factotum');
+
+    const settingsScript = settings.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(settingsScript).toBeDefined();
+    expect(() => new Function(settingsScript!)).not.toThrow();
   });
 
   it('keeps dangerous native capabilities out of the remote reading window', async () => {

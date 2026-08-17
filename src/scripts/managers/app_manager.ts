@@ -156,8 +156,8 @@ export class AppManager {
       return;
     }
 
-    // Check if in single-column mode
-    if (this.siteContext.isDoubleColumn) {
+    // Paginated runtimes persist a structural location and must not receive scroll restoration.
+    if (this.siteContext.isPaginated) {
       ScrollState.markRestorationComplete();
       return;
     }

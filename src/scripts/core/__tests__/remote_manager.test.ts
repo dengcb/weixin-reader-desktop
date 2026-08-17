@@ -6,6 +6,22 @@ import { RemoteManager } from '../../managers/remote_manager';
 const originals = {
   get: settingsStore.get,
   update: settingsStore.update,
+  hadTauri: typeof (window as any).__TAURI__ !== 'undefined',
+  tauri: (window as any).__TAURI__,
+};
+
+// invoke() 动态读 window.__TAURI__.core.invoke，mock 这个全局即可，
+// 不需要碰 ES module 的只读导出。
+const tauriInvoke = mock(async () => undefined);
+const installTauriMock = () => {
+  (window as any).__TAURI__ = {
+    core: { invoke: tauriInvoke },
+    event: { listen: async () => () => {} },
+  };
+};
+const uninstallTauriMock = () => {
+  if (originals.hadTauri) (window as any).__TAURI__ = originals.tauri;
+  else delete (window as any).__TAURI__;
 };
 
 const createManager = () => {
@@ -36,6 +52,8 @@ const createManager = () => {
 
 describe('RemoteManager keyboard contract', () => {
   beforeEach(() => {
+    installTauriMock();
+    tauriInvoke.mockClear();
     settingsStore.get = () => ({
       schemaVersion: 2,
       _version: 0,
@@ -53,6 +71,7 @@ describe('RemoteManager keyboard contract', () => {
   afterEach(() => {
     settingsStore.get = originals.get;
     settingsStore.update = originals.update;
+    uninstallTauriMock();
     EventBus.clearHistory();
   });
 
@@ -96,7 +115,7 @@ describe('RemoteManager keyboard contract', () => {
     input.remove();
   });
 
-  it('maps Enter, Home and the menu key to existing setting fields', () => {
+  it('maps Enter to fullscreen toggle, Home and the menu key to setting fields', () => {
     const { manager } = createManager();
     const leakedMenuKeys: KeyboardEvent[] = [];
     const siteKeyListener = (event: KeyboardEvent) => leakedMenuKeys.push(event);
@@ -116,10 +135,10 @@ describe('RemoteManager keyboard contract', () => {
     });
     window.dispatchEvent(repeatedMenuKey);
 
-    expect(settingsStore.update).toHaveBeenCalledWith({ readerWide: true });
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'toggle_fullscreen' });
     expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
     expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
-    expect(settingsStore.update).toHaveBeenCalledTimes(3);
+    expect(settingsStore.update).toHaveBeenCalledTimes(2);
     expect(menuKey.defaultPrevented).toBe(true);
     expect(repeatedMenuKey.defaultPrevented).toBe(true);
     expect(leakedMenuKeys).toEqual([]);

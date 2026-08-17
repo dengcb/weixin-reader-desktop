@@ -25,6 +25,11 @@ export interface ReaderSiteRuntime extends ReaderPlugin {
   getDarkThemeCSS?(): string;
   getLightThemeCSS?(): string;
   clickNextChapter?(): void;
+  isPaginated?(): boolean;
+  prevChapter?(): boolean | Promise<boolean>;
+  nextChapter?(): boolean | Promise<boolean>;
+  back?(): void | Promise<void>;
+  forward?(): void | Promise<void>;
 }
 
 class WeReadSiteRuntime implements ReaderSiteRuntime {
@@ -155,6 +160,7 @@ class PluginSiteRuntime implements ReaderSiteRuntime {
   prevPage(): void | Promise<void> { return this.plugin.prevPage(); }
   getStyles(): PluginStyles { return this.plugin.getStyles(); }
   isDoubleColumn(): boolean { return this.plugin.isDoubleColumn?.() ?? false; }
+  isPaginated(): boolean { return this.plugin.isPaginated?.() ?? this.isDoubleColumn(); }
   isAtBottom(): boolean { return this.plugin.isAtBottom?.() ?? false; }
   getChapterProgress(): number { return this.plugin.getChapterProgress?.() ?? 0; }
   getBookProgress(): Promise<BookProgress | null> {
@@ -166,6 +172,10 @@ class PluginSiteRuntime implements ReaderSiteRuntime {
   getChapterUrl(chapterIdx: number): string | null {
     return this.plugin.getChapterUrl?.(chapterIdx) ?? null;
   }
+  prevChapter(): boolean | Promise<boolean> { return this.plugin.prevChapter?.() ?? false; }
+  nextChapter(): boolean | Promise<boolean> { return this.plugin.nextChapter?.() ?? false; }
+  back(): void | Promise<void> { return this.plugin.back?.(); }
+  forward(): void | Promise<void> { return this.plugin.forward?.(); }
   getReaderMenuItems(): string[] {
     return this.plugin.getReaderMenuItems?.() ?? ['reader_wide', 'hide_toolbar', 'auto_flip'];
   }

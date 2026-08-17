@@ -153,7 +153,9 @@ export class StyleManager {
       const wideCSS = runtime.getWideModeCSS(this.isWide);
       const toolbarCSS = runtime.getToolbarCSS(this.isHideToolbar);
       // 导航栏隐藏样式仅在双栏模式下应用
-      const navbarCSS = (isDoubleColumn && runtime.getNavbarCSS) ? runtime.getNavbarCSS(this.isHideNavbar) : '';
+      const navbarCSS = ((isDoubleColumn || runtime.isPaginated?.()) && runtime.getNavbarCSS)
+        ? runtime.getNavbarCSS(this.isHideNavbar)
+        : '';
 
       injectCSS('wxrd-wide-mode', wideCSS);
       injectCSS('wxrd-hide-toolbar', toolbarCSS);

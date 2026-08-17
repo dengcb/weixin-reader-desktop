@@ -177,6 +177,7 @@ export class PluginRegistry {
     // 如果有缓存且仍然匹配，返回缓存
     if (this.activePlugin) {
       const plugin = this.activePlugin.plugin;
+      if (plugin.manifest.sourceType === 'local') return this.activePlugin;
       if (plugin.manifest.sourceType === 'web' && plugin.matchesDomain()) {
         return this.activePlugin;
       }

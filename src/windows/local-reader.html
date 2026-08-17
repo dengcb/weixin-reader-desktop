@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>艾特阅读</title>
+  <link rel="stylesheet" href="/local-reader.css">
+</head>
+<body data-theme="light" tabindex="-1">
+  <header class="local-navbar" id="localNavbar">
+    <div class="nav-book" id="bookTitle">正在打开图书</div>
+    <span class="nav-rule" aria-hidden="true"></span>
+    <div class="nav-chapter" id="chapterTitle">请稍候</div>
+  </header>
+
+  <main class="reader-stage" id="readerStage" aria-label="本地图书正文"></main>
+
+  <nav class="local-toolbar" id="localToolbar" aria-label="阅读工具">
+    <button class="tool-button" data-mode="double" id="columnButton" type="button" title="切换单列／双栏">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path id="columnIconSingle" fill-rule="evenodd" d="M7.5 3h9a2.5 2.5 0 0 1 2.5 2.5v13a2.5 2.5 0 0 1-2.5 2.5h-9a2.5 2.5 0 0 1-2.5-2.5v-13A2.5 2.5 0 0 1 7.5 3ZM8 5h8v2H8ZM8 9h8v2H8ZM8 13h8v2H8ZM8 17h5v2H8Z"/>
+        <g id="columnIconDouble">
+          <rect x="5" y="3" width="6" height="18" rx="2"/>
+          <rect x="13" y="3" width="6" height="18" rx="2"/>
+        </g>
+      </svg>
+      <span id="columnLabel">双栏</span>
+    </button>
+    <button class="tool-button" id="chapterButton" type="button" title="章节选择">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="5" cy="4.5" r="1.5"/>
+        <rect x="8.5" y="3" width="10.5" height="3" rx="1.5"/>
+        <circle cx="5" cy="12" r="1.5"/>
+        <rect x="8.5" y="10.5" width="10.5" height="3" rx="1.5"/>
+        <circle cx="5" cy="19.5" r="1.5"/>
+        <rect x="8.5" y="18" width="10.5" height="3" rx="1.5"/>
+      </svg>
+      <span>章节</span>
+    </button>
+    <button class="tool-button" id="themeButton" type="button" title="切换浅色／深色">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <g id="themeIconLight">
+          <circle cx="12" cy="12" r="4"/>
+          <rect x="11" y="3" width="2" height="3" rx="1"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(45 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(90 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(135 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(180 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(225 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(270 12 12)"/>
+          <rect x="11" y="3" width="2" height="3" rx="1" transform="rotate(315 12 12)"/>
+        </g>
+        <path id="themeIconDark" d="M14 3A9 9 0 1 0 20 15A7 7 0 0 1 14 3Z"/>
+      </svg>
+      <span id="themeLabel">浅色</span>
+    </button>
+    <button class="tool-button" id="styleButton" type="button" title="样式设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="4.5" width="2" height="2" rx="1"/>
+        <rect x="7" y="3" width="4" height="5" rx="1.5"/>
+        <rect x="12" y="4.5" width="8" height="2" rx="1"/>
+        <rect x="4" y="11" width="8" height="2" rx="1"/>
+        <rect x="13" y="9.5" width="4" height="5" rx="1.5"/>
+        <rect x="18" y="11" width="2" height="2" rx="1"/>
+        <rect x="4" y="17.5" width="2" height="2" rx="1"/>
+        <rect x="7" y="16" width="4" height="5" rx="1.5"/>
+        <rect x="12" y="17.5" width="8" height="2" rx="1"/>
+      </svg>
+      <span>样式</span>
+    </button>
+  </nav>
+
+  <aside class="reader-panel" id="chapterPanel" aria-label="章节目录" aria-hidden="true">
+    <div class="panel-header">
+      <div><span class="panel-kicker">CONTENTS</span><h2>章节目录</h2></div>
+      <button class="panel-close" type="button" data-close-panel aria-label="关闭">×</button>
+    </div>
+    <div class="chapter-list" id="chapterList"></div>
+  </aside>
+
+  <aside class="reader-panel style-panel" id="stylePanel" aria-label="样式设置" aria-hidden="true">
+    <div class="panel-header">
+      <div><span class="panel-kicker">TYPESETTING</span><h2>阅读样式</h2></div>
+      <button class="panel-close" type="button" data-close-panel aria-label="关闭">×</button>
+    </div>
+    <div class="style-fields" id="styleFields">
+      <label class="style-field"><span>字体</span>
+        <select id="fontFamily">
+          <option value="system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif">系统默认</option>
+          <option value="Songti SC, STSong, serif">宋体</option>
+          <option value="Kaiti SC, STKaiti, serif">楷体</option>
+          <option value="PingFang SC, Microsoft YaHei, sans-serif">黑体</option>
+        </select>
+      </label>
+      <label class="style-field"><span>字号 <output id="fontSizeValue"></output></span><input id="fontSize" type="range" min="20" max="36" step="1"></label>
+      <label class="style-field"><span>行间距 <output id="lineHeightValue"></output></span><input id="lineHeight" type="range" min="1.3" max="2.5" step="0.05"></label>
+      <label class="style-field"><span>段间距 <output id="paragraphSpacingValue"></output></span><input id="paragraphSpacing" type="range" min="0" max="2.5" step="0.05"></label>
+      <label class="style-field"><span>左右间距 <output id="pagePaddingXValue"></output></span><input id="pagePaddingX" type="range" min="0" max="60" step="4"></label>
+      <button class="reset-button" id="resetStyle" type="button">恢复默认</button>
+      <p class="fixed-layout-hint" id="fixedLayoutHint">固定版式图书保留原始排版，字体与间距设置不可用。</p>
+    </div>
+  </aside>
+
+  <div class="page-progress" id="pageProgress" aria-live="polite">1 / 1</div>
+
+  <div class="loading-layer" id="loadingLayer">
+    <div class="loading-mark" aria-hidden="true"></div>
+    <p id="loadingText">正在打开本地图书</p>
+  </div>
+
+  <script src="/local-reader-bootstrap.js"></script>
+</body>
+</html>

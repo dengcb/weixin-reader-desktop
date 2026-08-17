@@ -17,6 +17,9 @@ const globals = {
   HTMLElement: browser.HTMLElement,
   HTMLStyleElement: browser.HTMLStyleElement,
   MutationObserver: browser.MutationObserver,
+  DOMParser: browser.DOMParser,
+  XMLSerializer: browser.XMLSerializer,
+  NodeFilter: browser.NodeFilter,
   MediaQueryListEvent: browser.MediaQueryListEvent,
   Node: browser.Node,
 };

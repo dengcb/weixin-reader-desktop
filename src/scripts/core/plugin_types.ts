@@ -440,6 +440,9 @@ export interface ReaderPlugin {
    * 检测是否为双栏模式
    */
   isDoubleColumn?(): boolean;
+
+  /** 当前阅读器是否采用整页分页；单列分页同样返回 true */
+  isPaginated?(): boolean;
   
   /**
    * 检测是否滚动到底部
@@ -466,6 +469,14 @@ export interface ReaderPlugin {
    * @param chapterIdx 章节索引
    */
   getChapterUrl?(chapterIdx: number): string | null;
+
+  /** 切换到相邻章节，成功时返回 true */
+  prevChapter?(): boolean | Promise<boolean>;
+  nextChapter?(): boolean | Promise<boolean>;
+
+  /** 阅读位置历史导航 */
+  back?(): void | Promise<void>;
+  forward?(): void | Promise<void>;
   
   /**
    * 获取阅读器专用菜单项 ID

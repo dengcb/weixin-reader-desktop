@@ -621,6 +621,61 @@
       color: #fff;
       border-color: var(--danger-color);
     }
+    .license-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      background: rgba(0, 0, 0, 0.45);
+    }
+    .license-overlay.show { display: flex; }
+    .license-dialog {
+      width: min(620px, calc(100vw - 48px));
+      max-height: calc(100vh - 64px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      background: var(--card-bg);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+    }
+    .license-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .license-close {
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 22px;
+      cursor: pointer;
+    }
+    .license-content {
+      overflow: auto;
+      padding: 20px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .license-content h3 { color: var(--text-color); margin: 0 0 4px; }
+    .license-content pre {
+      margin: 14px 0 28px;
+      padding: 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      border-radius: 8px;
+      background: var(--bg-color);
+      font: inherit;
+    }
   </style>
 </head>
 
@@ -707,6 +762,18 @@
             </label>
           </div>
         </div>
+
+        <div class="section-title" style="margin-top: 32px;">本地书屋</div>
+
+        <div class="setting-item">
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">本地书屋</div>
+              <div class="setting-desc">清除本地书屋里的阅读历史记录</div>
+            </div>
+            <button class="plugin-btn uninstall" id="clearLocalHistoryBtn">清空历史记录</button>
+          </div>
+        </div>
       </div>
 
       <!-- 插件管理 -->
@@ -758,6 +825,10 @@
             <span class="link-item-text">服务条款</span>
             <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
           </div>
+          <div class="link-item" id="linkLicenses">
+            <span class="link-item-text">开源许可</span>
+            <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6v12z"/></svg>
+          </div>
         </div>
 
         <!-- 版权信息 -->
@@ -770,10 +841,11 @@
             本应用基于以下开源项目构建：<br>
             <a href="https://tauri.app" target="_blank">Tauri</a> - 跨平台桌面应用框架<br>
             <a href="https://www.rust-lang.org" target="_blank">Rust</a> - 系统编程语言<br>
-            <a href="https://www.typescriptlang.org" target="_blank">TypeScript</a> - JavaScript 超集
+            <a href="https://www.typescriptlang.org" target="_blank">TypeScript</a> - JavaScript 超集<br>
+            <a href="https://github.com/johnfactotum/foliate-js" target="_blank">foliate-js</a> - EPUB 解析与分页核心
           </div>
           <div class="opensource-list">
-            本应用已开源于 <a href="https://github.com/dengcb/weixin-reader-desktop" target="_blank">GitHub</a>
+            本应用已开源于 <a id="linkGithub" href="https://github.com/dengcb/weixin-reader-desktop" target="_blank">GitHub</a>
           </div>
         </div>
       </div>
@@ -980,6 +1052,9 @@
           const okBtn = document.getElementById('confirmOk');
           const cancelBtn = document.getElementById('confirmCancel');
 
+          icon_.style.display = 'block';
+          okBtn.textContent = '卸载';
+
           title.textContent = `卸载「${name}」`;
           msg.textContent = isBuiltin
             ? '内置插件卸载后将停止使用。'
@@ -1022,6 +1097,48 @@
           overlay.classList.add('show');
         });
       }
+
+      function confirmClearLocalHistory() {
+        return new Promise((resolve) => {
+          const overlay = document.getElementById('confirmOverlay');
+          const icon = document.getElementById('confirmIcon');
+          const title = document.getElementById('confirmTitle');
+          const msg = document.getElementById('confirmMsg');
+          const okBtn = document.getElementById('confirmOk');
+          const cancelBtn = document.getElementById('confirmCancel');
+          icon.style.display = 'none';
+          title.textContent = '清空历史记录';
+          msg.textContent = '清除本地书屋里的阅读历史记录';
+          okBtn.textContent = '清空';
+          const cleanup = (result) => {
+            overlay.classList.remove('show');
+            okBtn.onclick = null;
+            cancelBtn.onclick = null;
+            overlay.onclick = null;
+            resolve(result);
+          };
+          okBtn.onclick = () => cleanup(true);
+          cancelBtn.onclick = () => cleanup(false);
+          overlay.onclick = (event) => {
+            if (event.target === overlay) cleanup(false);
+          };
+          overlay.classList.add('show');
+        });
+      }
+
+      document.getElementById('clearLocalHistoryBtn').addEventListener('click', async () => {
+        if (!await confirmClearLocalHistory()) return;
+        const button = document.getElementById('clearLocalHistoryBtn');
+        button.disabled = true;
+        try {
+          await invoke('clear_local_history');
+        } catch (error) {
+          console.error('Failed to clear local history:', error);
+          alert('清空失败：' + error);
+        } finally {
+          button.disabled = false;
+        }
+      });
 
       // 渲染插件列表
       async function renderPluginList(settings = null) {
@@ -1402,6 +1519,17 @@
           console.error('Failed to open terms window:', e);
         }
       });
+
+      const licenseOverlay = document.getElementById('licenseOverlay');
+      document.getElementById('linkLicenses').addEventListener('click', () => {
+        licenseOverlay.classList.add('show');
+      });
+      document.getElementById('licenseClose').addEventListener('click', () => {
+        licenseOverlay.classList.remove('show');
+      });
+      licenseOverlay.addEventListener('click', (event) => {
+        if (event.target === licenseOverlay) licenseOverlay.classList.remove('show');
+      });
       
       const opener = tauri.opener || window.__TAURI__.core;
       document.getElementById('linkGithub').addEventListener('click', () => {
@@ -1431,6 +1559,41 @@
       <div class="confirm-actions">
         <button class="confirm-cancel" id="confirmCancel">取消</button>
         <button class="confirm-ok" id="confirmOk">卸载</button>
+      </div>
+    </div>
+  </div>
+  <div class="license-overlay" id="licenseOverlay">
+    <div class="license-dialog" role="dialog" aria-modal="true" aria-labelledby="licenseTitle">
+      <div class="license-header">
+        <span id="licenseTitle">开源许可</span>
+        <button class="license-close" id="licenseClose" aria-label="关闭">×</button>
+      </div>
+      <div class="license-content">
+        <h3>艾特阅读</h3>
+        <div>Copyright (c) 2026 Deng Changbin · MIT License</div>
+        <h3 style="margin-top: 24px;">foliate-js</h3>
+        <div>固定提交 78914aef4466eb960965702401634c2cb348e9b1</div>
+        <pre>MIT License
+
+Copyright (c) 2022 John Factotum
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
       </div>
     </div>
   </div>

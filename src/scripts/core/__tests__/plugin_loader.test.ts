@@ -95,6 +95,22 @@ describe('PluginLoader', () => {
       await loader.initialize();
       expect(log.warn).toHaveBeenCalled();
     });
+
+    it('forces the built-in local runtime without loading external webpage plugins', async () => {
+      const local = createMockPlugin('local');
+      local.manifest.sourceType = 'local';
+      local.manifest.renderMode = 'custom';
+      local.manifest.builtin = true;
+      loader.registerBuiltin(() => local);
+      const externalSpy = spyOn(loader as any, 'loadExternalPlugins');
+      spyOn(settingsStore, 'isPluginEnabled').mockReturnValue(false);
+
+      await loader.initialize('local');
+
+      expect(externalSpy).not.toHaveBeenCalled();
+      expect(registry.get('local')?.state).toBe('loaded');
+      expect(loader.getActivePlugin()?.id).toBe('local');
+    });
   });
 
   describe('Loading and Unloading', () => {

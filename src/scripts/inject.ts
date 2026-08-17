@@ -5,6 +5,9 @@ import { invoke } from './core/tauri';
 async function main(): Promise<void> {
   // 主窗口也会承载本地默认页；阅读运行时只应注入网络站点。
   if (!['http:', 'https:'].includes(window.location.protocol)) return;
+  // Windows 的自定义协议映射为 http://atreader.localhost，仍属于可信本地页，
+  // 必须由 local-reader 自行启动 local runtime，不能误走远程插件注入。
+  if (window.location.hostname === 'atreader.localhost') return;
 
   // Windows/WebView2 会向子框架注入初始化脚本；跨域 OAuth iframe 必须跳过。
   if (window.self !== window.top) {

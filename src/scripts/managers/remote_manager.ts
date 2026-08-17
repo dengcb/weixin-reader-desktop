@@ -4,6 +4,7 @@ import { log } from '../core/logger';
 import { EventBus, Events } from '../core/event_bus';
 import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
+import { invoke } from '../core/tauri';
 
 const MENU_KEY_DEBOUNCE_MS = 1000;
 const MENU_CONTEXT_GUARD_MS = 1500;
@@ -138,6 +139,15 @@ export class RemoteManager {
    * 跳转章节
    */
   private navigateChapter(direction: number): boolean {
+    const runtime = this.siteContext.currentRuntime;
+    const navigate = direction < 0 ? runtime?.prevChapter : runtime?.nextChapter;
+    if (navigate && runtime) {
+      Promise.resolve(navigate.call(runtime)).then((changed) => {
+        if (changed) showToast(direction < 0 ? '上一章' : '下一章');
+      }).catch((error) => log.error('[RemoteManager] 本地章节切换失败', error));
+      return true;
+    }
+
     // 检查登录状态，未登录时静默返回
     if (!chapterManager.isLoggedIn()) {
       return false;
@@ -237,11 +247,15 @@ export class RemoteManager {
 
       let handled = false;
 
-      // PageUp/PageDown - 翻页
+      // PageUp/PageDown - 翻页；Space - 下一页（阅读软件惯例）
       if (e.code === 'PageUp') {
         this.performPageTurn('backward');
         handled = true;
       } else if (e.code === 'PageDown') {
+        this.performPageTurn('forward');
+        handled = true;
+      } else if (e.code === 'Space' && !e.shiftKey) {
+        // Shift+Space 保留给浏览器原生行为（部分网页用它向上翻页）
         this.performPageTurn('forward');
         handled = true;
       }
@@ -255,10 +269,12 @@ export class RemoteManager {
       } else if (e.code === 'ArrowDown') {
         handled = this.navigateChapter(1);
       }
-      // Enter - 宽屏模式
+      // Enter - 切换全屏
+      // 遥控器确认键：全屏是高频操作（阅读变宽是一次性设置，不宜占用此键）。
+      // 全屏逻辑在 Rust 端 handle_menu_action("toggle_fullscreen")，
+      // 含 Windows 全屏自动隐藏菜单栏的同步，跨平台行为一致。
       else if (e.code === 'Enter') {
-        const current = settingsStore.get();
-        settingsStore.update({ readerWide: !current.readerWide });
+        invoke('simulate_menu_click', { action: 'toggle_fullscreen' }).catch(() => {});
         handled = true;
       }
       // Home - 隐藏导航栏

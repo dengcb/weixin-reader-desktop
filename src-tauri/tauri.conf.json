@@ -26,6 +26,7 @@
       "csp": null,
       "capabilities": [
         "main-runtime",
+        "local-reader",
         "settings",
         "plugin-editor",
         "plugin-installer",
@@ -36,6 +37,11 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "resources": {
+      "infoplist/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings",
+      "../third-party/foliate-js/LICENSE": "licenses/foliate-js/LICENSE",
+      "../THIRD-PARTY-NOTICES.md": "licenses/THIRD-PARTY-NOTICES.md"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-sha1"
+description = "Enables the local_sha1 command without any pre-configured scope."
+commands.allow = ["local_sha1"]
+
+[[permission]]
+identifier = "deny-local-sha1"
+description = "Denies the local_sha1 command without any pre-configured scope."
+commands.deny = ["local_sha1"]

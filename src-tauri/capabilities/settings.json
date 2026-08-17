@@ -16,6 +16,7 @@
     "allow-get-app-version",
     "allow-get-settings",
     "allow-patch-settings",
+    "allow-clear-local-history",
     "allow-install-plugin",
     "allow-prepare-plugin-install",
     "allow-uninstall-plugin",

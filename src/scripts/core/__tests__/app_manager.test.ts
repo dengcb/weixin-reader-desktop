@@ -78,6 +78,7 @@ describe('AppManager persistence lifecycle', () => {
     const manager = bareManager({
       isReaderPage: false,
       isDoubleColumn: false,
+      isPaginated: false,
       siteId: 'demo',
     });
     await (manager as any).restoreScrollPosition();
@@ -90,12 +91,27 @@ describe('AppManager persistence lifecycle', () => {
     expect((manager as any).restoreTimer).toBeNull();
   });
 
-  it('skips scrolling in double-column mode even with a saved position', async () => {
+  it('skips scrolling in paginated mode even with a saved position', async () => {
     invokeMock.mockImplementation(async () => 500);
     const manager = bareManager({
       isReaderPage: true,
       isDoubleColumn: true,
+      isPaginated: true,
       siteId: 'demo',
+    });
+    await (manager as any).restoreScrollPosition();
+
+    expect((window as any).__wxrd_scroll_restored).toBe(true);
+    expect((manager as any).restoreTimer).toBeNull();
+  });
+
+  it('also skips legacy scroll restoration for a single-column paginator', async () => {
+    invokeMock.mockImplementation(async () => 500);
+    const manager = bareManager({
+      isReaderPage: true,
+      isDoubleColumn: false,
+      isPaginated: true,
+      siteId: 'local',
     });
     await (manager as any).restoreScrollPosition();
 
@@ -108,6 +124,7 @@ describe('AppManager persistence lifecycle', () => {
     const manager = bareManager({
       isReaderPage: true,
       isDoubleColumn: false,
+      isPaginated: false,
       siteId: 'demo',
     });
     await (manager as any).restoreScrollPosition();
@@ -127,6 +144,7 @@ describe('AppManager persistence lifecycle', () => {
     const manager = bareManager({
       isReaderPage: true,
       isDoubleColumn: false,
+      isPaginated: false,
       siteId: 'demo',
     });
     await (manager as any).restoreScrollPosition();

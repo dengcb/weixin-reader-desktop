@@ -11,9 +11,14 @@ import { AUTO_FLIP_POLICY, AutoFlipper } from '../../managers/turner/auto_flippe
 import { CURSOR_POLICY, CursorHider } from '../../managers/turner/cursor_hider';
 import { SWIPE_POLICY, SwipeHandler } from '../../managers/turner/swipe_handler';
 
-const readerContext = (nextPage = mock(() => undefined), prevPage = mock(() => undefined)) => ({
+const readerContext = (
+  nextPage = mock(() => undefined),
+  prevPage = mock(() => undefined),
+  layout: { paginated: boolean; double: boolean } = { paginated: true, double: true },
+) => ({
   isReaderPage: true,
-  isDoubleColumn: true,
+  isDoubleColumn: layout.double,
+  isPaginated: layout.paginated,
   currentRuntime: {
     nextPage,
     prevPage,
@@ -69,6 +74,17 @@ describe('manager behavior regression guards', () => {
     expect(prevPage).toHaveBeenCalledTimes(1);
     expect(nextPage).toHaveBeenCalledTimes(1);
     backward.destroy();
+  });
+
+  it('keeps horizontal page turns enabled for a paginated single-column local reader', () => {
+    const nextPage = mock(() => undefined);
+    const handler = new SwipeHandler(
+      readerContext(nextPage, mock(() => undefined), { paginated: true, double: false }),
+      mock(() => undefined),
+    );
+    window.dispatchEvent(new WheelEvent('wheel', { deltaX: 50, cancelable: true }));
+    expect(nextPage).toHaveBeenCalledTimes(1);
+    handler.destroy();
   });
 
   it('publishes the forward page-turn event when auto flip advances a page', async () => {

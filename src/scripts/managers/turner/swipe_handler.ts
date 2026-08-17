@@ -37,8 +37,8 @@ export class SwipeHandler {
   private handleWheel(e: WheelEvent) {
     if (!this.siteContext.isReaderPage) return;
 
-    // 仅在双栏模式下启用滚轮翻页
-    if (!this.siteContext.isDoubleColumn) return;
+    // 整页分页均支持横向手势；本地单列同样是分页而不是滚动。
+    if (!this.siteContext.isPaginated) return;
 
     const runtime = this.siteContext.currentRuntime;
     if (!runtime) return;

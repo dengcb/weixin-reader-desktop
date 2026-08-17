@@ -1,9 +1,11 @@
 #![allow(unexpected_cfgs)]
 
+use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
-use tauri::{Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 mod commands;
+mod local_books;
 mod menu;
 pub mod monitor;
 mod plugin_installer;
@@ -35,6 +37,7 @@ fn library_protocol_response(path: &str) -> tauri::http::Response<Vec<u8>> {
 
 enum MainStartupTarget {
     Online(String),
+    Local(tauri::Url),
     Library,
 }
 
@@ -128,12 +131,42 @@ fn installed_external_site_ids(app: &tauri::AppHandle) -> Vec<String> {
 }
 
 fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> MainStartupTarget {
+    if selected_startup_site_id(settings) == "local" {
+        if let Some(url) = local_books::resolve_saved_local_url(app, settings) {
+            return MainStartupTarget::Local(url);
+        }
+    }
     let external_site_ids = installed_external_site_ids(app);
     resolve_enabled_startup_url(settings, &external_site_ids, |site_id| {
         sites::resolve_home_url(app, site_id)
     })
     .map(MainStartupTarget::Online)
     .unwrap_or(MainStartupTarget::Library)
+}
+
+pub(crate) fn navigate_away_after_local_history_clear(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let is_local = window
+        .url()
+        .ok()
+        .is_some_and(|url| local_books::is_local_reader_url(&url));
+    if !is_local {
+        return;
+    }
+    let _ = settings::update_setting(app, "sites.local.lastReaderUrl", serde_json::Value::Null);
+    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
+    match main_startup_target(app, &settings) {
+        MainStartupTarget::Online(url) => {
+            if let Ok(url) = url.parse::<tauri::Url>() {
+                let _ = window.navigate(url);
+            }
+        }
+        MainStartupTarget::Local(_) | MainStartupTarget::Library => {
+            let _ = window.navigate(library_page_url());
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -171,12 +204,9 @@ fn navigate_to_enabled_site_when_on_library(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let is_on_library = window
-        .url()
-        .ok()
-        .is_some_and(|current| {
-            current.scheme() == LIBRARY_SCHEME || current.path().ends_with(LIBRARY_PAGE)
-        });
+    let is_on_library = window.url().ok().is_some_and(|current| {
+        current.path().trim_end_matches('/') == LIBRARY_PAGE.trim_end_matches('/')
+    });
     if is_on_library {
         if let Ok(url) = url.parse::<tauri::Url>() {
             let _ = window.navigate(url);
@@ -228,8 +258,21 @@ pub fn run() {
 
     // 远程阅读页运行期间切换到默认页时，直接由专用本地协议返回编译进二进制的
     // 页面内容，避免再次经 Tauri 前端资产协议请求 library.html。
-    builder = builder.register_uri_scheme_protocol(LIBRARY_SCHEME, |_context, request| {
-        library_protocol_response(request.uri().path())
+    builder = builder.register_uri_scheme_protocol(LIBRARY_SCHEME, |context, request| {
+        if request.uri().path() == "/library" {
+            library_protocol_response(request.uri().path())
+        } else {
+            local_books::protocol_response_with_referer(
+                context.app_handle(),
+                context.webview_label(),
+                request.uri().path(),
+                request.uri().query(),
+                request
+                    .headers()
+                    .get("referer")
+                    .and_then(|value| value.to_str().ok()),
+            )
+        }
     });
 
     builder
@@ -246,6 +289,10 @@ pub fn run() {
         .build())
         .plugin(tauri_plugin_updater::Builder::default().build())
         .setup(move |app| {
+            log::info!(
+                target: "frontend",
+                "[LocalBooks] diagnostics protocol_referer_v2"
+            );
             // Register cleanup callback using app.manage() + listen for exit events
             // Tauri v2 doesn't have cleanup(), use window close event instead
             // For menu quit, we handle it in menu.rs custom quit item
@@ -262,11 +309,16 @@ pub fn run() {
                     .unwrap_or_else(|_| settings::default_settings());
                 main_startup_target(app.handle(), &settings)
             };
+            let is_local_page = matches!(&startup_target, MainStartupTarget::Local(_));
             let is_library = matches!(&startup_target, MainStartupTarget::Library);
             let url = match startup_target {
                 MainStartupTarget::Online(url_str) => {
                     println!("[Init] Restoring enabled online site: {}", url_str);
                     WebviewUrl::External(url_str.parse().unwrap())
+                }
+                MainStartupTarget::Local(url) => {
+                    println!("[Init] Restoring local book: {}", url);
+                    WebviewUrl::CustomProtocol(url)
                 }
                 MainStartupTarget::Library => {
                     println!("[Init] No enabled online site, loading local default page");
@@ -306,7 +358,19 @@ pub fn run() {
                 .center()
                 .background_color(Color::from((26, 26, 26))) // #1a1a1a 深灰色，减少启动时白屏闪烁
                 // .initialization_script(console_filter_script)  <-- DISABLED
-                .initialization_script(inject_script);
+                .initialization_script(inject_script)
+                .on_page_load(|window, payload| {
+                    if payload.event() != PageLoadEvent::Finished {
+                        return;
+                    }
+                    let Some(message) = local_books::take_startup_notice() else {
+                        return;
+                    };
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        let _ = window.emit("show-toast", message);
+                    });
+                });
             if let Some(ua) = user_agent {
                 builder = builder.user_agent(ua);
             }
@@ -317,7 +381,7 @@ pub fn run() {
             {
                 let settings = settings::read_settings(app.handle())
                     .unwrap_or_else(|_| settings::default_settings());
-                let zoom = if is_library {
+                let zoom = if is_library || is_local_page {
                     1.0
                 } else {
                     let site_id = selected_startup_site_id(&settings);
@@ -345,6 +409,11 @@ pub fn run() {
 
             // Menu Init - AFTER main window is created
             menu::init(app)?;
+
+            // macOS：退出全屏后恢复 WebView 焦点（编程式全屏会丢失 first responder，
+            // 导致蓝牙遥控器/键盘后续事件无法派发）
+            #[cfg(target_os = "macos")]
+            menu::watch_fullscreen_exit(app.handle());
 
             // 禁用或卸载最后一个在线插件时，立即回到本地默认页，避免继续停留在
             // 已无插件支撑的远程网站；恢复插件时再从默认页回到可用书店。
@@ -400,6 +469,11 @@ pub fn run() {
             settings::patch_settings,
             reading_progress::get_reading_position,
             reading_progress::save_reading_position,
+            local_books::get_local_book,
+            local_books::get_local_reading_progress,
+            local_books::save_local_reading_progress,
+            local_books::local_sha1,
+            local_books::clear_local_history,
             commands::set_title,
             commands::toggle_stealth,
             commands::toggle_menu_bar,

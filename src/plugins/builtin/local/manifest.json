@@ -1,0 +1,26 @@
+{
+  "id": "local",
+  "name": "本地书屋",
+  "version": "1.0.0",
+  "description": "内置 TXT / EPUB 本地阅读兼容能力",
+  "author": "艾特阅读团队",
+  "homepage": "https://github.com/dengcb/weixin-reader-desktop",
+  "sourceType": "local",
+  "renderMode": "custom",
+  "fileTypes": {
+    "extensions": [".txt", ".epub"],
+    "mimeTypes": ["text/plain", "application/epub+zip"]
+  },
+  "capabilities": {
+    "wideMode": true,
+    "hideToolbar": true,
+    "hideNavbar": true,
+    "autoFlip": true,
+    "chapterNav": true,
+    "progressTracker": true,
+    "doubleColumn": true,
+    "hideCursor": true,
+    "remoteControl": true
+  },
+  "builtin": true
+}

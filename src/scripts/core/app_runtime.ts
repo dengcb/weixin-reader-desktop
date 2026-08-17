@@ -27,6 +27,8 @@ export class AppRuntime {
   private reloadQueue: Promise<void> = Promise.resolve();
   private reloadGeneration = 0;
 
+  constructor(private readonly forcedPluginId?: string) {}
+
   async initialize(): Promise<void> {
     if (this.destroyed) return;
     this.pagehideHandler = () => this.destroy();
@@ -37,7 +39,7 @@ export class AppRuntime {
 
     const loader = getPluginLoader();
     for (const factory of builtinPluginFactories) loader.registerBuiltin(factory);
-    await loader.initialize();
+    await loader.initialize(this.forcedPluginId);
     if (this.destroyed) {
       loader.destroy();
       return;

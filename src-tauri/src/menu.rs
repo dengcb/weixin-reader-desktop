@@ -7,6 +7,78 @@ use crate::plugin_manager;
 use crate::settings;
 use crate::sites;
 
+/// macOS：退出全屏后恢复 WKWebView 键盘响应。
+///
+/// 编程式全屏（菜单/遥控器）退出时 NSWindow 的 firstResponder 不再是
+/// WKWebView：组合键（Cmd 系）走 key equivalents 仍可触发菜单，但单键
+/// （遥控器 Enter/PageUp/方向键）走 responder chain，全部丢失（NSBeep）。
+///
+/// DOM 元素 focus 和 set_focus（makeKeyAndOrderFront）都改不了
+/// firstResponder（实证无效）。唯一有效的是 wry 内部 focus() 做的
+/// `window.makeFirstResponder(wkwebview)`，但 Tauri 2.11 未暴露该 API，
+/// 只能用 objc 直接调：从 contentView 子视图里找到 WKWebView 实例，
+/// 调 makeFirstResponder。
+///
+/// 时机：退出全屏完成后（windowDidExitFullscreen 后的第二次 Resized），
+/// 在 NSWindow 层直接设置，不受页面布局影响。
+#[cfg(target_os = "macos")]
+pub fn watch_fullscreen_exit<R: Runtime>(app: &AppHandle<R>) {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    // 0=未全屏 1=全屏中 2=已退出全屏待聚焦
+    static FS_STATE: AtomicU8 = AtomicU8::new(0);
+
+    if let Some(win) = app.get_webview_window("main") {
+        let win_clone = win.clone();
+        win.on_window_event(move |event| {
+            if let tauri::WindowEvent::Resized(_) = event {
+                let is_fs = win_clone.is_fullscreen().unwrap_or(false);
+                let prev = FS_STATE.swap(if is_fs { 1 } else { 0 }, Ordering::SeqCst);
+                if !is_fs && prev == 1 {
+                    // 全屏→非全屏转换：等下一次 Resized（windowDidExitFullscreen
+                    // 里 tao 会 emit_resize_event）再聚焦，确保动画完全结束
+                    FS_STATE.store(2, Ordering::SeqCst);
+                } else if !is_fs && prev == 2 {
+                    // 第二次 Resized：全屏退出流程彻底完成，恢复 first responder
+                    FS_STATE.store(0, Ordering::SeqCst);
+                    make_webview_first_responder(&win_clone);
+                }
+            }
+        });
+    }
+}
+
+/// 遍历 main 窗口 contentView 子视图找到 WKWebView，调 makeFirstResponder。
+/// 等价于 wry WebView::focus()（Tauri 2.11 未暴露）。
+#[cfg(target_os = "macos")]
+fn make_webview_first_responder<R: Runtime>(win: &tauri::WebviewWindow<R>) {
+    #![allow(non_camel_case_types)]
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    type id = *mut Object;
+
+    let Ok(ns_window_ptr) = win.ns_window() else { return };
+    let ns_window = ns_window_ptr as id;
+    if ns_window.is_null() { return; }
+
+    unsafe {
+        let content_view: id = msg_send![ns_window, contentView];
+        if content_view.is_null() { return }
+        let subviews: id = msg_send![content_view, subviews];
+        if subviews.is_null() { return }
+        let count: usize = msg_send![subviews, count];
+        let wk_class = class!(WKWebView);
+        for i in 0..count {
+            let view: id = msg_send![subviews, objectAtIndex: i];
+            let is_wk: bool = msg_send![view, isKindOfClass: wk_class];
+            if is_wk {
+                let _: () = msg_send![ns_window, makeFirstResponder: view];
+                return;
+            }
+        }
+    }
+}
+
 /// Chrome 风格的缩放级别
 const ZOOM_LEVELS: [f64; 11] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
@@ -159,12 +231,11 @@ fn get_plugin_site_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> Vec<Plugin
     items
 }
 
-/// 构建「书店」子菜单
-/// 仅当存在至少一个外部插件站点时返回 Some；微信读书已禁用时不显示其菜单项。
-/// 子项: 已启用微信读书（若有）+ 每个已启用外部插件站点。
+/// 构建「书店」子菜单。
+/// 在线站点保持现有顺序；最后固定追加「自家书屋」，不把本地阅读提升为顶级入口。
 /// 使用 CheckMenuItem，当前站点(current_site_id)前面显示对勾
-fn build_bookstore_menu<R: Runtime, M: tauri::Manager<R>>(
-    manager: &M,
+fn build_bookstore_menu<R: Runtime>(
+    manager: &tauri::AppHandle<R>,
     plugin_sites: &[PluginSiteMenuItem],
     current_site_id: &str,
     weread_enabled: bool,
@@ -174,10 +245,8 @@ fn build_bookstore_menu<R: Runtime, M: tauri::Manager<R>>(
         current_site_id,
         plugin_sites.len()
     );
-    if plugin_sites.is_empty() {
-        return Ok(None);
-    }
     let menu = Submenu::new(manager, "书店", true)?;
+    let mut online_count = 0usize;
     if weread_enabled {
         let weread_item = CheckMenuItem::with_id(
             manager,
@@ -188,6 +257,7 @@ fn build_bookstore_menu<R: Runtime, M: tauri::Manager<R>>(
             None::<&str>,
         )?;
         menu.append(&weread_item)?;
+        online_count += 1;
     }
     let target_id = format!("switch_site_{}", current_site_id);
     for site in plugin_sites {
@@ -201,7 +271,39 @@ fn build_bookstore_menu<R: Runtime, M: tauri::Manager<R>>(
             None::<&str>,
         )?;
         menu.append(&item)?;
+        online_count += 1;
     }
+
+    if online_count > 0 {
+        menu.append(&PredefinedMenuItem::separator(manager)?)?;
+    }
+    let local_menu = Submenu::new(manager, "自家书屋", true)?;
+    let open_item = MenuItem::with_id(
+        manager,
+        "open_local_book",
+        "打开本地图书…",
+        true,
+        None::<&str>,
+    )?;
+    local_menu.append(&open_item)?;
+
+    let recent = crate::local_books::list_recent(manager);
+    if !recent.is_empty() {
+        local_menu.append(&PredefinedMenuItem::separator(manager)?)?;
+        let current_book_id = crate::local_books::current_book_id(manager);
+        for book in recent {
+            let item = CheckMenuItem::with_id(
+                manager,
+                format!("open_local_book_{}", book.book_id),
+                &book.title,
+                true,
+                current_book_id.as_deref() == Some(book.book_id.as_str()),
+                None::<&str>,
+            )?;
+            local_menu.append(&item)?;
+        }
+    }
+    menu.append(&local_menu)?;
     Ok(Some(menu))
 }
 
@@ -223,11 +325,7 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
     let is_same_site = site_id == current;
 
     // Rust 端直接写入 lastSiteId
-    let _ = crate::settings::update_setting(
-        app,
-        "global.lastSiteId",
-        serde_json::json!(site_id)
-    );
+    let _ = crate::settings::update_setting(app, "global.lastSiteId", serde_json::json!(site_id));
 
     // 立即更新书店菜单对勾
     let target = tauri::menu::MenuId::from(format!("switch_site_{}", site_id).as_str());
@@ -240,6 +338,15 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
                             for it in sub_items.iter() {
                                 if let Some(check) = it.as_check_menuitem() {
                                     let _ = check.set_checked(*it.id() == target);
+                                }
+                                if let Some(nested) = it.as_submenu() {
+                                    if let Ok(nested_items) = nested.items() {
+                                        for nested_item in nested_items {
+                                            if let Some(check) = nested_item.as_check_menuitem() {
+                                                let _ = check.set_checked(false);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -257,14 +364,16 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
     // 新页面确认进入正文前，不允许旧站点能力残留在菜单中
     disable_reader_menu_items(app);
 
-    let settings = crate::settings::read_settings(app)
-        .unwrap_or_else(|_| crate::settings::default_settings());
-    let remember_page = settings.get("global")
+    let settings =
+        crate::settings::read_settings(app).unwrap_or_else(|_| crate::settings::default_settings());
+    let remember_page = settings
+        .get("global")
         .and_then(|g| g.get("lastPage"))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     let target = if remember_page {
-        settings.get("sites")
+        settings
+            .get("sites")
             .and_then(|s| s.get(site_id))
             .and_then(|s| s.get("lastReaderUrl"))
             .and_then(|u| u.as_str())
@@ -276,7 +385,9 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
     if let Some(url) = target {
         if let Some(win) = app.get_webview_window("main") {
             match url.parse::<tauri::Url>() {
-                Ok(u) => { let _ = win.navigate(u); }
+                Ok(u) => {
+                    let _ = win.navigate(u);
+                }
                 Err(e) => eprintln!("[Bookstore] Invalid URL '{}': {:?}", url, e),
             }
         }
@@ -377,12 +488,12 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) {
         }
         "back" => {
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.eval("window.history.back()");
+                let _ = win.eval("window.__ATREADER_RUNTIME__?.back ? window.__ATREADER_RUNTIME__.back() : window.history.back()");
             }
         }
         "forward" => {
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.eval("window.history.forward()");
+                let _ = win.eval("window.__ATREADER_RUNTIME__?.forward ? window.__ATREADER_RUNTIME__.forward() : window.history.forward()");
             }
         }
         "reader_wide" => {
@@ -453,6 +564,8 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) {
                         let _ = win.show_menu();
                         crate::commands::sync_menu_hidden_for_fullscreen(false);
                     }
+                    // macOS first responder 恢复由 watch_fullscreen_exit 负责
+                    //（objc makeFirstResponder，此处立即聚焦会被全屏动画冲掉）
                 }
             }
         }
@@ -466,12 +579,16 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) {
                 if let Some(win) = app_clone.get_webview_window("settings") {
                     let _ = win.set_focus();
                 } else {
-                     let _ = WebviewWindowBuilder::new(&app_clone, "settings", WebviewUrl::App("settings.html".into()))
-                        .title("设置")
-                        .inner_size(720.0, 600.0)
-                        .center()
-                        .resizable(false)
-                        .build();
+                    let _ = WebviewWindowBuilder::new(
+                        &app_clone,
+                        "settings",
+                        WebviewUrl::App("settings.html".into()),
+                    )
+                    .title("设置")
+                    .inner_size(720.0, 600.0)
+                    .center()
+                    .resizable(false)
+                    .build();
                 }
             });
         }
@@ -532,7 +649,13 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单\tCtrl+H", true, None::<&str>)?,
+            &MenuItem::with_id(
+                handle,
+                "toggle_menu",
+                "隐藏菜单\tCtrl+H",
+                true,
+                None::<&str>,
+            )?,
             &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
@@ -638,7 +761,7 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
     }
     window_menu.append(&close_window)?;
 
-    // 书店菜单（仅当存在外部插件站点时出现）
+    // 书店菜单：保持在线书店，并固定包含二级「自家书屋」入口。
     let plugin_sites = get_plugin_site_items(handle);
     let settings = settings::read_settings(handle).unwrap_or_else(|_| settings::default_settings());
     let bookstore_menu = build_bookstore_menu(
@@ -746,7 +869,13 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         &[
             &settings,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "toggle_menu", "隐藏菜单\tCtrl+H", true, None::<&str>)?,
+            &MenuItem::with_id(
+                handle,
+                "toggle_menu",
+                "隐藏菜单\tCtrl+H",
+                true,
+                None::<&str>,
+            )?,
             &MenuItem::with_id(handle, "stealth", "摸鱼", true, Some("CmdOrCtrl+`"))?,
             &PredefinedMenuItem::separator(handle)?,
             &quit,
@@ -866,7 +995,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     }
     window_menu.append(&close_window)?;
 
-    // 书店菜单（仅当存在外部插件站点时出现）
+    // 书店菜单：保持在线书店，并固定包含二级「自家书屋」入口。
     let plugin_sites = get_plugin_site_items(handle);
     let settings = settings::read_settings(handle).unwrap_or_else(|_| settings::default_settings());
     let bookstore_menu = build_bookstore_menu(
@@ -1000,6 +1129,18 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 std::process::exit(0);
             }
             _ => {
+                if id == "open_local_book" {
+                    crate::local_books::open_dialog(app);
+                    return;
+                }
+                if let Some(book_id) = id.strip_prefix("open_local_book_") {
+                    if let Err(error) = crate::local_books::open_book_by_id(app, book_id) {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("show-toast", error);
+                        }
+                    }
+                    return;
+                }
                 // 书店站点切换：菜单点击和快捷键共用 switch_to_site
                 if id.starts_with("switch_site_") {
                     if let Some(site_id) = id.strip_prefix("switch_site_") {
@@ -1184,12 +1325,5 @@ mod tests {
                 hide_cursor: false,
             }
         );
-    }
-
-    #[test]
-    fn bookstore_menu_is_absent_without_external_sites() {
-        let app = tauri::test::mock_app();
-        let menu = build_bookstore_menu(app.handle(), &[], "weread", true).unwrap();
-        assert!(menu.is_none());
     }
 }
