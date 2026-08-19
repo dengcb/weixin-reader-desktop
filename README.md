@@ -2,7 +2,9 @@
 
 <img src="title.svg" width="480">
 
-### 🚀 基于 Tauri v2 + Rust 的高性能微信读书桌面客户端
+### 🚀 艾特阅读 · 基于 Tauri v2 + Rust 的高性能多站点桌面阅读客户端
+
+**官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB 电子书**
 
 <p>
   <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.5.0-orange?style=flat-square" alt="Release"></a>
@@ -121,7 +123,7 @@ CPU 占用低
 
 ```
 ✓ 支持 .atrd 插件包安装/卸载     ✓ 微信读书作为内置默认插件
-✓ 标准化插件开发接口             ✓ 预留本地阅读(EPUB/TXT)能力
+✓ 标准化插件开发接口             ✓ 内置本地阅读(EPUB/TXT)插件
 ✓ 插件级命名空间隔离             ✓ 配置命名空间与独立阅读位置
 ```
 
@@ -167,7 +169,17 @@ CPU 占用低
 ```
 ✓ 外部插件运行时加载               ✓「书店」菜单站内切换 + 当前站对勾
 ✓ 每个书店独立记住阅读进度          ✓ 卸载重装进度自动接回
-✓ macOS 拦第三方追踪域名           ✓ 番茄小说作为官方插件开发范例
+✓ macOS 拦第三方追踪域名           ✓ 番茄小说官方插件内置支持
+```
+
+### 📚 本地电子书阅读
+
+> 内置「本地书屋」：TXT / EPUB 开箱即读，文件不出本机
+
+```
+✓ TXT 中文章节智能切分             ✓ EPUB 多级目录折叠导航
+✓ 双栏/单列切换与排版自定义        ✓ 阅读进度与章节位置记忆
+✓ 深浅主题自由切换                 ✓ 沙箱渲染，禁用书籍内脚本
 ```
 
 ### 🔄 智能更新
@@ -468,7 +480,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 ## ⚠ 免责声明
 
-> 本项目仅为个人学习和使用的第三方客户端，与腾讯公司及微信读书团队无任何关联
+> 本项目仅为个人学习和使用的第三方客户端，与腾讯公司及微信读书团队、字节跳动公司及番茄小说团队均无任何关联
 
 <table>
 <colgroup>
@@ -491,9 +503,9 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 ### 🗄 数据来源
 
-所有内容均通过官方接口<br>
-**weread.qq.com**<br>
-直接加载
+网页内容由官方站点直接加载<br>
+**weread.qq.com · fanqienovel.com**<br>
+本地电子书仅读取本机文件
 &emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;
 
 </td>
