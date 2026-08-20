@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>艾特阅读 · 微信读书桌面客户端</title>
-<meta name="description" content="基于 Tauri v2 + Rust 的高性能微信读书桌面客户端，极致轻量、原生体验">
+<title>艾特阅读 · 多站点桌面阅读客户端</title>
+<meta name="description" content="基于 Tauri v2 + Rust 的高性能多站点桌面阅读客户端，官方支持微信读书、番茄小说与本地 TXT / EPUB 电子书，极致轻量、原生体验">
 <link rel="icon" type="image/png" href="logo.png">
 <link rel="apple-touch-icon" href="logo.png">
 <style>
@@ -414,15 +414,13 @@ body::before{
       <img src="logo.png" alt="艾特阅读" class="hero-logo">
       <h1>艾特阅读</h1>
     </div>
-    <p class="hero-tag">基于 Tauri v2 + Rust 的高性能微信读书桌面客户端</p>
+    <p class="hero-tag">基于 Tauri v2 + Rust 的高性能多站点桌面阅读客户端</p>
     <p class="hero-sub">
-      <span>极致轻量 ~5MB</span>
+      <span>微信读书 · 番茄小说 · 本地电子书</span>
       <span class="dot">·</span>
-      <span>原生性能</span>
+      <span>极致轻量 ~5MB · 原生性能</span>
       <span class="dot">·</span>
-      <span>完全开源</span>
-      <span class="dot">·</span>
-      <span>macOS</span>
+      <span>完全开源 · macOS / Windows</span>
     </p>
 
     <div class="download-area">
@@ -505,6 +503,14 @@ body::before{
       </div>
       <div class="highlight-item">
         <span class="mark">✦</span>
+        <span class="text"><strong>本地书屋</strong> · TXT / EPUB 开箱即读</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
+        <span class="text"><strong>多级目录</strong> · 折叠导航快速跳章</span>
+      </div>
+      <div class="highlight-item">
+        <span class="mark">✦</span>
         <span class="text"><strong>插件系统</strong> · 可插拔第三方适配器</span>
       </div>
       <div class="highlight-item">
@@ -527,11 +533,11 @@ body::before{
       <div class="plugin-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="36" height="36"><circle cx="50" cy="58" r="38" fill="#F44336"/><path d="M32 45 C35 38 45 36 50 38 C42 40 36 46 32 55 Z" fill="#FFCDD2" opacity="0.6"/><path d="M50 25 C42 18 30 18 25 22 C32 28 42 28 47 28 Z" fill="#4CAF50"/><path d="M50 25 C58 18 70 18 75 22 C68 28 58 28 53 28 Z" fill="#4CAF50"/><path d="M50 26 C50 15 47 10 50 8 C53 10 50 15 50 26 Z" fill="#388E3C"/></svg></div>
       <div class="plugin-info">
         <h3>番茄小说</h3>
-        <p class="plugin-desc">官方范例插件，完整实现双栏分页、宽屏模式、工具栏隐藏、章节导航和阅读进度追踪。</p>
+        <p class="plugin-desc">官方内置插件，完整实现双栏分页、宽屏模式、工具栏隐藏、章节导航和阅读进度追踪。</p>
         <div class="plugin-tags">
           <span class="plugin-tag">fanqienovel.com</span>
           <span class="plugin-tag">双栏分页</span>
-          <span class="plugin-tag">官方范例</span>
+          <span class="plugin-tag">官方内置</span>
         </div>
       </div>
       <a class="plugin-download" href="https://github.com/dengcb/weixin-reader-desktop/raw/main/plugins/fanqie.atrd">下载插件</a>
