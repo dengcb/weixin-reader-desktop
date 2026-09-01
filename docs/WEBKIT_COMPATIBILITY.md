@@ -10,9 +10,12 @@
    - 正则 lookbehind（`(?<=` / `(?<!`）：Safari **16.4+** 才支持。旧引擎把 `(?<=` 误读为命名捕获组开头，报极具误导性的 `SyntaxError: invalid group specifier name`，且正则字面量在脚本解析阶段即求值——**整个脚本阵亡，整页白屏/永远 loading**。禁止。
    - 非 ASCII 命名捕获组（如 `(?<中文>`）：同为 Safari 16.4+。ASCII 命名组（Safari 10.1+）可用。
    - `.at()` / `findLast` / `structuredClone` / `Object.hasOwn` / `crypto.randomUUID`：Safari 15.4+，使用前自查。
-   - `Promise.withResolvers`：Safari 17.4+，禁止。
-   - `toSorted` / `toReversed` / `Array.prototype.with`：Safari 16+，避免。
-3. **构建守卫**：`scripts/build-local-reader.ts` 与 `scripts/build-inject.ts` 构建后扫描产物中 `(?<` 后非 ASCII 字母的形态（覆盖 lookbehind 与非 ASCII 组名），发现即构建失败。字符串字面量误报时改写为 `'\\(\\?<'` 拼接规避（注意必须是双反斜杠：JS 字符串里单反斜杠会被吞，求值后仍是 `(?<`，照样被拦），**不要移除守卫**。守卫非完备，已知限制：动态拼接（如 `'(?' + '<='`）扫不到；`(?<_x>` / `(?<$x>` 这类 `_`/`$` 开头的合法 ASCII 组名会被保守误拦（fail-safe 取向），届时改组名或拼接规避。
+   - `Promise.withResolvers`：Safari 17.4+，禁止（已纳入构建守卫）。
+   - `Object.groupBy` / `Map.groupBy`：Safari **17.4+**，禁止（已纳入构建守卫）。foliate-js 曾在 EPUB 元数据解析中使用，见事故二。
+   - `AbortSignal.any` / `Promise.try` / `RegExp.escape` / `Array.fromAsync`：Safari 17.4+/18+，禁止（已纳入构建守卫）。
+   - `toSorted` / `toReversed` / `Array.prototype.with`：Safari 16+，禁止（已纳入构建守卫）。
+   - Set methods（`intersection` / `union` / `symmetricDifference` 等）：Safari 17+，避免（守卫未收录：`.union(` 误报率高，靠自查）。
+3. **构建守卫**：`scripts/build-local-reader.ts` 与 `scripts/build-inject.ts` 构建后双重扫描产物：① `(?<` 后非 ASCII 字母形态（lookbehind 与非 ASCII 组名，parse 期崩溃）；② API 黑名单（`Object.groupBy` / `Map.groupBy` / `withResolvers` 等，运行期崩溃），发现即构建失败。字符串字面量误报时改写为 `'\\(\\?<'` 拼接规避（注意必须是双反斜杠：JS 字符串里单反斜杠会被吞，求值后仍是 `(?<`，照样被拦），**不要移除守卫**。守卫非完备，已知限制：动态拼接（如 `'(?' + '<='`）扫不到；`(?<_x>` / `(?<$x>` 这类 `_`/`$` 开头的合法 ASCII 组名会被保守误拦（fail-safe 取向），届时改组名或拼接规避；黑名单仅覆盖确定性高、误报低的 API。
 4. **别指望 target 兜底**：`bun build --target=browser` 只区分运行环境、不做语法降级（esnext 直出）；esbuild 的 target 检查也**不覆盖 lookbehind**（本事故即因此漏网）。兼容性靠上述红线 + 构建守卫保障。
 5. **升级 foliate-js 时**：上游面向现代浏览器，可能引入新的 WebKit 门槛。升级后跑 `bun run build` 让守卫把关，并抽验 `.replace`/正则类改动。
 
@@ -40,6 +43,18 @@ JavaScriptCore 直到 16.4 才支持 lookbehind，但命名捕获组早已支持
 ```
 
 语义等价：前置字符消耗后回填；`-epub-` 为固定字面量，匹配不重叠；字符串开头的 `-epub-`（无前置字符）两版本同样不匹配。
+
+## 事故二（2026-09-01 同日，发布后复发）
+
+**现象**：lookbehind 修复版发布后，同一台 macOS 12.7.4 机器升级新包，EPUB 报 `undefined is not a function (near '...Object.groupBy...')`。
+
+**根因**：foliate-js 的 `epub.js` 在 OPF 元数据解析（`getMetadata`）中使用了 `Object.groupBy`（4 处）与 `Map.groupBy`（1 处）——Safari **17.4+** 才提供，旧 WebKit 上为 `undefined`。这是**运行期**错误（脚本 parse 已通过），只扫语法形态的守卫拦不住；且首轮 API 扫描清单漏了 groupBy 族，本机 Safari 17+ 也测不出来。
+
+**修复**：`epub.js` 顶部加 `[atreader patch]` 本地实现并替换全部 5 处调用：`groupToObject`（返回 null 原型对象——分组键来自 OPF 元素 localName，恶意书可构造 `toString` 等键名，null 原型避免原型链污染；空字符串键按规范保留）与 `groupToMap`（返回真 Map——`refines` 缺失时键为 `null`，须任意类型键）。语义经边界单测（原型键、空键、null 键、插入顺序、index 传参、与原生输出对照）验证等价。
+
+**守卫加固**：构建守卫从单一语法扫描升级为「语法 + API 黑名单」双重扫描（`Object.groupBy` / `Map.groupBy` / `withResolvers` / `AbortSignal.any` / `Promise.try` / `RegExp.escape` / `Array.fromAsync` / `.toSorted(` / `.toReversed(` / `.toSpliced(`）。
+
+**教训**：禁用清单靠人工记忆不可靠（首轮就漏了 groupBy）——能固化的清单必须进构建守卫；发布前必须用旧系统真机（或日志回传）验证，本机新系统测不出旧系统问题。
 
 **快速判读表**（本地图书打不开时看日志断点）：
 

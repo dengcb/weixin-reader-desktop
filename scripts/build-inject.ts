@@ -18,6 +18,26 @@ const assertWebkitCompatible = (label: string, code: string): void => {
       `${label} 含旧 WebKit（Safari < 16.4）无法解析的正则语法（lookbehind 或非 ASCII 命名组），已中止。详见 docs/WEBKIT_COMPATIBILITY.md`,
     );
   }
+  // Safari < 17.4 及其他缺失 API 黑名单（完整清单见 docs/WEBKIT_COMPATIBILITY.md）。
+  // 字符串字面量误报时改写拼接规避，不要移除守卫。
+  for (const api of [
+    'Object.groupBy',
+    'Map.groupBy',
+    'withResolvers',
+    'AbortSignal.any',
+    'Promise.try',
+    'RegExp.escape',
+    'Array.fromAsync',
+    '.toSorted(',
+    '.toReversed(',
+    '.toSpliced(',
+  ]) {
+    if (code.includes(api)) {
+      throw new Error(
+        `${label} 含旧 WebKit 缺失的 API：${api}（Safari 17.4+ / 16+），已中止。详见 docs/WEBKIT_COMPATIBILITY.md 禁用清单`,
+      );
+    }
+  }
 };
 
 try {

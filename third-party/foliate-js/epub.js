@@ -13,6 +13,34 @@ const NS = {
     SMIL: 'http://www.w3.org/ns/SMIL',
 }
 
+// [atreader patch] 上游使用 Object.groupBy / Map.groupBy，Safari 17.4+ 才提供；
+// 旧 WebKit（如 macOS 12 的 WKWebView 15.x）上为 undefined，EPUB 解析直接失败。
+// 以下为语义等价的本地实现，仅替代本文件内的 groupBy 调用。
+// groupToObject 返回 null 原型对象：分组键来自 OPF 元素 localName（恶意书可构造
+// 'toString' 之类键名），null 原型避免原型链污染；空字符串键按规范保留。
+const groupToObject = (items, callback) => {
+    const result = Object.create(null)
+    let index = 0
+    for (const item of items) {
+        const key = String(callback(item, index++))
+        if (key in result) result[key].push(item)
+        else result[key] = [item]
+    }
+    return result
+}
+// groupToMap 返回真 Map：分组键为任意值（如缺失 refines 属性时的 null）。
+const groupToMap = (items, callback) => {
+    const result = new Map()
+    let index = 0
+    for (const item of items) {
+        const key = callback(item, index++)
+        const group = result.get(key)
+        if (group) group.push(item)
+        else result.set(key, [item])
+    }
+    return result
+}
+
 const MIME = {
     XML: 'application/xml',
     NCX: 'application/x-dtbncx+xml',
@@ -175,7 +203,7 @@ const getMetadata = opf => {
     const $metadata = $(opf.documentElement, 'metadata')
 
     // first pass: convert to JS objects
-    const els = Object.groupBy($metadata.children, el =>
+    const els = groupToObject($metadata.children, el =>
         el.namespaceURI === NS.DC ? 'dc'
         : el.namespaceURI === NS.OPF && el.localName === 'meta' ?
             (el.hasAttribute('name') ? 'legacyMeta' : 'meta') : '')
@@ -197,13 +225,13 @@ const getMetadata = opf => {
                 .map(attr => [attr.localName, attr.value])),
         }
     }
-    const refines = Map.groupBy(els.meta ?? [], el => el.getAttribute('refines'))
+    const refines = groupToMap(els.meta ?? [], el => el.getAttribute('refines'))
     const getProperties = el => {
         const els = refines.get(el ? '#' + el.getAttribute('id') : null)
         if (!els) return null
-        return Object.groupBy(els.map(parse), x => x.property)
+        return groupToObject(els.map(parse), x => x.property)
     }
-    const dc = Object.fromEntries(Object.entries(Object.groupBy(els.dc, el => el.localName))
+    const dc = Object.fromEntries(Object.entries(groupToObject(els.dc, el => el.localName))
         .map(([name, els]) => [name, els.map(parse)]))
     const properties = getProperties() ?? {}
     const legacyMeta = Object.fromEntries(els.legacyMeta?.map(el =>
@@ -255,7 +283,7 @@ const getMetadata = opf => {
         }
         return value
     }
-    const belongsTo = Object.groupBy(properties['belongs-to-collection'] ?? [],
+    const belongsTo = groupToObject(properties['belongs-to-collection'] ?? [],
         x => prop(x, 'collection-type') === 'series' ? 'series' : 'collection')
     const mainTitle = dc.title?.find(x => prop(x, 'title-type') === 'main') ?? dc.title?.[0]
     const metadata = {
