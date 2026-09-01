@@ -154,6 +154,25 @@ pub fn focus_pending_plugin_install(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 路径扩展名是否为插件安装包（.atrd，大小写不敏感）。
+pub fn is_atrd_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("atrd"))
+}
+
+/// 请求安装插件包，失败时弹出系统错误对话框。
+/// 双击关联文件、命令行参数、窗口拖拽三个入口共用。
+pub fn try_request_plugin_install(app: &AppHandle, path: &Path) {
+    if let Err(error) = request_plugin_install(app, path) {
+        app.dialog()
+            .message(format!("无法打开插件包：\n{error}"))
+            .title("插件安装失败")
+            .kind(MessageDialogKind::Error)
+            .show(|_| {});
+    }
+}
+
 fn path_from_argument(argument: &str, cwd: &Path) -> Option<PathBuf> {
     let value = argument.trim();
     let raw = if value.starts_with("file://") {
@@ -166,11 +185,7 @@ fn path_from_argument(argument: &str, cwd: &Path) -> Option<PathBuf> {
     } else {
         cwd.join(raw)
     };
-    let is_atrd = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("atrd"));
-    is_atrd.then_some(path)
+    is_atrd_path(&path).then_some(path)
 }
 
 pub fn handle_external_arguments(app: &AppHandle, arguments: &[String], cwd: &Path) {
@@ -180,13 +195,7 @@ pub fn handle_external_arguments(app: &AppHandle, arguments: &[String], cwd: &Pa
     else {
         return;
     };
-    if let Err(error) = request_plugin_install(app, &path) {
-        app.dialog()
-            .message(format!("无法打开插件包：\n{error}"))
-            .title("插件安装失败")
-            .kind(MessageDialogKind::Error)
-            .show(|_| {});
-    }
+    try_request_plugin_install(app, &path);
 }
 
 pub fn handle_opened_urls(app: &AppHandle, urls: &[tauri::Url]) {
@@ -194,21 +203,11 @@ pub fn handle_opened_urls(app: &AppHandle, urls: &[tauri::Url]) {
         (url.scheme() == "file")
             .then(|| url.to_file_path().ok())
             .flatten()
-            .filter(|path| {
-                path.extension()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("atrd"))
-            })
+            .filter(|path| is_atrd_path(path))
     }) else {
         return;
     };
-    if let Err(error) = request_plugin_install(app, &path) {
-        app.dialog()
-            .message(format!("无法打开插件包：\n{error}"))
-            .title("插件安装失败")
-            .kind(MessageDialogKind::Error)
-            .show(|_| {});
-    }
+    try_request_plugin_install(app, &path);
 }
 
 #[tauri::command]

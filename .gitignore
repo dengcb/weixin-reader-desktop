@@ -46,9 +46,11 @@ release
 
 # Editor directories and files
 contexts
+AGENTS.md
 CLAUDE.md
 .claude
 .trae
+.zcode
 .vscode/*
 !.vscode/extensions.json
 .idea

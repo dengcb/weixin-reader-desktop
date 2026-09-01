@@ -26,10 +26,12 @@ import {
 } from './pagination';
 
 const PREVIOUS_CHAPTER_FLAG = 'atreader-fanqie-open-previous-at-end';
-const PREVIOUS_CHAPTER_FLAG_TTL = 15_000;
+const CHAPTER_START_FLAG = 'atreader-fanqie-open-chapter-at-start';
+const CHAPTER_NAVIGATION_FLAG_TTL = 15_000;
 const WHEEL_THRESHOLD = 56;
 const WHEEL_RESET_MS = 220;
 const WHEEL_COOLDOWN_MS = 520;
+const SCROLLABLE_OVERFLOW_Y = new Set(['auto', 'scroll', 'overlay']);
 const LAYOUT_PREFERENCE_KEY = 'double-column-enabled';
 
 const SINGLE_COLUMN_ICON = `
@@ -300,7 +302,9 @@ export class FanqiePlugin implements ReaderPlugin {
       this.api?.toast.show('上一章');
       event.preventDefault();
       event.stopImmediatePropagation();
-      sessionStorage.setItem(PREVIOUS_CHAPTER_FLAG, String(Date.now()));
+      // 显式跳章应落在上一章开头（与微信读书、目录跳转一致）；
+      // ← 在本章第一页的翻页溢出才落上一章结尾（PREVIOUS_CHAPTER_FLAG）。
+      sessionStorage.setItem(CHAPTER_START_FLAG, String(Date.now()));
       this.triggerChapterNavigation('ArrowLeft');
     } else if (
       keyMatches('ArrowDown')
@@ -316,6 +320,7 @@ export class FanqiePlugin implements ReaderPlugin {
   private readonly handleWheel = (event: WheelEvent): void => {
     if (!this.paginator?.isActive() || event.ctrlKey || event.metaKey) return;
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    if (this.isWithinNativeScrollArea(event.target)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (this.wheelCooldown || Math.abs(event.deltaY) < 1) return;
@@ -337,6 +342,27 @@ export class FanqiePlugin implements ReaderPlugin {
       this.wheelCooldown = false;
     }, WHEEL_COOLDOWN_MS);
   };
+
+  /// 章节目录等原生弹窗浮在正文上层时，滚轮应滚动弹窗自身的列表。
+  /// 本插件的 wheel 监听在 window capture 阶段先于弹窗拿到事件，若不在此
+  /// 放行，preventDefault 会吞掉弹窗的原生滚动并变成翻页（“滚动穿透”）。
+  /// 判定不依赖番茄弹窗的具体选择器：目标到 body 之间存在纵向可滚动
+  /// （overflow-y 为 auto/scroll/overlay 且实际溢出）的祖先即视为弹窗内部。
+  private isWithinNativeScrollArea(target: EventTarget | null): boolean {
+    // 用 nodeType 而非 instanceof Element 判定元素节点，兼容宿主未暴露
+    // Element 全局的注入环境（测试运行时）。
+    const start = target && (target as Node).nodeType === Node.ELEMENT_NODE
+      ? target as Element
+      : null;
+    for (let node = start; node; node = node.parentElement) {
+      const overflowY = window.getComputedStyle(node).overflowY;
+      if (SCROLLABLE_OVERFLOW_Y.has(overflowY) && node.scrollHeight > node.clientHeight) {
+        return true;
+      }
+      if (node === document.body) return false;
+    }
+    return false;
+  }
 
   private triggerChapterNavigation(key: 'ArrowLeft' | 'ArrowRight'): void {
     const event = new KeyboardEvent('keydown', {
@@ -564,8 +590,13 @@ export class FanqiePlugin implements ReaderPlugin {
     const generation = ++this.restoreGeneration;
     this.positionReady = false;
 
-    if (this.consumePreviousChapterFlag()) {
+    // 章首：分页器章节重置后默认就在第一页，跳过进度恢复即可；
+    // 章尾：← 翻页溢出的连续阅读流，显式请求落在最后一页。
+    const openMode = this.consumeChapterOpenMode();
+    if (openMode === 'end') {
       paginator.requestOpenAtEnd();
+    }
+    if (openMode !== null) {
       this.positionReady = true;
       return;
     }
@@ -581,13 +612,22 @@ export class FanqiePlugin implements ReaderPlugin {
       });
   }
 
-  private consumePreviousChapterFlag(): boolean {
-    const raw = sessionStorage.getItem(PREVIOUS_CHAPTER_FLAG);
+  /// 消费章节打开模式标记：两个标记互斥，读取时一并清空，
+  /// 防止 15 秒 TTL 内先后触发“跳章”和“翻页溢出”时旧标记误伤下一次章节加载。
+  private consumeChapterOpenMode(): 'start' | 'end' | null {
+    const startRaw = sessionStorage.getItem(CHAPTER_START_FLAG);
+    const endRaw = sessionStorage.getItem(PREVIOUS_CHAPTER_FLAG);
+    sessionStorage.removeItem(CHAPTER_START_FLAG);
     sessionStorage.removeItem(PREVIOUS_CHAPTER_FLAG);
-    const timestamp = Number(raw);
-    return Number.isFinite(timestamp)
-      && timestamp > 0
-      && Date.now() - timestamp <= PREVIOUS_CHAPTER_FLAG_TTL;
+    const isFresh = (raw: string | null): boolean => {
+      const timestamp = Number(raw);
+      return Number.isFinite(timestamp)
+        && timestamp > 0
+        && Date.now() - timestamp <= CHAPTER_NAVIGATION_FLAG_TTL;
+    };
+    if (isFresh(startRaw)) return 'start';
+    if (isFresh(endRaw)) return 'end';
+    return null;
   }
 
   private getChapterKey(): string {

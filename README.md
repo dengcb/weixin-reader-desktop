@@ -7,7 +7,7 @@
 **官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB 电子书**
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.6.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.7.0-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -180,6 +180,7 @@ CPU 占用低
 ✓ TXT 中文章节智能切分             ✓ EPUB 多级目录折叠导航
 ✓ 双栏/单列切换与排版自定义        ✓ 阅读进度与章节位置记忆
 ✓ 深浅主题自由切换                 ✓ 沙箱渲染，禁用书籍内脚本
+✓ 拖拽 TXT/EPUB 到窗口直接打开      ✓ EPUB 注册系统文件关联，双击即读
 ```
 
 ### 🔄 智能更新

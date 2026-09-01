@@ -652,7 +652,10 @@ export class Paginator extends HTMLElement {
             const h = innerHeight
             detail.data = Promise.resolve(detail.data).then(data => data
                 // unprefix as most of the props are (only) supported unprefixed
-                .replace(/(?<=[{\s;])-epub-/gi, '')
+                // [atreader patch] 上游为 /(?<=[{\s;])-epub-/gi。lookbehind 在 Safari < 16.4
+                // （如 macOS 12 的 WKWebView 15.x）解析即抛 SyntaxError，导致整个阅读器
+                // 脚本无法执行。改为捕获组回填，语义等价。详见 docs/WEBKIT_COMPATIBILITY.md
+                .replace(/([{\s;])-epub-/gi, '$1')
                 // replace vw and vh as they cause problems with layout
                 .replace(/(\d*\.?\d+)vw/gi, (_, d) => parseFloat(d) * w / 100 + 'px')
                 .replace(/(\d*\.?\d+)vh/gi, (_, d) => parseFloat(d) * h / 100 + 'px')

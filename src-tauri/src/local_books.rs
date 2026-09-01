@@ -30,6 +30,8 @@ const THIRD_PARTY_NOTICES: &[u8] = include_bytes!("../../THIRD-PARTY-NOTICES.md"
 static LOCAL_BOOKS_LOCK: Mutex<()> = Mutex::new(());
 static STARTUP_NOTICE: Mutex<Option<String>> = Mutex::new(None);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+// macOS 冷启动时 Opened 事件可能先于主窗口 setup 到达，先暂存路径。
+static PENDING_OPEN_BOOK: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -938,6 +940,47 @@ pub fn open_book_by_id<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<
     }
 }
 
+/// 校验并导入一本书，随后把主窗口导航到本地阅读页。
+/// 文件选择框、窗口拖拽、系统文件关联等入口共用。
+pub fn open_book_from_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<(), String> {
+    let record = inspect_path(path)?;
+    log::info!(target: "local-books", "history_upsert_start");
+    log::info!(target: "frontend", "[LocalBooks] history_upsert_start");
+    upsert_record(app, record.clone())?;
+    log::info!(
+        target: "local-books",
+        "history_upsert_succeeded book_id={}",
+        record.book_id
+    );
+    log::info!(
+        target: "frontend",
+        "[LocalBooks] history_upsert_succeeded book_id={}",
+        record.book_id
+    );
+    navigate_record(app, &record)?;
+    log::info!(
+        target: "local-books",
+        "navigation_succeeded book_id={}",
+        record.book_id
+    );
+    log::info!(
+        target: "frontend",
+        "[LocalBooks] navigation_succeeded book_id={}",
+        record.book_id
+    );
+    crate::commands::refresh_app_menu(app);
+    Ok(())
+}
+
+/// 打开失败时在主窗口弹出 toast 提示。
+pub fn notify_open_failure<R: Runtime>(app: &AppHandle<R>, error: &str) {
+    log::warn!(target: "local-books", "open_book_failed error={error}");
+    log::warn!(target: "frontend", "[LocalBooks] open_book_failed error={error}");
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("show-toast", local_error_toast(error));
+    }
+}
+
 pub fn open_dialog<R: Runtime>(app: &AppHandle<R>) {
     log::info!(target: "frontend", "[LocalBooks] open_dialog_start");
     let app = app.clone();
@@ -956,27 +999,96 @@ pub fn open_dialog<R: Runtime>(app: &AppHandle<R>) {
                 log::warn!(target: "frontend", "[LocalBooks] open_dialog_path_conversion_failed");
                 return;
             };
-            match inspect_path(&path).and_then(|record| {
-                log::info!(target: "local-books", "history_upsert_start");
-                log::info!(target: "frontend", "[LocalBooks] history_upsert_start");
-                upsert_record(&app, record.clone())?;
-                log::info!(target: "local-books", "history_upsert_succeeded book_id={}", record.book_id);
-                log::info!(target: "frontend", "[LocalBooks] history_upsert_succeeded book_id={}", record.book_id);
-                navigate_record(&app, &record)?;
-                log::info!(target: "local-books", "navigation_succeeded book_id={}", record.book_id);
-                log::info!(target: "frontend", "[LocalBooks] navigation_succeeded book_id={}", record.book_id);
-                Ok(())
-            }) {
-                Ok(()) => crate::commands::refresh_app_menu(&app),
-                Err(error) => {
-                    log::warn!(target: "local-books", "open_dialog_failed error={error}");
-                    log::warn!(target: "frontend", "[LocalBooks] open_dialog_failed error={error}");
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.emit("show-toast", local_error_toast(&error));
-                    }
-                }
+            if let Err(error) = open_book_from_path(&app, &path) {
+                log::warn!(target: "local-books", "open_dialog_failed error={error}");
+                log::warn!(target: "frontend", "[LocalBooks] open_dialog_failed error={error}");
+                notify_open_failure(&app, &error);
             }
         });
+}
+
+/// 路径扩展名是否为支持的本地图书格式（TXT / EPUB，大小写不敏感）。
+pub fn is_book_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("txt") || extension.eq_ignore_ascii_case("epub")
+        })
+}
+
+/// 与 plugin_installer::path_from_argument 同构：从命令行参数解析本地图书路径。
+fn book_path_from_argument(argument: &str, cwd: &Path) -> Option<PathBuf> {
+    let value = argument.trim();
+    let raw = if value.starts_with("file://") {
+        tauri::Url::parse(value).ok()?.to_file_path().ok()?
+    } else {
+        PathBuf::from(value)
+    };
+    let path = if raw.is_absolute() {
+        raw
+    } else {
+        cwd.join(raw)
+    };
+    is_book_path(&path).then_some(path)
+}
+
+/// macOS RunEvent::Opened 入口：双击关联的 EPUB 或拖到 Dock 图标时接收文件 URL。
+pub fn handle_opened_urls<R: Runtime>(app: &AppHandle<R>, urls: &[tauri::Url]) {
+    let Some(path) = urls.iter().find_map(|url| {
+        (url.scheme() == "file")
+            .then(|| url.to_file_path().ok())
+            .flatten()
+            .filter(|path| is_book_path(path))
+    }) else {
+        return;
+    };
+    open_book_when_main_ready(app, path);
+}
+
+/// Windows/Linux 单实例回调与冷启动参数入口。
+pub fn handle_external_arguments<R: Runtime>(
+    app: &AppHandle<R>,
+    arguments: &[String],
+    cwd: &Path,
+) {
+    let Some(path) = arguments
+        .iter()
+        .find_map(|argument| book_path_from_argument(argument, cwd))
+    else {
+        return;
+    };
+    open_book_when_main_ready(app, path);
+}
+
+fn open_book_when_main_ready<R: Runtime>(app: &AppHandle<R>, path: PathBuf) {
+    if app.get_webview_window("main").is_none() {
+        if let Ok(mut pending) = PENDING_OPEN_BOOK.lock() {
+            *pending = Some(path);
+        }
+        return;
+    }
+    if let Err(error) = open_book_from_path(app, &path) {
+        notify_open_failure(app, &error);
+    }
+}
+
+/// 主窗口创建后调用：补开先于 setup 到达的关联文件。
+pub fn drain_pending_open_book<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(mut pending) = PENDING_OPEN_BOOK.lock() else {
+        return;
+    };
+    let Some(path) = pending.take() else {
+        return;
+    };
+    drop(pending);
+    log::info!(
+        target: "local-books",
+        "pending_open_book_drained path={}",
+        path.display()
+    );
+    if let Err(error) = open_book_from_path(app, &path) {
+        notify_open_failure(app, &error);
+    }
 }
 
 fn local_error_toast(error: &str) -> String {
@@ -1594,6 +1706,25 @@ mod tests {
     fn rejects_invalid_book_ids() {
         assert!(validate_book_id("../book").is_err());
         assert!(validate_book_id(&"a".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn book_argument_accepts_only_txt_and_epub_paths() {
+        let cwd = Path::new("/tmp/local-books-tests");
+        assert_eq!(
+            book_path_from_argument("三体.epub", cwd),
+            Some(cwd.join("三体.epub"))
+        );
+        assert_eq!(
+            book_path_from_argument("NOTES.TXT", cwd),
+            Some(cwd.join("NOTES.TXT"))
+        );
+        assert_eq!(
+            book_path_from_argument("file:///tmp/%E4%B8%89%E4%BD%93.epub", cwd),
+            Some(PathBuf::from("/tmp/三体.epub"))
+        );
+        assert_eq!(book_path_from_argument("plugin.atrd", cwd), None);
+        assert_eq!(book_path_from_argument("/abs/path/novel.mobi", cwd), None);
     }
 
     #[test]

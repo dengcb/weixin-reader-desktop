@@ -11,6 +11,18 @@ const tempDir = mkdtempSync(join(tmpdir(), 'atreader-local-reader-'));
 const tempPath = join(tempDir, 'local_reader.js');
 const bootstrapTempPath = join(tempDir, 'local_reader_bootstrap.js');
 
+// [atreader] WebKit 兼容守卫：详见 docs/WEBKIT_COMPATIBILITY.md。
+// (?< 后非 ASCII 字母涵盖 lookbehind（(?<= / (?<!)）与非 ASCII 命名组，
+// 两者均会让 Safari < 16.4 的 WebKit 在脚本解析阶段抛 SyntaxError，整页白屏。
+// 若因字符串字面量误报，改写为 '\\(\\?<' 拼接形式规避，不要移除守卫。
+const assertWebkitCompatible = (label: string, code: string): void => {
+  if (/\(\?<(?![A-Za-z])/.test(code)) {
+    throw new Error(
+      `${label} 含旧 WebKit（Safari < 16.4）无法解析的正则语法（lookbehind 或非 ASCII 命名组），已中止。详见 docs/WEBKIT_COMPATIBILITY.md`,
+    );
+  }
+};
+
 try {
   const build = spawnSync(
     process.execPath,
@@ -39,6 +51,9 @@ try {
     { cwd: rootDir, stdio: 'inherit' },
   );
   if (bootstrapBuild.status !== 0) process.exit(bootstrapBuild.status ?? 1);
+
+  assertWebkitCompatible('local_reader.js', readFileSync(tempPath, 'utf8'));
+  assertWebkitCompatible('local_reader_bootstrap.js', readFileSync(bootstrapTempPath, 'utf8'));
 
   const status = spawnSync('git', ['status', '--porcelain', '--', 'src/scripts/local_reader.js'], {
     cwd: rootDir,

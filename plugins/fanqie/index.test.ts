@@ -234,7 +234,9 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
     expect(toastMessages).toEqual(['上一章', '下一章']);
     expect(up.defaultPrevented).toBe(true);
     expect(down.defaultPrevented).toBe(true);
-    expect(sessionStorage.getItem('atreader-fanqie-open-previous-at-end')).not.toBeNull();
+    // 显式跳章落章首，不能复用 ← 翻页溢出的“落章尾”标记
+    expect(sessionStorage.getItem('atreader-fanqie-open-chapter-at-start')).not.toBeNull();
+    expect(sessionStorage.getItem('atreader-fanqie-open-previous-at-end')).toBeNull();
 
     plugin.onUnload();
     document.removeEventListener('keydown', captureNativeKey);
@@ -324,5 +326,70 @@ describe('Fanqie double-column chapter keyboard navigation', () => {
 
     plugin.onUnload();
     document.removeEventListener('keydown', captureNativeKey);
+  });
+});
+
+describe('Fanqie wheel paging yields to native popup scrolling', () => {
+  afterEach(() => {
+    history.replaceState({}, '', '/');
+    sessionStorage.clear();
+    document.body.replaceChildren();
+    document.body.className = '';
+    document.head.querySelectorAll('style[id^="test-"]').forEach(style => style.remove());
+  });
+
+  const appendCatalogPopup = (): HTMLElement => {
+    // 模拟番茄章节弹窗：浮层内一个纵向溢出的滚动列表
+    const list = document.createElement('div');
+    list.className = 'muye-reader-catalog-list';
+    list.style.overflowY = 'auto';
+    list.innerHTML = '<p>第一章</p><p>第二章</p><p>第三章</p>';
+    const popup = document.createElement('div');
+    popup.className = 'muye-reader-catalog';
+    popup.append(list);
+    document.body.append(popup);
+    Object.defineProperty(list, 'scrollHeight', { value: 1200, configurable: true });
+    Object.defineProperty(list, 'clientHeight', { value: 400, configurable: true });
+    return list;
+  };
+
+  it('lets the chapter popup list scroll instead of turning pages', async () => {
+    history.replaceState({}, '', '/reader/chapter-wheel-popup');
+    readerMarkup();
+    const { api } = createApi();
+    const plugin = new FanqiePlugin();
+
+    plugin.onLoad(api);
+    await Promise.resolve();
+
+    const list = appendCatalogPopup();
+    const popupWheel = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+    list.firstElementChild!.dispatchEvent(popupWheel);
+    expect(popupWheel.defaultPrevented).toBe(false);
+
+    // 正文上的滚轮仍被翻页接管
+    const contentWheel = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+    document.querySelector('.muye-reader-content')!.dispatchEvent(contentWheel);
+    expect(contentWheel.defaultPrevented).toBe(true);
+
+    plugin.onUnload();
+  });
+
+  it('keeps wheel paging for popup content that fits without scrolling', async () => {
+    history.replaceState({}, '', '/reader/chapter-wheel-popup-static');
+    readerMarkup();
+    const { api } = createApi();
+    const plugin = new FanqiePlugin();
+
+    plugin.onLoad(api);
+    await Promise.resolve();
+
+    const list = appendCatalogPopup();
+    Object.defineProperty(list, 'scrollHeight', { value: 200, configurable: true });
+    const popupWheel = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+    list.firstElementChild!.dispatchEvent(popupWheel);
+    expect(popupWheel.defaultPrevented).toBe(true);
+
+    plugin.onUnload();
   });
 });

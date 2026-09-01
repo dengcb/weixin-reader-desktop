@@ -214,6 +214,23 @@ fn navigate_to_enabled_site_when_on_library(app: &tauri::AppHandle) {
     }
 }
 
+/// 拖拽文件到主窗口：优先打开第一本本地图书（TXT/EPUB）；
+/// 否则按插件安装包处理；其余类型静默忽略。
+fn handle_dropped_paths(app: &tauri::AppHandle, paths: &[std::path::PathBuf]) {
+    if let Some(path) = paths.iter().find(|path| local_books::is_book_path(path)) {
+        if let Err(error) = local_books::open_book_from_path(app, path) {
+            local_books::notify_open_failure(app, &error);
+        }
+        return;
+    }
+    if let Some(path) = paths
+        .iter()
+        .find(|path| plugin_installer::is_atrd_path(path))
+    {
+        plugin_installer::try_request_plugin_install(app, path);
+    }
+}
+
 /// 清理 autoFlip.active 状态
 /// 当窗口关闭或应用退出时，确保自动翻页状态被正确保存为 false
 fn clear_auto_flip_active(app_handle: tauri::AppHandle, _event_name: &str) {
@@ -248,11 +265,12 @@ pub fn run() {
         tauri::Builder::default().manage(plugin_installer::PendingPluginInstallState::default());
 
     // 文件关联在 Windows/Linux 会启动一个新进程；必须最先注册单实例插件，
-    // 才能把 .atrd 路径转交给已经运行的应用。
+    // 才能把 .atrd 插件包和 EPUB 图书路径转交给已经运行的应用。
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             plugin_installer::handle_external_arguments(app, &args, std::path::Path::new(&cwd));
+            local_books::handle_external_arguments(app, &args, std::path::Path::new(&cwd));
         }));
     }
 
@@ -278,7 +296,14 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 设置窗口是 resizable(false) 的固定尺寸窗口，尺寸由 menu.rs 的
+        // inner_size 唯一决定；若纳入 window-state 持久化，旧记录会在窗口创建
+        // 后回放并覆盖代码尺寸，导致改码不生效。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["settings"])
+                .build(),
+        )
         .plugin(tauri_plugin_log::Builder::new().targets([
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
@@ -405,6 +430,12 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     clear_auto_flip_active(app_handle_clone.clone(), "Window Close");
                 }
+                // 拖拽文件到主窗口：直接打开图书或插件安装确认窗
+                if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) =
+                    event
+                {
+                    handle_dropped_paths(&app_handle_clone, paths);
+                }
             });
 
             // Menu Init - AFTER main window is created
@@ -431,8 +462,11 @@ pub fn run() {
                 let args: Vec<String> = std::env::args().collect();
                 let cwd = std::env::current_dir().unwrap_or_default();
                 plugin_installer::handle_external_arguments(app.handle(), &args, &cwd);
+                local_books::handle_external_arguments(app.handle(), &args, &cwd);
             }
             plugin_installer::focus_pending_plugin_install(app.handle())?;
+            // 补开先于主窗口 setup 到达的关联图书（macOS Opened 冷启动竞态）
+            local_books::drain_pending_open_book(app.handle());
 
             // 摸鱼键全局热键：Cmd/Ctrl + `
             // 必须用全局热键，因为窗口 hide() 后不接收键盘事件，窗口内 keydown 监听失效
@@ -528,6 +562,7 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     plugin_installer::handle_opened_urls(app_handle, &urls);
+                    local_books::handle_opened_urls(app_handle, &urls);
                 }
                 _ => {}
             }

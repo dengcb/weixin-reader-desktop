@@ -585,7 +585,7 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) {
                         WebviewUrl::App("settings.html".into()),
                     )
                     .title("设置")
-                    .inner_size(720.0, 600.0)
+                    .inner_size(720.0, 640.0)
                     .center()
                     .resizable(false)
                     .build();
@@ -1074,7 +1074,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 } else {
                      let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html?tab=about".into()))
                         .title("设置")
-                        .inner_size(720.0, 600.0)
+                        .inner_size(720.0, 640.0)
                         .center()
                         .resizable(false)
                         .build();
@@ -1100,7 +1100,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                     } else {
                         let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html?tab=about&action=check_update".into()))
                             .title("设置")
-                            .inner_size(720.0, 600.0)
+                            .inner_size(720.0, 640.0)
                             .center()
                             .resizable(false)
                             .build();

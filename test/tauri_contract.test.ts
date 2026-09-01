@@ -34,7 +34,9 @@ describe('Tauri application contracts', () => {
   it('registers global window-state persistence and the bounded log rotation policy', async () => {
     const source = await readText('src-tauri/src/lib.rs');
 
-    expect(source).toContain('.plugin(tauri_plugin_window_state::Builder::default().build())');
+    expect(source).toContain('tauri_plugin_window_state::Builder::default()');
+    // 设置窗口尺寸由 menu.rs 的 inner_size 唯一决定，排除在持久化之外
+    expect(source).toContain('.with_denylist(&["settings"])');
     expect(source).toContain('.max_file_size(2 * 1024 * 1024)');
     expect(source).toContain('RotationStrategy::KeepSome(2)');
   });
@@ -58,6 +60,11 @@ describe('Tauri application contracts', () => {
         ext: ['atrd'],
         rank: 'Owner',
         mimeType: 'application/x-atreader-plugin',
+      }),
+      expect.objectContaining({
+        ext: ['epub'],
+        rank: 'Alternate',
+        mimeType: 'application/epub+zip',
       }),
     ]);
     expect(config.bundle.macOS.infoPlist).toBe('Info.plist');
@@ -179,11 +186,12 @@ describe('Tauri application contracts', () => {
       readText('third-party/foliate-js/LICENSE'),
     ]);
 
-    expect(config.bundle.fileAssociations.flatMap(item => item.ext)).toEqual(['atrd']);
+    expect(config.bundle.fileAssociations.flatMap(item => item.ext)).toEqual(['atrd', 'epub']);
     expect(menu).toContain('Submenu::new(manager, "自家书屋", true)');
     expect(menu).toContain('"打开本地图书…"');
     expect(menu).toContain('open_local_book_');
     expect(settings).toContain('<div class="section-title" style="margin-top: 32px;">本地书屋</div>');
+    expect(settings).toContain('<div class="setting-label">本地书屋历史</div>');
     expect(settings).toContain('<div class="setting-desc">清除本地书屋里的阅读历史记录</div>');
     expect(settings).toContain('msg.textContent = \'清除本地书屋里的阅读历史记录\'');
     expect(settings).toContain('id="clearLocalHistoryBtn">清空历史记录</button>');

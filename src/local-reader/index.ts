@@ -1103,7 +1103,9 @@ class LocalReader implements LocalReaderController {
     let index = this.currentSection + direction;
     while (index >= 0 && index < (this.book?.sections.length ?? 0)) {
       if (this.book!.sections[index].linear !== 'no') {
-        await this.navigate({ index, anchor: direction < 0 ? 1 : 0 }, true);
+        // 显式跳章落在目标章节开头（与微信读书、目录跳转一致）；
+        // ← 翻页溢出的连续阅读流由渲染器自然落到上一节末尾，不走这里。
+        await this.navigate({ index, anchor: 0 }, true);
         return true;
       }
       index += direction;
