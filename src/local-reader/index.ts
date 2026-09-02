@@ -1023,10 +1023,12 @@ class LocalReader implements LocalReaderController {
       '8': 'hide_cursor', o: 'hide_toolbar', p: 'hide_navbar',
     };
     this.keyHandler = (event: KeyboardEvent) => {
+      // 按键原始键值落盘：用于裁决遥控器事件是否到达前端及键值形态
+      localReaderLog('key_event', { key: event.key, code: event.code, keyCode: event.keyCode });
       const target = event.target as HTMLElement;
       if (target.matches('input, select, textarea') || target.isContentEditable) return;
       if (event.key === 'Escape') { this.closePanels(); return; }
-      const localAction = resolveLocalKeyboardAction(event.key, isWindows);
+      const localAction = resolveLocalKeyboardAction(event.key, isWindows, event.code);
       if (localAction) {
         event.preventDefault();
         event.stopImmediatePropagation();
