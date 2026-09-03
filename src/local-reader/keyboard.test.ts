@@ -11,6 +11,10 @@ describe('本地阅读键盘回退控制', () => {
     expect(resolveLocalKeyboardAction('Home', false)).toBe('toggle-navbar');
   });
 
+  it('空格向前翻页，与书店层语义对齐（issue #5）', () => {
+    expect(resolveLocalKeyboardAction(' ', false)).toBe('next-page');
+  });
+
   it('key 非标准时按 code 兜底（蓝牙遥控器在旧 WebKit 上 key 为 Unidentified）', () => {
     expect(resolveLocalKeyboardAction('Unidentified', false, 'ArrowUp')).toBe('previous-chapter');
     expect(resolveLocalKeyboardAction('', false, 'PageDown')).toBe('next-page');

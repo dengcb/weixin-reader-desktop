@@ -488,6 +488,17 @@ class LocalReader implements LocalReaderController {
     const { doc, index } = event.detail;
     localReaderLog('section_loaded', { bookId: this.bookId, index });
     doc.querySelectorAll('script').forEach(script => script.remove());
+    // 焦点随鼠标点击/划选进入章节 iframe 后，方向键 keydown 会被 WKWebView 原生层
+    // 吞掉（不派发 DOM 事件，顶层与 iframe 文档都收不到，issue #5）。划选结束
+    // （pointerup）即把焦点归还顶层窗口：选区保留（变灰），右键复制不受影响。
+    doc.addEventListener('pointerup', () => {
+      try {
+        if (window.top && window.top !== window) window.top.focus();
+        else window.focus();
+        localReaderLog('iframe_pointerup_refocused_top');
+      } catch { /* 跨 frame 访问受限时静默 */ }
+    }, true);
+    if (this.keyHandler) doc.addEventListener('keydown', this.keyHandler, true);
     // 同一 section 内的多个目录项（整部一书、章为锚点）记录锚点节点，
     // 供 currentTocPosition 按文档顺序区分具体章节；无 hash 的项视为章节开头。
     const anchors: Array<{ position: number; node: Node }> = [];
@@ -1032,6 +1043,13 @@ class LocalReader implements LocalReaderController {
       if (localAction) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // 翻页前清空选区（含章节 iframe 内选区）：保留选区时 foliate 的选区联动
+        //（selectionchange → scrollToAnchor / 拖选超界自动翻页）会拦截翻页，issue #5
+        window.getSelection()?.removeAllRanges();
+        const ownerDoc = event.target instanceof Document
+          ? event.target
+          : (event.target as Element).ownerDocument;
+        ownerDoc?.getSelection?.()?.removeAllRanges();
         switch (localAction) {
           case 'previous-page': void this.prevPage(); break;
           case 'next-page': void this.nextPage(); break;

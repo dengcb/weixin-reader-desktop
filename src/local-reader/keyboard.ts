@@ -19,6 +19,7 @@ export const resolveLocalKeyboardAction = (
     switch (candidate) {
       case 'ArrowLeft':
       case 'PageUp': return 'previous-page';
+      case ' ':
       case 'ArrowRight':
       case 'PageDown': return 'next-page';
       case 'ArrowUp': return 'previous-chapter';

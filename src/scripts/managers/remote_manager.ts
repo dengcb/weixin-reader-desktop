@@ -5,6 +5,7 @@ import { EventBus, Events } from '../core/event_bus';
 import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 import { invoke } from '../core/tauri';
+import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
 
 const MENU_KEY_DEBOUNCE_MS = 1000;
 const MENU_CONTEXT_GUARD_MS = 1500;
@@ -20,6 +21,7 @@ export class RemoteManager {
   private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
   private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
   private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
+  private detachIframeKeyboard: (() => void) | null = null;
   private menuKeyDebouncing = false;
   private menuDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastMenuKeyAt = 0;
@@ -204,6 +206,11 @@ export class RemoteManager {
   private enable() {
     if (this.enabled) return;
     this.setupKeyboardListener();
+    // 鼠标划选/点击站点 iframe 内正文后，键盘焦点进入 iframe 文档，顶层 window
+    // 收不到按键（issue #5）；把同一处理器挂到全部同源 iframe，动态新增亦生效
+    if (this.keyboardHandler) {
+      this.detachIframeKeyboard = attachKeyboardToSameOriginIframes(this.keyboardHandler);
+    }
     this.enabled = true;
     log.info('[RemoteManager] 已启用');
   }
@@ -221,6 +228,10 @@ export class RemoteManager {
     if (this.keyupHandler) {
       window.removeEventListener('keyup', this.keyupHandler, true);
       this.keyupHandler = null;
+    }
+    if (this.detachIframeKeyboard) {
+      this.detachIframeKeyboard();
+      this.detachIframeKeyboard = null;
     }
     this.lastMenuKeyAt = 0;
     this.enabled = false;

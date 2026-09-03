@@ -150,7 +150,7 @@ jobs:
       - name: Upload unsigned installer as GitHub artifact
         if: steps.check-signpath.outputs.available == 'true'
         id: upload-unsigned-x64
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: weixin-reader-x64-unsigned
           path: release/windows/*-x86_64-setup.exe
@@ -292,7 +292,7 @@ jobs:
       - name: Upload unsigned installer as GitHub artifact
         if: steps.check-signpath.outputs.available == 'true'
         id: upload-unsigned-arm64
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: weixin-reader-arm64-unsigned
           path: release/windows/*-aarch64-setup.exe
