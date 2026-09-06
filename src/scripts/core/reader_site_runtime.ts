@@ -1,5 +1,6 @@
 import manifest from '../../plugins/builtin/weread/manifest.json';
 import { WeReadAdapter } from '../adapters/weread_adapter';
+import { setupStylePanel } from '../adapters/weread_style_panel';
 import type {
   BookProgress,
   PluginAPI,
@@ -39,18 +40,23 @@ class WeReadSiteRuntime implements ReaderSiteRuntime {
   readonly styleOwner = 'manager' as const;
 
   private adapter: WeReadAdapter | null = null;
+  private stylePanelTeardown: (() => void) | null = null;
 
   private getAdapter(): WeReadAdapter {
     this.adapter ??= new WeReadAdapter();
     return this.adapter;
   }
 
-  onLoad(_api: PluginAPI): void {
+  onLoad(api: PluginAPI): void {
     // WeRead 的样式继续由 StyleManager 应用，进度跟踪器由适配器构造函数启动。
     this.getAdapter();
+    // 阅读样式面板（issue #3 纯白正文 / #4 行距段间距）：右侧工具栏注入入口按钮
+    this.stylePanelTeardown = setupStylePanel(api);
   }
 
   onUnload(): void {
+    this.stylePanelTeardown?.();
+    this.stylePanelTeardown = null;
     this.adapter?.destroy?.();
     this.adapter = null;
   }
