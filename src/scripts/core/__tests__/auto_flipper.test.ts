@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { EventBus, Events } from '../event_bus';
+import { EventBus } from '../event_bus';
 import { ScrollState } from '../scroll_state';
 import type { SiteContext } from '../site_context';
 import type { MergedSettings } from '../settings_store';
@@ -84,11 +84,6 @@ describe('AutoFlipper lifecycle and single-column loop', () => {
     const scrollBy = mock((_x: number, _y: number) => undefined);
     window.scrollBy = scrollBy as unknown as typeof window.scrollBy;
     globalThis.cancelAnimationFrame = mock(() => undefined);
-    const directions: string[] = [];
-    const cancel = EventBus.on<{ direction: string }>(
-      Events.PAGE_TURN_DIRECTION,
-      event => directions.push(event.direction),
-    );
     Object.assign(flipper as any, {
       isActive: true,
       generation: 3,
@@ -107,11 +102,10 @@ describe('AutoFlipper lifecycle and single-column loop', () => {
     expect(lock).toHaveBeenCalledTimes(1);
     expect(nextPage).toHaveBeenCalledTimes(1);
     expect(nextChapter).toHaveBeenCalledTimes(1);
-    expect(directions).toEqual(['forward']);
+    // 方向记录由 ProgressTracker 承担，翻页器不再发 PAGE_TURN_DIRECTION
     expect((flipper as any).bottomResumeTimer).not.toBeNull();
     flipper.stopAll();
     expect((flipper as any).bottomResumeTimer).toBeNull();
-    cancel();
   });
 
   it('pauses background RAF work and resumes only after visibility returns', () => {

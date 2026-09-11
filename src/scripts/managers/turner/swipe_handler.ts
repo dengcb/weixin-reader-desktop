@@ -1,7 +1,6 @@
 
 import { SiteContext } from '../../core/site_context';
 import { log } from '../../core/logger';
-import { EventBus, Events } from '../../core/event_bus';
 
 export const SWIPE_POLICY = Object.freeze({
   threshold: 50,
@@ -68,17 +67,13 @@ export class SwipeHandler {
     if (this.swipeAccumulator >= SWIPE_POLICY.threshold) {
       log.debug('[SwipeHandler] Swipe left detected, next page');
 
-      // 发送翻页方向事件（向前）
-      EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
-
+      // 方向记录交给 ProgressTracker 的 keydown 监听（nextPage 派发合成
+      // Arrow 键）；此处再 emit 会让同一次翻页被记录两次，进度计算偏慢。
       runtime.nextPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;
       this.startCooldown();
     } else if (this.swipeAccumulator <= -SWIPE_POLICY.threshold) {
       log.debug('[SwipeHandler] Swipe right detected, prev page');
-
-      // 发送翻页方向事件（向后）
-      EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'backward' });
 
       runtime.prevPage(); // 不再 await，让它在后台执行
       this.swipeAccumulator = 0;

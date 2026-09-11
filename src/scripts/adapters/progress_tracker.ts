@@ -105,7 +105,9 @@ export class ProgressTracker extends BaseManager {
       }
     });
 
-    // 监听翻页方向事件（来自 SwipeHandler 和键盘）
+    // 兼容保留：翻页方向事件的外部发射方已在 a13132d 收敛（方向记录改由下方
+    // keydown 监听统一承担，适配器 triggerKey 现在派发 key='ArrowRight' 形态的
+    // 合成事件）。外部插件仍可 emit 该事件注入方向
     this.on(Events.PAGE_TURN_DIRECTION, (data: { direction: 'forward' | 'backward' }) => {
       const pageDirection = data.direction === 'forward' ? PageDirection.FORWARD : PageDirection.BACKWARD;
       this.recordPageDirection(pageDirection);

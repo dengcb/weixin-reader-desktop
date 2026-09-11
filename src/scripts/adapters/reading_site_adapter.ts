@@ -175,9 +175,14 @@ export abstract class BaseSiteAdapter implements ReadingSiteAdapter {
 
   // 默认实现：键盘翻页
   protected triggerKey(key: string): void {
+    // key 与 code 一并归一为真实键盘事件的形态（'ArrowRight'/'ArrowLeft'）。
+    // 只映射 code 不映射 key 时，监听 e.key === 'ArrowRight' 的代码（如
+    // ProgressTracker 的方向记录）永远匹配不上合成事件——历史上程序化
+    // 翻页的方向一直无人记录，这一行是根修复
+    const normalizedKey = key === 'Right' ? 'ArrowRight' : key === 'Left' ? 'ArrowLeft' : key;
     const event = new KeyboardEvent('keydown', {
-      key: key,
-      code: key === 'Right' ? 'ArrowRight' : key === 'Left' ? 'ArrowLeft' : key,
+      key: normalizedKey,
+      code: normalizedKey,
       keyCode: key === 'Right' ? 39 : key === 'Left' ? 37 : 0,
       bubbles: true,
       cancelable: true

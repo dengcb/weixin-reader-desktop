@@ -4,7 +4,6 @@ import { MergedSettings } from '../../core/settings_store';
 import { SiteContext } from '../../core/site_context';
 import { ScrollState } from '../../core/scroll_state';
 import type { ReaderSiteRuntime } from '../../core/reader_site_runtime';
-import { EventBus, Events } from '../../core/event_bus';
 import { log } from '../../core/logger';
 
 export const AUTO_FLIP_POLICY = Object.freeze({
@@ -148,7 +147,8 @@ export class AutoFlipper {
 
       if (this.countdown <= 0) {
         this.onScrollLock(); // Lock mouse input during page turn
-        EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
+        // 方向记录交给 ProgressTracker 的 keydown 监听（nextPage 派发合成
+        // Arrow 键）；此处再 emit 会让同一次翻页被记录两次，进度计算偏慢。
         adapter.nextPage();
         this.countdown = this.intervalSeconds;
       }
@@ -264,7 +264,8 @@ export class AutoFlipper {
         log.debug('[AutoFlipper] Reached bottom, triggering next page');
         this.bottomTriggered = true;
 
-        EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction: 'forward' });
+        // 方向记录交给 ProgressTracker 的 keydown 监听（nextPage 派发合成
+        // Arrow 键）；此处再 emit 会让同一次翻页被记录两次，进度计算偏慢。
         adapter.nextPage();
         if (adapter.clickNextChapter) {
           adapter.clickNextChapter();

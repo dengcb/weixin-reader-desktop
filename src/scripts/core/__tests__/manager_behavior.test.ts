@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { EventBus, Events } from '../event_bus';
+import { EventBus } from '../event_bus';
 import type { SiteContext } from '../site_context';
 import type { MergedSettings } from '../settings_store';
 import {
@@ -87,14 +87,9 @@ describe('manager behavior regression guards', () => {
     handler.destroy();
   });
 
-  it('publishes the forward page-turn event when auto flip advances a page', async () => {
+  it('advances the page without emitting a duplicate direction event when auto flip fires', async () => {
     const nextPage = mock(() => undefined);
     const lock = mock(() => undefined);
-    const directions: string[] = [];
-    const unsubscribe = EventBus.on<{ direction: string }>(
-      Events.PAGE_TURN_DIRECTION,
-      ({ direction }) => directions.push(direction),
-    );
     const flipper = new AutoFlipper(readerContext(nextPage), lock);
 
     flipper.updateState({
@@ -103,9 +98,8 @@ describe('manager behavior regression guards', () => {
     await Bun.sleep(AUTO_FLIP_POLICY.doubleColumnTickMs + 100);
 
     flipper.stopAll();
-    unsubscribe();
     expect(nextPage).toHaveBeenCalledTimes(1);
-    expect(directions).toEqual(['forward']);
+    // 方向记录由 ProgressTracker 承担，翻页器不再发 PAGE_TURN_DIRECTION
   });
 
   it('restores, chases lazy content, and gives up at the established scroll boundaries', () => {

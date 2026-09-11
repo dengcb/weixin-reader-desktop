@@ -254,7 +254,10 @@ export class RemoteManager {
     const runtime = this.siteContext.currentRuntime;
     if (!runtime) return;
 
-    EventBus.emit(Events.PAGE_TURN_DIRECTION, { direction });
+    // 方向记录统一由 ProgressTracker 的 keydown 监听承担：
+    // nextPage()/prevPage() 会派发合成 Arrow 键事件（triggerKey），
+    // 若在此处再 emit PAGE_TURN_DIRECTION，同一次翻页会被记录两次，
+    // 快速连按时 100ms 优先级门还会把多余记录丢弃，导致进度计算偏慢。
     if (direction === 'forward') runtime.nextPage();
     else runtime.prevPage();
   }

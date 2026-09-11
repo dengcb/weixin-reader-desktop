@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { EventBus, Events } from '../event_bus';
+import { EventBus } from '../event_bus';
 import { settingsStore } from '../settings_store';
 import { RemoteManager } from '../../managers/remote_manager';
 
@@ -77,25 +77,19 @@ describe('RemoteManager keyboard contract', () => {
     EventBus.clearHistory();
   });
 
-  it('turns pages and emits direction before invoking the runtime', () => {
+  it('turns pages via the runtime without emitting a duplicate direction event', () => {
     const { manager, nextPage, prevPage } = createManager();
-    const directions: string[] = [];
-    const cancel = EventBus.on<{ direction: string }>(
-      Events.PAGE_TURN_DIRECTION,
-      event => directions.push(event.direction),
-    );
 
     const down = new KeyboardEvent('keydown', { code: 'PageDown', cancelable: true });
     window.dispatchEvent(down);
     const up = new KeyboardEvent('keydown', { code: 'PageUp', cancelable: true });
     window.dispatchEvent(up);
 
-    expect(directions).toEqual(['forward', 'backward']);
     expect(nextPage).toHaveBeenCalledTimes(1);
     expect(prevPage).toHaveBeenCalledTimes(1);
     expect(down.defaultPrevented).toBe(true);
     expect(up.defaultPrevented).toBe(true);
-    cancel();
+    // 方向记录由 ProgressTracker 承担，遥控管理器不再发 PAGE_TURN_DIRECTION
     manager.destroy();
   });
 
