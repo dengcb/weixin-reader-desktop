@@ -279,4 +279,22 @@ describe('SettingsStore', () => {
     expect(store.getGlobal().autoUpdate).toBe(false);
     expect(store.get()._version).toBe(2);
   });
+
+  it('ignores stale snapshots whose _version is not newer than the in-memory document', async () => {
+    // 场景：refresh 发起后、get_settings 返回前，另一窗口并发提交了新版本；
+    // 事件监听已把内存推进。迟到旧快照（更小 _version）不得把文档倒回
+    await store.updateGlobal({ hideCursor: true }); // 本窗口 v1（已落盘）
+    backend = { ...backend, _version: backend._version + 1, global: { ...backend.global, autoUpdate: false } };
+    // 模拟事件监听先收到 v2：直接把内存文档推到 v2（与真实时序一致）
+    backend = { ...backend, _version: backend._version + 1, global: { ...backend.global, lastSiteId: 'test' } } as AppSettings;
+    listeners.forEach(listener => listener({ payload: structuredClone(backend) as AppSettings }));
+    expect(store.get()._version).toBeGreaterThanOrEqual(2);
+
+    // get_settings 现在返回更旧快照（模拟 refresh 时序窗口内发起的请求）
+    backend = { ...backend, _version: 1 } as AppSettings;
+    await store.refresh();
+
+    // 守卫生效：文档保留较新版本（含并发写），不被旧快照覆盖
+    expect(store.getGlobal().lastSiteId).toBe('test');
+  });
 });

@@ -5,7 +5,7 @@ import { createSiteContext } from './site_context';
 export interface SiteSettings {
   zoom?: number;
   readerWide?: boolean;
-  /** 微信读书自定义正文目标宽度（视口百分比，40-98，步进 2） */
+  /** 微信读书自定义正文目标宽度（视口百分比，52-98，步进 2；见 reader_width.ts） */
   wideWidthPercent?: number;
   hideToolbar?: boolean;
   hideNavbar?: boolean;
@@ -327,7 +327,12 @@ export class SettingsStore {
 
   public async refresh(): Promise<void> {
     await this.writeQueue;
-    this.document = normalizeDocument(await invoke<AppSettings>('get_settings'));
+    const incoming = normalizeDocument(await invoke<AppSettings>('get_settings'));
+    // 与事件监听同款版本守卫：refresh 发起到 get_settings 返回之间可能有并发写
+    // （设置窗口/菜单走 update_setting），旧快照若无条件覆盖会把内存文档倒回
+    // 旧版本——调用方（如热重载）随后用 isPluginEnabled 读到回退数据
+    if ((incoming._version ?? 0) <= (this.document._version ?? 0)) return;
+    this.document = incoming;
     this.notify();
   }
 
