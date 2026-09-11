@@ -75,3 +75,6 @@ site/
 
 # Code graph tool cache
 .codegraph/
+
+# 实验截图：一次性调试产物，不进仓库（曾占跟踪载荷 71%）
+experiment_screenshots/
