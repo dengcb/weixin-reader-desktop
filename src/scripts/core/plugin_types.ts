@@ -140,6 +140,13 @@ export interface SettingsAPI {
   get<T>(key: string, defaultValue?: T): T;
   /** 设置值 */
   set(key: string, value: any): Promise<void>;
+  /**
+   * 一次写入多个键：同一命名空间内的键合并为一次入队/一次持久化
+   * （订阅者只见终态，无中间态）。跨命名空间（site 键 + 插件 config 键
+   * 混合）时按 site → config 串行两段，两段之间存在对订阅者可见的中间
+   * 态；第二段失败时第一段已生效（与逐键链式 set 的失败语义一致）。
+   */
+  setMany(patch: Record<string, any>): Promise<void>;
   /** 获取所有设置 */
   getAll(): Record<string, any>;
   /** 订阅设置变化 */

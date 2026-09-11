@@ -212,6 +212,59 @@ describe('Plugin API', () => {
         settingsStore.updatePluginConfig = originals.updatePluginConfig;
       }
     });
+
+    it('setMany merges per namespace, orders site → config, and skips empty segments', async () => {
+      const originals = {
+        getSite: settingsStore.getSite,
+        getPluginConfig: settingsStore.getPluginConfig,
+        updateSite: settingsStore.updateSite,
+        updatePluginConfig: settingsStore.updatePluginConfig,
+      };
+      const writes: string[] = [];
+      settingsStore.getSite = () => ({});
+      settingsStore.getPluginConfig = () => ({});
+      settingsStore.updateSite = async (_id, patch) => { writes.push(`site:${JSON.stringify(patch)}`); };
+      settingsStore.updatePluginConfig = async (_id, patch) => {
+        writes.push(`plugin:${JSON.stringify(patch)}`);
+      };
+      try {
+        // 混合 patch：site 键与 config 键按命名空间各合并为一段，段序 site → config
+        await api.settings.setMany({
+          wideWidthPercent: 60,
+          readerWide: true,
+          customMode: 'plain',
+          lineHeight: 2,
+        });
+        expect(writes).toEqual([
+          'site:{"wideWidthPercent":60,"readerWide":true}',
+          'plugin:{"customMode":"plain","lineHeight":2}',
+        ]);
+
+        // 单命名空间 patch：只产生一段写入（面板滑块的实际调用形态）
+        writes.length = 0;
+        await api.settings.setMany({ wideWidthPercent: 72, readerWide: true });
+        expect(writes).toEqual(['site:{"wideWidthPercent":72,"readerWide":true}']);
+
+        // 空 patch：不触发任何写入
+        writes.length = 0;
+        await api.settings.setMany({});
+        expect(writes).toEqual([]);
+
+        // 第二段失败语义：site 段已生效（包含在写入记录中），整体 reject
+        writes.length = 0;
+        const originalUpdate = settingsStore.updatePluginConfig;
+        settingsStore.updatePluginConfig = async () => { throw new Error('config persist failed'); };
+        await expect(api.settings.setMany({ readerWide: true, customMode: 'x' }))
+          .rejects.toThrow('config persist failed');
+        expect(writes).toEqual(['site:{"readerWide":true}']);
+        settingsStore.updatePluginConfig = originalUpdate;
+      } finally {
+        settingsStore.getSite = originals.getSite;
+        settingsStore.getPluginConfig = originals.getPluginConfig;
+        settingsStore.updateSite = originals.updateSite;
+        settingsStore.updatePluginConfig = originals.updatePluginConfig;
+      }
+    });
   });
 
   describe('Log API', () => {

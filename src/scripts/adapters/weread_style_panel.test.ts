@@ -5,6 +5,7 @@ import { setupStylePanel } from './weread_style_panel';
 const createAPI = (initial: Record<string, unknown> = {}) => {
   const styles = new Map<string, string>();
   const set = mock(async (_key: string, _value: unknown) => undefined);
+  const setMany = mock(async (_patch: Record<string, unknown>) => undefined);
   let listener: ((settings: Record<string, any>) => void) | null = null;
   const api = {
     style: {
@@ -14,6 +15,7 @@ const createAPI = (initial: Record<string, unknown> = {}) => {
     settings: {
       get: <T>(_key: string, defaultValue?: T): T => defaultValue as T,
       set,
+      setMany,
       getAll: () => initial,
       subscribe: (callback: (settings: Record<string, any>) => void) => {
         listener = callback;
@@ -31,6 +33,7 @@ const createAPI = (initial: Record<string, unknown> = {}) => {
   return {
     api,
     set,
+    setMany,
     styles,
     updateSettings: (settings: Record<string, any>) => listener?.(settings),
   };
@@ -97,8 +100,11 @@ describe('WeRead 纯白正文背景黑度', () => {
     slider.dispatchEvent(new Event('change', { bubbles: true }));
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(context.set).toHaveBeenCalledWith('wideWidthPercent', 60);
-    expect(context.set).toHaveBeenCalledWith('readerWide', true);
+    // 目标值与「自定义宽度开」同一批写入：单次 setMany，避免两步链的中
+    // 间态（多余一次重分页）与首步失败导致 readerWide 永不置位的静默无效
+    expect(context.setMany).toHaveBeenCalledTimes(1);
+    expect(context.setMany).toHaveBeenCalledWith({ wideWidthPercent: 60, readerWide: true });
+    expect(context.set).not.toHaveBeenCalled();
   });
 
   it('注入的样式所有层同色同圆角，无直角缺口', () => {
@@ -149,9 +155,17 @@ describe('WeRead 纯白正文背景黑度', () => {
     document.querySelector<HTMLButtonElement>('[data-action="reset-spacing"]')?.click();
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(context.set).toHaveBeenCalledWith('whiteTextBackground', null);
-    expect(context.set).toHaveBeenCalledWith('wideWidthPercent', 80);
-    expect(context.set).toHaveBeenCalledWith('readerWide', false);
+    // 单次 setMany 提交全部 8 个键（替代 7 步链式 set）：任一环失败
+    // 会留下部分应用状态且后续跳过
+    expect(context.setMany).toHaveBeenCalledTimes(1);
+    const patch = context.setMany.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(patch).toMatchObject({
+      whiteText: false,
+      whiteTextBackground: null,
+      wideWidthPercent: 80,
+      readerWide: false,
+    });
+    expect(context.set).not.toHaveBeenCalled();
   });
 
   describe('WeRead 底部进度条高度', () => {
@@ -222,7 +236,8 @@ describe('WeRead 纯白正文背景黑度', () => {
       document.querySelector<HTMLButtonElement>('[data-action="reset-spacing"]')?.click();
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(context.set).toHaveBeenCalledWith('progressBarHeight', null);
+      const patch = context.setMany.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(patch?.progressBarHeight).toBeNull();
     });
   });
 });
