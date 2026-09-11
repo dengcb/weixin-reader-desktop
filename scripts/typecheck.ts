@@ -1,8 +1,4 @@
-const allowed = new Set([
-  "src/plugins/template/index.ts|'clickElement'",
-  "src/scripts/adapters/weread_adapter.ts|'initPageTurnMonitor'",
-  "src/scripts/adapters/weread_adapter.ts|'extractNumericBookId'",
-]);
+const allowed = new Set<string>([]);
 
 const processResult = Bun.spawn(['bunx', 'tsc', '--noEmit', '--pretty', 'false'], {
   stdout: 'pipe',

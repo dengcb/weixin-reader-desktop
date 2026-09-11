@@ -13,15 +13,6 @@ export class WeReadAdapter extends BaseSiteAdapter {
   // ==================== 进度跟踪器 ====================
   private progressTracker: ProgressTracker | null = null;
 
-  // 翻页监听相关
-  private pageTurnMonitorInitialized: boolean = false;
-  private lastPageTurnTime: number = 0;
-
-  // 事件处理器引用（用于清理）
-  private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
-  private nextBtnHandler: (() => void) | null = null;
-  private prevBtnHandler: (() => void) | null = null;
-
   constructor() {
     super();
     // 初始化进度跟踪器（会自动监听 ipc:route-changed 事件）
@@ -155,106 +146,27 @@ export class WeReadAdapter extends BaseSiteAdapter {
 
   // ==================== 翻页控制 ====================
 
-  /**
-   * 初始化翻页监听器 - 监听键盘和按钮点击
-   */
-  private initPageTurnMonitor(): void {
-    if (this.pageTurnMonitorInitialized) {
-      return;
-    }
-    this.pageTurnMonitorInitialized = true;
-
-    // 监听键盘翻页
-    this.keydownHandler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        this.handlePageTurn();
-      }
-    };
-    window.addEventListener('keydown', this.keydownHandler);
-
-    // 监听翻页按钮点击
-    const addButtonListener = () => {
-      const nextBtn = document.querySelector('.renderTarget_pager_button_right');
-      const prevBtn = document.querySelector('.renderTarget_pager_button');
-
-      if (nextBtn && !this.nextBtnHandler) {
-        this.nextBtnHandler = () => this.handlePageTurn();
-        nextBtn.addEventListener('click', this.nextBtnHandler);
-      }
-      if (prevBtn && !this.prevBtnHandler) {
-        this.prevBtnHandler = () => this.handlePageTurn();
-        prevBtn.addEventListener('click', this.prevBtnHandler);
-      }
-    };
-
-    // 页面加载后添加按钮监听
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', addButtonListener, { once: true });
-    } else {
-      addButtonListener();
-    }
-  }
+  // 早期实现曾在此处监听键盘/翻页按钮并做 500ms 防抖，但从未被启动（init
+  // 路径缺失），真实生效的一直是 ProgressTracker 自己的监听。方向记录统一
+  // 在 ProgressTracker 内完成，适配器只负责触发合成按键。
 
   /**
-   * 清理事件监听器（防止内存泄漏）
+   * 清理进度跟踪器（防止内存泄漏）
    */
   destroy(): void {
-    // 清理键盘监听器
-    if (this.keydownHandler) {
-      window.removeEventListener('keydown', this.keydownHandler);
-      this.keydownHandler = null;
-    }
-
-    // 清理按钮监听器
-    if (this.nextBtnHandler) {
-      const nextBtn = document.querySelector('.renderTarget_pager_button_right');
-      if (nextBtn) {
-        nextBtn.removeEventListener('click', this.nextBtnHandler);
-      }
-      this.nextBtnHandler = null;
-    }
-
-    if (this.prevBtnHandler) {
-      const prevBtn = document.querySelector('.renderTarget_pager_button');
-      if (prevBtn) {
-        prevBtn.removeEventListener('click', this.prevBtnHandler);
-      }
-      this.prevBtnHandler = null;
-    }
-
-    // 清理进度跟踪器
     if (this.progressTracker) {
       this.progressTracker.destroy();
       this.progressTracker = null;
     }
   }
 
-  /**
-   * 处理翻页事件（带防抖）
-   * 注：ProgressTracker 现在独立监听翻页事件，不需要此处调用
-   */
-  private handlePageTurn(): void {
-    const now = Date.now();
-
-    // 防抖：500ms 内只触发一次
-    if (now - this.lastPageTurnTime < 500) {
-      return;
-    }
-
-    this.lastPageTurnTime = now;
-
-    // ProgressTracker 现在通过 EventBus 和 DOM 事件独立工作
-    // 不再需要手动调用 onPageTurn
-  }
-
   async nextPage(): Promise<void> {
+    // 合成 Arrow 键会同时驱动微信读书翻页和 ProgressTracker 的方向记录
     this.triggerKey('Right');
-    this.handlePageTurn();
   }
 
   async prevPage(): Promise<void> {
     this.triggerKey('Left');
-    this.handlePageTurn();
   }
 
   isDoubleColumn(): boolean {
@@ -281,40 +193,6 @@ export class WeReadAdapter extends BaseSiteAdapter {
       return 0;
     }
     return this.progressTracker.getCurrentProgress();
-  }
-
-  /**
-   * 从页面提取数字格式的 bookId
-   * 微信读书有两种 bookId:
-   * 1. URL 中的字符串格式: a57325c05c8ed3a57224187
-   * 2. API 使用的数字格式: 822995
-   */
-  private extractNumericBookId(): string | null {
-    // 方法1: 从 JSON-LD script 标签中提取
-    const jsonLdScript = document.querySelector('script[type="application/ld+json"]');
-    if (jsonLdScript && jsonLdScript.textContent) {
-      try {
-        const data = JSON.parse(jsonLdScript.textContent);
-        if (data['@Id']) {
-          return data['@Id'];
-        }
-      } catch (e) {
-        // JSON 解析失败，继续尝试其他方法
-      }
-    }
-
-    // 方法2: 从全局变量中提取（如果有的话）
-    if ((window as any).bookId) {
-      return String((window as any).bookId);
-    }
-
-    // 方法3: 从 URL 中提取（作为最后的备选）
-    const urlMatch = window.location.pathname.match(/\/web\/reader\/([^/]+)/);
-    if (urlMatch) {
-      return urlMatch[1];
-    }
-
-    return null;
   }
 
   // ==================== 章节导航 ====================

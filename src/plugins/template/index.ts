@@ -342,17 +342,6 @@ export class MyPlugin implements ReaderPlugin {
     document.dispatchEvent(event);
   }
   
-  /**
-   * 点击元素
-   */
-  private clickElement(selector: string): boolean {
-    const element = document.querySelector(selector) as HTMLElement;
-    if (element) {
-      element.click();
-      return true;
-    }
-    return false;
-  }
 }
 
 /**

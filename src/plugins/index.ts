@@ -6,7 +6,7 @@
  */
 
 // 内置插件
-export { builtinPluginFactories, createBuiltinPlugins, createWeReadPlugin } from './builtin';
+export { builtinPluginFactories, createBuiltinPlugins } from './builtin';
 
 // 类型（从核心模块重新导出）
 export type {

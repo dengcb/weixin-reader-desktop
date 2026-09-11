@@ -28,6 +28,5 @@ export const createBuiltinPlugins = (): ReaderSiteRuntime[] => {
 };
 
 // 导出内置插件供直接引用
-export { createWeReadPlugin } from './weread';
 export { createWeReadSiteRuntime } from '../../scripts/core/reader_site_runtime';
 export { createLocalSiteRuntime } from './local';

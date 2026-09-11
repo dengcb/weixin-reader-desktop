@@ -64,6 +64,8 @@ async function buildPlugin(pluginId: string): Promise<void> {
   
   if (!existsSync(indexPath)) {
     console.error(`❌ Plugin entry not found: ${indexPath}`);
+    console.error(`   （manifest.json 存在但没有 index.ts 的目录不是可编译插件——`);
+    console.error(`     例如 src/plugins/builtin/weread 仅保留 manifest 供运行时注册，样式由 WeReadAdapter 注入）`);
     process.exit(1);
   }
   
@@ -148,19 +150,24 @@ async function buildPlugin(pluginId: string): Promise<void> {
 
 async function main() {
   const args = process.argv.slice(2);
-  
+
   if (args.length === 0) {
-    // 默认编译 weread 插件
-    await buildPlugin('weread');
+    // 默认编译官方外部插件 fanqie（weread/local 走 StyleManager 注入，
+    // 不作为 .atrd 分发，builtin/weread 只保留 manifest 供运行时注册）
+    await buildPlugin('fanqie');
   } else if (args[0] === '--all') {
     // 编译所有插件（外部 plugins/ + 内置 builtin/）
+    // 仅聚合「manifest.json + index.ts 同时存在」的可编译插件；
+    // manifest-only 目录（如 builtin/weread）不是可编译插件
     const { readdirSync } = await import('fs');
     const collectPlugins = (dir: string): string[] => {
       if (!existsSync(dir)) return [];
       return readdirSync(dir, { withFileTypes: true })
         .filter(d => d.isDirectory())
         .map(d => d.name)
-        .filter(name => existsSync(join(dir, name, 'manifest.json')));
+        .filter(name =>
+          existsSync(join(dir, name, 'manifest.json'))
+          && existsSync(join(dir, name, 'index.ts')));
     };
     // 去重（外部优先）
     const plugins = Array.from(new Set([
