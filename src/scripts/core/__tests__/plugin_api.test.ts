@@ -159,10 +159,31 @@ describe('Plugin API', () => {
     it('should list keys for this plugin', async () => {
       await api.storage.set('key1', 'value1');
       await api.storage.set('key2', 'value2');
-      
+
       const keys = await api.storage.keys();
       expect(keys).toContain('key1');
       expect(keys).toContain('key2');
+    });
+
+    it('survives restricted-WebViews where localStorage throws', async () => {
+      // 复现隐私/受限模式：setItem 抛 SecurityError。set 必须抛出可读的
+      // 包装错误（而非裸异常炸回 onLoad），remove/keys 必须静默容错
+      const failing = {
+        getItem: () => { throw new DOMException('denied', 'SecurityError'); },
+        setItem: () => { throw new DOMException('denied', 'SecurityError'); },
+        removeItem: () => { throw new DOMException('denied', 'SecurityError'); },
+        key: () => { throw new DOMException('denied', 'SecurityError'); },
+        get length() { throw new DOMException('denied', 'SecurityError'); },
+      } as unknown as Storage;
+      const real = globalThis.localStorage;
+      (globalThis as any).localStorage = failing;
+      try {
+        await expect(api.storage.set('k', 'v')).rejects.toThrow('写入插件存储失败');
+        await expect(api.storage.remove('k')).resolves.toBeUndefined();
+        await expect(api.storage.keys()).resolves.toEqual([]);
+      } finally {
+        (globalThis as any).localStorage = real;
+      }
     });
 
     it('should isolate storage between plugins', async () => {

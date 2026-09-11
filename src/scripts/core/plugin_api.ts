@@ -255,21 +255,33 @@ const createStorageAPI = (pluginId: string): StorageAPI => {
     },
     
     async set(key: string, value: any): Promise<void> {
-      localStorage.setItem(storageKey(key), JSON.stringify(value));
+      try {
+        localStorage.setItem(storageKey(key), JSON.stringify(value));
+      } catch (error) {
+        throw new Error(`写入插件存储失败（可能处于隐私/受限模式或值不可序列化）: ${String(error)}`);
+      }
     },
-    
+
     async remove(key: string): Promise<void> {
-      localStorage.removeItem(storageKey(key));
+      try {
+        localStorage.removeItem(storageKey(key));
+      } catch {
+        /* 隐私/受限模式下忽略 */
+      }
     },
-    
+
     async keys(): Promise<string[]> {
       const prefix = storageKey('');
       const keys: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith(prefix)) {
-          keys.push(key.slice(prefix.length));
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key?.startsWith(prefix)) {
+            keys.push(key.slice(prefix.length));
+          }
         }
+      } catch {
+        /* 隐私/受限模式下返回已收集的部分 */
       }
       return keys;
     },

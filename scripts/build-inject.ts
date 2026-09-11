@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -68,14 +68,21 @@ try {
 
   const trackedDirty = status.stdout.trim().length > 0;
   if (trackedDirty) {
-    const current = readFileSync(generatedPath);
-    const generated = readFileSync(tempPath);
-    if (!current.equals(generated)) {
-      throw new Error(
-        'src/scripts/inject.js 已有未提交修改，且与 inject.ts 的生成结果不一致；未覆盖该文件。',
-      );
+    // 守卫只在目标文件真实存在时才进行字节比对：文件被删除（git 状态为
+    // 「 D」）时直接放行重建，避免 readFileSync ENOENT 把中断误报成守卫失败
+    if (!existsSync(generatedPath)) {
+      copyFileSync(tempPath, generatedPath);
+      console.log('inject.js 已从 inject.ts 重新生成（原文件缺失）。');
+    } else {
+      const current = readFileSync(generatedPath);
+      const generated = readFileSync(tempPath);
+      if (!current.equals(generated)) {
+        throw new Error(
+          'src/scripts/inject.js 已有未提交修改，且与 inject.ts 的生成结果不一致；未覆盖该文件。',
+        );
+      }
+      console.log('inject.js 已修改但与生成结果一致，保留现有文件。');
     }
-    console.log('inject.js 已修改但与生成结果一致，保留现有文件。');
   } else {
     copyFileSync(tempPath, generatedPath);
     console.log('inject.js 已从 inject.ts 生成。');

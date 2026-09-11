@@ -1081,7 +1081,8 @@ class LocalReader implements LocalReaderController {
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key >= '1' && event.key <= '7') {
         event.preventDefault();
-        void invoke('switch_bookstore_by_index', { index: Number(event.key) });
+        // 焦点门禁在设置/编辑器窗口聚焦时拒绝切换，静默即可
+        invoke('switch_bookstore_by_index', { index: Number(event.key) }).catch(() => {});
         return;
       }
       if (isWindows && event.ctrlKey) {

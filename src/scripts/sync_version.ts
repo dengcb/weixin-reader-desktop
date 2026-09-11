@@ -11,7 +11,9 @@ const cargoLockPath = join(rootDir, 'src-tauri', 'Cargo.lock');
 const readmePath = join(rootDir, 'README.md');
 
 const cargoVersionRegex = /^(version\s*=\s*")([0-9]+\.[0-9]+\.[0-9]+)(")/m;
-const lockPackageRegex = /(\[\[package\]\]\nname = "weixin-reader"\nversion = ")([^"]+)(")/;
+// 工作区行尾可能是 CRLF（core.autocrlf 展开，仓库内是 LF），
+// \n 字面量在 CRLF 工作区会永远失配导致 check:version 误报
+const lockPackageRegex = /(\[\[package\]\]\r?\nname = "weixin-reader"\r?\nversion = ")([^"]+)(")/;
 const readmeVersionRegex = /(img\.shields\.io\/badge\/release-v)([0-9]+\.[0-9]+\.[0-9]+)(-)/;
 
 interface VersionTarget {

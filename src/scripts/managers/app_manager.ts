@@ -19,6 +19,23 @@ import { getReadingPosition } from '../core/reading_position';
 // Session storage key to track if we've already restored in this session
 const RESTORE_FLAG_KEY = 'wxrd_has_restored';
 
+// 隐私/受限模式下 sessionStorage 可能整体抛异常（SecurityError），
+// 读恢复标记不应因此中断启动流程
+const safeSessionGet = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const safeSessionSet = (key: string, value: string): void => {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    /* 持久化失败不影响本会话行为 */
+  }
+};
+
 export const SCROLL_RESTORE_POLICY = Object.freeze({
   maxStalledAttempts: 50,
   retryDelayMs: 100,
@@ -109,7 +126,7 @@ export class AppManager {
 
   private async restoreLastPage() {
     // Check if we've already restored in this session
-    const sessionFlag = sessionStorage.getItem(RESTORE_FLAG_KEY);
+    const sessionFlag = safeSessionGet(RESTORE_FLAG_KEY);
 
     if (sessionFlag === 'true') {
       return;
@@ -122,12 +139,12 @@ export class AppManager {
       const navMsg = `[AppManager] Restoring last page: ${settings.lastReaderUrl}`;
       logToFile(navMsg);
       log.debug('[AppManager] Restoring last page:', settings.lastReaderUrl);
-      sessionStorage.setItem(RESTORE_FLAG_KEY, 'true');
+      safeSessionSet(RESTORE_FLAG_KEY, 'true');
       // Direct navigation (most reliable)
       window.location.href = settings.lastReaderUrl;
     } else {
       // Mark as restored even if we didn't navigate
-      sessionStorage.setItem(RESTORE_FLAG_KEY, 'true');
+      safeSessionSet(RESTORE_FLAG_KEY, 'true');
     }
   }
 
