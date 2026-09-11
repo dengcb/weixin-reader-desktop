@@ -20,6 +20,16 @@
           right: max(-72px, calc(24px - (100 - ${wideWidth}) / 2 * 1vw)) !important;
           margin-left: 0 !important;
         }
+        /* 纵向（单栏）：原生工具栏定位与正文宽度无耦合，宽屏时不会随 W 变动，
+           正文变宽后被压在文字上。沿用窄屏分支已校准的公式并按 W 参数化：
+           W=80 与窄屏公式逐字重合（开关切换不跳变，测试双向锚定）。
+           外推精度依赖「百分比 margin 的包含块 ≈ 视口宽」，尚未真机
+           DevTools 校准；若包含块更窄，误差按 |W-80| 放大——在 1440px
+           常见窗宽下量级约为一个工具栏位，表现为视觉偏移而非功能失效。
+           效果以真机验证为准（进行中）。 */
+        body:has(.readerControls:not([is-horizontal="true"])) .readerControls {
+          margin-left: calc(${wideWidth/2}% + 40px) !important;
+        }
       `}else{return`
         /* 微信读书 - 窄屏模式 */
         .readerTopBar,
