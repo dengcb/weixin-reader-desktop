@@ -834,12 +834,12 @@ fn build_app_menu<R: Runtime>(
     let refresh = MenuItem::with_id(handle, "refresh", "重新加载", true, Some("CmdOrCtrl+R"))?;
     let back = MenuItem::with_id(handle, "back", "后退", true, Some("CmdOrCtrl+["))?;
     let forward = MenuItem::with_id(handle, "forward", "前进", true, Some("CmdOrCtrl+]"))?;
-    let prev_page = MenuItem::with_id(handle, "reader_prev_page", "上一页", true, None::<&str>)?;
-    let next_page = MenuItem::with_id(handle, "reader_next_page", "下一页", true, None::<&str>)?;
+    let prev_page = MenuItem::with_id(handle, "reader_prev_page", "上一页 ←", true, None::<&str>)?;
+    let next_page = MenuItem::with_id(handle, "reader_next_page", "下一页 →", true, None::<&str>)?;
     let prev_chapter =
-        MenuItem::with_id(handle, "reader_prev_chapter", "上一章", true, None::<&str>)?;
+        MenuItem::with_id(handle, "reader_prev_chapter", "上一章 ↑", true, None::<&str>)?;
     let next_chapter =
-        MenuItem::with_id(handle, "reader_next_chapter", "下一章", true, None::<&str>)?;
+        MenuItem::with_id(handle, "reader_next_chapter", "下一章 ↓", true, None::<&str>)?;
     let auto_flip = CheckMenuItem::with_id(
         handle,
         "auto_flip",
