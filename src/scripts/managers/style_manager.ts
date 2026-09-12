@@ -36,7 +36,7 @@ export class StyleManager {
   private darkModeQuery: MediaQueryList | null = null;
   private darkModeHandler: ((e: MediaQueryListEvent | MediaQueryList) => void) | null = null;
   private pageThemeObserver: MutationObserver | null = null;
-  private lastWindowTheme: Theme | undefined;
+  private lastWindowTheme: Theme | null | undefined;
   private unsubscribeSettings: (() => void) | null = null;
   private unsubscribeDoubleColumn: (() => void) | null = null;
 
@@ -85,6 +85,9 @@ export class StyleManager {
         log.debug('[StyleManager] Entering reader page, applying styles');
         this.applyStyles();
       }
+
+      // 阅读页与主页的背景兜底策略不同，路由切换时同步
+      this.handleBaseBg();
     }) as EventListener;
 
     this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
@@ -96,6 +99,9 @@ export class StyleManager {
         log.debug('[StyleManager] Leaving reader page, clearing reader styles');
         this.clearReaderStyles();
       }
+
+      // 阅读页与主页的背景兜底策略不同，路由切换时同步
+      this.handleBaseBg();
     }) as EventListener;
 
     window.addEventListener('ipc:route-changed', this.routeChangedHandler);
@@ -109,19 +115,8 @@ export class StyleManager {
   }
 
   private handleTheme() {
-    this.darkModeHandler = (e: MediaQueryList | MediaQueryListEvent) => {
-      const runtime = this.siteContext.currentRuntime;
-
-      if (runtime?.styleOwner === 'manager' && runtime.getDarkThemeCSS && runtime.getLightThemeCSS) {
-        const css = e.matches ? runtime.getDarkThemeCSS() : runtime.getLightThemeCSS();
-        injectCSS('wxrd-base-bg', css);
-      } else {
-        // Fallback to default theme
-        const defaultCSS = e.matches
-          ? 'html, body { background-color: #2c2c2c !important; }'
-          : 'html, body { background-color: #f4f5f7 !important; }';
-        injectCSS('wxrd-base-bg', defaultCSS);
-      }
+    this.darkModeHandler = () => {
+      this.handleBaseBg();
       this.syncWindowTheme();
     };
 
@@ -141,15 +136,43 @@ export class StyleManager {
     }
   }
 
-  private currentWindowTheme(): Theme | undefined {
+  // 主页/书城的背景兜底跟随系统深浅；阅读页的深浅完全由微信读书内
+  // 切换按钮决定（wr_whiteTheme），系统主题不得染指（issue #18 用户反馈：
+  // 系统切深时浅色阅读页被强制染成 #2c2c2c）
+  private handleBaseBg(): void {
+    if (this.siteContext.isReaderPage) {
+      removeCSS('wxrd-base-bg');
+      return;
+    }
+    const runtime = this.siteContext.currentRuntime;
+    const systemDark = this.darkModeQuery?.matches
+      ?? window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (runtime?.styleOwner === 'manager' && runtime.getDarkThemeCSS && runtime.getLightThemeCSS) {
+      injectCSS('wxrd-base-bg', systemDark ? runtime.getDarkThemeCSS() : runtime.getLightThemeCSS());
+    } else {
+      // Fallback to default theme
+      const defaultCSS = systemDark
+        ? 'html, body { background-color: #2c2c2c !important; }'
+        : 'html, body { background-color: #f4f5f7 !important; }';
+      injectCSS('wxrd-base-bg', defaultCSS);
+    }
+  }
+
+  private currentWindowTheme(): Theme | null | undefined {
     if (this.siteContext.siteId !== 'weread') return undefined;
+    // 非阅读页（主页/书城）的 body 用 wr_theme_light/dark 标记主题，没有
+    // wr_whiteTheme——不能据此判 dark，否则 setTheme('dark') 会把 WebView
+    // 外观钉死，劫持 matchMedia，主页的系统主题跟随与深色滤镜全部失真
+    // （issue #18）。交还系统跟随（setTheme(null)）。
+    if (!this.siteContext.isReaderPage) return null;
     return document.body?.classList.contains('wr_whiteTheme') ? 'light' : 'dark';
   }
 
   private syncWindowTheme(): void {
     if (window.self !== window.top || !window.__TAURI__) return;
     const theme = this.currentWindowTheme();
-    if (!theme) return;
+    // 仅非 weread 站点不干预；null（恢复系统跟随）是有效指令，必须下发
+    if (theme === undefined) return;
     if (theme === this.lastWindowTheme) return;
     this.lastWindowTheme = theme;
     this.setWindowTheme(theme);

@@ -132,7 +132,8 @@ describe('StyleManager ownership and cleanup', () => {
     expect(document.getElementById('wxrd-wide-mode')?.textContent).toContain('true');
     expect(document.getElementById('wxrd-hide-toolbar')?.textContent).toContain('true');
     expect(document.getElementById('wxrd-hide-navbar')?.textContent).toContain('true');
-    expect(document.getElementById('wxrd-base-bg')?.textContent).toContain('background: dark');
+    // 阅读页深浅完全由微信读书内切换按钮决定，系统主题不注入 base-bg（issue #18）
+    expect(document.getElementById('wxrd-base-bg')).toBeNull();
 
     settingsStore.get = () => baseSettings({ readerWide: false, hideToolbar: false });
     settingsListener?.(settingsStore.get());
@@ -214,6 +215,36 @@ describe('StyleManager ownership and cleanup', () => {
       { label: 'main', value: null },
       undefined,
     );
+  });
+
+  it('leaving the reader page restores the system theme follow (issue #18)', async () => {
+    const { runtime } = createRuntime('manager', 'weread');
+    const registry = PluginRegistry.getInstance();
+    registry.register(runtime);
+    registry.setActivePlugin(runtime.id);
+
+    manager = new StyleManager();
+    // 阅读页深色主题：body 无 wr_whiteTheme → 跟随为 dark
+    expect(themeInvoke).toHaveBeenLastCalledWith(
+      'plugin:window|set_theme',
+      { label: 'main', value: 'dark' },
+      undefined,
+    );
+
+    // 回到主页：runtime 判非阅读页 → 交还系统跟随（setTheme(null)），
+    // 而不是把窗口钉死在 dark（回归：主页无 wr_whiteTheme 被误判）。
+    // 主页真实类名是 wr_theme_light（添加它同时触发 body 类变更）
+    runtime.isReaderPage = () => false;
+    document.body.classList.add('wr_theme_light');
+    await Bun.sleep(0);
+    expect(themeInvoke).toHaveBeenLastCalledWith(
+      'plugin:window|set_theme',
+      { label: 'main', value: null },
+      undefined,
+    );
+
+    manager.destroy();
+    manager = null;
   });
 
   it('does not synchronize the native window theme from an iframe', () => {
