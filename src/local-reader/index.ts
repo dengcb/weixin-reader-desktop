@@ -820,6 +820,19 @@ class LocalReader implements LocalReaderController {
     convert: (value: string) => LocalTypography[K],
   ): void {
     const input = element<HTMLInputElement | HTMLSelectElement>(id);
+    // range 滑杆：拖动过程实时预览数值与排版（input 事件），提交仍走 change
+    // （松手/键盘）。select 只派发 change，不受影响。
+    if (input instanceof HTMLInputElement && input.type === 'range') {
+      const preview = document.getElementById(`${id}Value`);
+      input.addEventListener('input', () => {
+        const shown = convert(input.value);
+        if (preview) {
+          preview.textContent = key === 'fontSize' || key === 'pagePaddingX' ? `${shown}px` : String(shown);
+        }
+        this.typography = { ...this.typography, [key]: shown } as LocalTypography;
+        this.applyTypography();
+      });
+    }
     input.addEventListener('change', () => void this.updateTypography({ [key]: convert(input.value) } as Pick<LocalTypography, K>));
   }
 

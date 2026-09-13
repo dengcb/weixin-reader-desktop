@@ -33,8 +33,11 @@ export class ProgressBar extends BaseManager {
           this.progressBarElement = null;
           this.show();
         } else if (this.progressBarElement) {
-          // DOM 存在且有引用，直接更新
-          this.progressBarElement.style.width = `${data.progress}%`;
+          // DOM 存在且有引用，直接更新。
+          // 倒读时 turningPages 可为负（tracker 有意不夹取），负百分比是非法
+          // CSS 值会被 CSSOM 丢弃、条宽停留旧值；渲染层夹取到 0..100。
+          const bounded = Math.min(100, Math.max(0, data.progress));
+          this.progressBarElement.style.width = `${bounded}%`;
         }
       }
     });
@@ -69,19 +72,53 @@ export class ProgressBar extends BaseManager {
   private show() {
     const container = document.querySelector('.renderTargetContainer');
     if (!container) {
+      // 章节加载动画期间容器尚未渲染：若就此返回，isVisible 仍是 false，
+      // 后续 PROGRESS_UPDATED / CHAPTER_CHANGED 都以 isVisible 为前置，
+      // 进度条从此不再创建（直到下一次设置变更）。此处先置位并登记一次
+      // 容器等待重试。
+      this.isVisible = true;
+      this.scheduleContainerRetry();
       return;
     }
 
-    // 检查是否已经存在进度条容器
+    this.buildInto(container);
+    this.isVisible = true;
+
+    log.info(`[ProgressBar] Progress bar shown with ${this.latestProgress}% progress`);
+  }
+
+  /**
+   * 容器晚于 setVisibility(true) 出现时的补救：轮询几次，容器就绪即补建。
+   * 仅在已请求显示且 DOM 尚无容器时运行；hide()/destroy() 会取消。
+   */
+  private scheduleContainerRetry() {
+    if (this.chapterTimer) return;
+    let attempts = 0;
+    const poll = () => {
+      if (this.isDestroyed() || !this.isVisible) return;
+      if (document.getElementById('wxrd-progress-bar-container')) return;
+      const container = document.querySelector('.renderTargetContainer');
+      if (container) {
+        this.buildInto(container);
+        return;
+      }
+      if (++attempts >= 25) return; // ~5s 后放弃，等章节事件兜底
+      this.chapterTimer = setTimeout(() => {
+        this.chapterTimer = null;
+        poll();
+      }, 200);
+    };
+    poll();
+  }
+
+  /** 拆出 show() 的容器填充段，供初次 show 与容器重试共用。 */
+  private buildInto(container: Element) {
     const existingContainer = document.getElementById('wxrd-progress-bar-container');
     if (existingContainer) {
       existingContainer.remove();
     }
-
-    // 清理旧引用
     this.progressBarElement = null;
 
-    // 创建进度条容器
     const progressContainer = document.createElement('div');
     progressContainer.id = 'wxrd-progress-bar-container';
     progressContainer.style.cssText = `
@@ -97,12 +134,11 @@ export class ProgressBar extends BaseManager {
       z-index: 9999;
     `;
 
-    // 创建进度条，使用缓存的最新进度值
     const progressBar = document.createElement('div');
     progressBar.id = 'wxrd-progress-bar';
     progressBar.style.cssText = `
       height: 100%;
-      width: ${this.latestProgress}%;
+      width: ${Math.min(100, Math.max(0, this.latestProgress))}%;
       background-color: #349f66;
       transition: width 0.3s ease;
     `;
@@ -111,9 +147,6 @@ export class ProgressBar extends BaseManager {
     container.appendChild(progressContainer);
 
     this.progressBarElement = progressBar;
-    this.isVisible = true;
-
-    log.info(`[ProgressBar] Progress bar shown with ${this.latestProgress}% progress`);
   }
 
   private hide() {

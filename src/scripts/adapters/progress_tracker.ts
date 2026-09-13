@@ -542,12 +542,22 @@ export class ProgressTracker extends BaseManager {
     this.pageTurnMonitorInitialized = true;
 
     // 监听键盘翻页
+    // 输入控件内的方向键属于文本编辑/滑块调节行为，不是翻页；否则笔记编辑
+    // 与样式面板滑块会污染 turningPages，进度百分比无端漂移（与
+    // remote_manager 的快捷键守卫同构）。
     this.keydownHandler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inEditable =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable === true;
+      if (inEditable) return;
+      // 翻页方向只在阅读上下文中有意义；离开阅读页（currentBookToken 清空）
+      // 后残余按键不应再累计 turningPages。
+      if (!this.currentBookToken) return;
       if (e.key === 'ArrowRight') {
-        console.log('[ProgressTracker] 键盘右键 → 记录向前方向');
         this.recordPageDirection(PageDirection.FORWARD);
       } else if (e.key === 'ArrowLeft') {
-        console.log('[ProgressTracker] 键盘左键 → 记录向后方向');
         this.recordPageDirection(PageDirection.BACKWARD);
       }
     };
