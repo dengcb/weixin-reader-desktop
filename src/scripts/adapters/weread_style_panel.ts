@@ -19,6 +19,8 @@ import {
   MIN_WIDE_WIDTH_PERCENT,
   normalizeWideWidthPercent,
 } from '../core/reader_width';
+import { invoke } from '../core/tauri';
+import { detectWereadTheme } from '../core/weread_theme';
 
 type LineHeightChoice = number | null;
 type SpacingChoice = number | null;
@@ -32,6 +34,19 @@ const READING_BACKGROUND_PRESETS = [
   { label: '纯黑', value: '#000000' },
 ] as const;
 const DEFAULT_READING_BACKGROUND = '#16171a';
+
+/** 全黑度档页面底（两侧留白）映射：比正文黑度浅一档，保留 v1.7.4 起
+ * 有意的色差层次（注释原话：「正文卡片与页面底色保留色差，微信读书的
+ * 圆角才可见」）。dev.14 曾把留白拉到与正文同色（沉浸），用户实测反馈
+ * 观感劣化——全黑一片失去卡片边界；dev.15 回归层次：留白跟随体系切换
+ * 但恒比正文浅一档。 */
+const READING_GUTTER_PRESETS: Record<string, string> = {
+  '#18191b': '#26272a', // 柔黑正文 → 留白柔灰
+  '#16171a': '#222326', // 深黑正文 → 留白铁灰
+  '#000000': '#101012', // 纯黑正文 → 留白炭黑
+};
+const gutterColorFor = (background: string): string =>
+  READING_GUTTER_PRESETS[background] ?? '#222326';
 
 /** 背景档位白名单校验：持久化值只接受预设色；null/未知值回落深黑（默认档），
  *  防止被污染的存储值拼进 style 注入 */
@@ -90,11 +105,23 @@ export const setupStylePanel = (api: PluginAPI): (() => void) => {
 
   const observer = new MutationObserver(() => ensureButton());
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  // BugHunter 低危项：离开阅读页时 DOM observer 可能先于路由事件到达或反之。
+  // 并联监听路由事件，谁先触发谁卸载面板残留规则（离页白闪窗口收窄）。
+  const onRoute = ((e: CustomEvent<{ isReader?: boolean }>) => {
+    if (e.detail?.isReader === false) {
+      teardown?.();
+      teardown = null;
+    }
+  }) as EventListener;
+  window.addEventListener('ipc:route-changed', onRoute);
+  window.addEventListener('wxrd:route-changed', onRoute);
   ensureButton();
 
   return () => {
     disposed = true;
     observer.disconnect();
+    window.removeEventListener('ipc:route-changed', onRoute);
+    window.removeEventListener('wxrd:route-changed', onRoute);
     teardown?.();
     teardown = null;
   };
@@ -150,7 +177,7 @@ const mountPanel = (api: PluginAPI): (() => void) => {
           ${READING_BACKGROUND_PRESETS.map(preset => `<button type="button" data-value="${preset.value}">${preset.label}</button>`).join('')}
         </div>
       </div>
-      <p class="wxrd-hint">夜间：深色底 + 提亮文字；日间：无效；插图同步提亮</p>
+      <p class="wxrd-hint">夜间：深色底 + 提亮文字与插图（插图反色）；日间：无效</p>
     </div>
     <div class="wxrd-panel-section">
       <div class="wxrd-field">
@@ -265,6 +292,7 @@ const mountPanel = (api: PluginAPI): (() => void) => {
 
   const applyReadingStyles = (config: Record<string, any>): void => {
     const whiteText = config.whiteText === true;
+    const wereadTheme = detectWereadTheme();
     if (whiteText) {
       const brightness = Number(config.whiteTextBrightness ?? 1.35) || 1.35;
       const background = normalizeReadingBackground(config.whiteTextBackground);
@@ -285,6 +313,21 @@ const mountPanel = (api: PluginAPI): (() => void) => {
         }
         body:not(.wr_whiteTheme) .wr_canvasContainer canvas {
           filter: brightness(${brightness}) !important;
+        }
+        /* 两侧留白随主题切换（dev.13 反馈的 bug）但与正文保持色差层次
+           （dev.14 用户反馈：全同色观感劣化，回归 v1.7.4 的有意设计——
+           「正文卡片与页面底色保留色差，圆角才可见」）。留白取黑度档
+           对应的浅一档映射（见 READING_GUTTER_PRESETS）；日间纯白。 */
+        ${wereadTheme === 'dark' ? `body:not(.wr_whiteTheme) {
+          background-color: ${gutterColorFor(background)} !important;
+        }` : `body.wr_whiteTheme, body:not(.wr_whiteTheme) {
+          background-color: #fff !important;
+        }`}
+        /* 正文插图/公式是独立 <img>（黑墨透明底/白底），深底上黑墨不可见；
+           brightness 对纯黑墨无效（0×N=0），必须反色成白墨，色相用 hue-rotate 抵消。
+           限定正文容器防止命中页面装饰图（头像/封面等）。 */
+        body:not(.wr_whiteTheme) .readerChapterContent img {
+          filter: invert(1) hue-rotate(180deg) !important;
         }
         body.wr_whiteTheme .readerContent > .app_content:not(.app_content_in_reader),
         body.wr_whiteTheme .wr_horizontalReader_app_content,
@@ -383,12 +426,33 @@ const mountPanel = (api: PluginAPI): (() => void) => {
   };
 
   const unsubscribe = settings.subscribe(applyReadingStyles);
+  // 微信读书主题切换（cookie wr_theme）可能不整页刷新 —— 每 800ms 轻量
+  // 比对一次，变化即重跑样式（亮/暗留白分支切换）。teardown 时清除。
+  let lastTheme = detectWereadTheme();
+  // 整个软件 UI 随微信读书亮暗联动（恢复 archived 679f58b 丢于 v1.8.3 重置的设计），
+  // 并升级为 dev.17 的 cookie wr_theme 信号源。set_theme 生效范围：原生菜单栏/
+  // 标题栏/上下文菜单等所有跟随系统深浅色的原生件。
+  const syncWindowTheme = (theme: 'dark' | 'light') => {
+    const label = (window as any).__TAURI__?.__currentWindow?.label;
+    if (!label) return;
+    void invoke('plugin:window|set_theme', { label, value: theme }).catch(() => undefined);
+  };
+  const themeWatcher = setInterval(() => {
+    const next = detectWereadTheme();
+    if (next !== lastTheme) {
+      lastTheme = next;
+      applyReadingStyles(settings.getAll());
+      syncWindowTheme(next);  // 亮→整个窗件亮化；暗→暗化
+    }
+  }, 800);
   applyReadingStyles(settings.getAll());
+  syncWindowTheme(detectWereadTheme());  // 初始装配（冷启动即对齐当前主题）
 
   // 面板样式（独立注入，随面板卸载移除）
   api.style.inject('wxrd-style-panel-ui', PANEL_UI_CSS);
 
-  return () => {
+    return () => {
+    clearInterval(themeWatcher);
     unsubscribe();
     button.removeEventListener('click', toggleButton);
     document.removeEventListener('click', closeOnOutside, true);

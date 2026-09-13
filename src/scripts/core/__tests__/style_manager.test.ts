@@ -109,6 +109,8 @@ describe('StyleManager ownership and cleanup', () => {
   });
 
   afterEach(() => {
+    // watcher/主题用例跨文件 cookie 污染防线（BugHunter 中危项）
+    ['wr_theme=light', 'wr_theme=dark'].forEach((k) => { document.cookie = `${k}; path=/; max-age=0`; });
     manager?.destroy();
     manager = null;
     settingsStore.get = originals.get;
@@ -200,11 +202,30 @@ describe('StyleManager ownership and cleanup', () => {
       undefined,
     );
 
-    document.body.classList.add('wr_whiteTheme');
+    // dev.16 语义收口后：阅读页主题真信号 = cookie wr_theme（上游的
+    // wr_whiteTheme DOM 类仅作无 cookie 兜底）。用例改为写 cookie。
+    document.cookie = 'wr_theme=light; path=/';
+    document.body.classList.add('wr_whiteTheme'); // 兜底路径同时在场，校验 cookie 优先级
     await Bun.sleep(0);
     expect(themeInvoke).toHaveBeenLastCalledWith(
       'plugin:window|set_theme',
       { label: 'main', value: 'light' },
+      undefined,
+    );
+    // 段前清场（happy-dom 跨用例 cookie 残留防线）
+    document.cookie = 'wr_theme=light; path=/; max-age=0';
+    document.cookie = 'wr_theme=dark; path=/; max-age=0';
+    // cookie 切回 dark（无 DOM 类），必须随 cookie 变暗
+    document.cookie = 'wr_theme=dark; path=/';
+    document.body.classList.remove('wr_whiteTheme');
+    // happy-dom 的 class observer 对 remove 不派发（实测段3 缺失）。
+    // 改经路由事件驱动——同时覆盖 BugHunter 高危项新增的
+    // route→syncWindowTheme 安全路径。
+    window.dispatchEvent(new CustomEvent('ipc:route-changed', { detail: { isReader: true, url: 'https://weread.qq.com/web/reader/x' } }));
+    await Bun.sleep(0);
+    expect(themeInvoke).toHaveBeenLastCalledWith(
+      'plugin:window|set_theme',
+      { label: 'main', value: 'dark' },
       undefined,
     );
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, test } from 'bun:test';
 import type { PluginAPI } from '../core/plugin_types';
 import { setupStylePanel } from './weread_style_panel';
 
@@ -66,6 +66,22 @@ describe('WeRead 纯白正文背景黑度', () => {
     expect(css).toContain('background-color: #16171a !important');
   });
 
+  it('夜间给正文插图反色补偿：只命中正文容器内 img，不碰页面装饰图', () => {
+    const context = createAPI({ whiteText: true });
+    teardown = setupStylePanel(context.api);
+
+    const css = context.styles.get('wxrd-white-text');
+    // 插图/公式是独立 <img> 元素，深底上黑墨必须反色成白墨（brightness 对纯黑无效）
+    expect(css).toContain('body:not(.wr_whiteTheme) .readerChapterContent img');
+    expect(css).toContain('filter: invert(1) hue-rotate(180deg) !important');
+    // 限定正文容器、夜间分支，防误伤日间模式与页面装饰性图片（头像/封面）
+    expect(css!.match(/invert\(1\)/g)).toHaveLength(1);
+    // invert 与 hue-rotate 必须成对出现，防止未来只删一半导致反色规则漂移
+    expect(css!.match(/hue-rotate\(180deg\)/g)).toHaveLength(1);
+    expect(css).not.toContain('body.wr_whiteTheme .readerChapterContent img');
+    expect(css).not.toContain('body:not(.wr_whiteTheme) img');
+  });
+
   it('阅读宽度默认关闭，可在 52% 到 98% 间按 2% 调节', () => {
     const context = createAPI();
     teardown = setupStylePanel(context.api);
@@ -118,7 +134,10 @@ describe('WeRead 纯白正文背景黑度', () => {
     expect(css).toContain('.readerChapterContent');
     expect(css).toContain('.renderTargetContainer');
     expect(css).toContain('.wr_canvasContainer');
-    expect(css!.match(/background-color: #18191b !important/g)).toHaveLength(1);
+    expect(css!.match(/background-color: #18191b !important/g)).toHaveLength(1); // 仅容器组块（正文卡片）
+    // 两侧留白用浅一档映射：柔黑正文 → 留白 #26272a（色差层次，dev.15）
+    expect(css!.match(/background-color: #26272a !important/g)).toHaveLength(1);
+    expect(css!.includes('#26272a !important')).toBe(true); // 两侧留白=浅一档（bodies 块命中）
     expect(css!.match(/border-radius: 16px !important/g)).toHaveLength(2);
   });
 
@@ -240,4 +259,48 @@ describe('WeRead 纯白正文背景黑度', () => {
       expect(patch?.progressBarHeight).toBeNull();
     });
   });
+});
+
+// dev.18：整窗 UI 随微信读书主题联动（archived 679f58b 设计恢复）
+describe('微信读书主题 → 整窗联动契约', () => {
+  test('watcher 变化时调用 plugin:window|set_theme（菜单栏/原生件深浅色）', async () => {
+    const calls: Array<{ label?: string; value?: string }> = [];
+    (window as any).__TAURI__ = {
+      ...(window as any).__TAURI__,
+      __currentWindow: { label: 'main' },
+      core: { invoke: async (cmd: string, args: any) => { if (cmd === 'plugin:window|set_theme') calls.push(args); return null; } },
+    };
+    const context = createAPI({ whiteText: true });
+    let localTeardown = setupStylePanel(context.api);
+    // 使 mount 真正发生：reader 路径 + .readerControls 容器（否则面板不装配、
+    // syncWindowTheme 不会挂载——本用例此前 Received:[] 的根因）
+    history.replaceState({}, '', '/web/reader/probe');
+    if (!document.querySelector('.readerControls')) {
+      const host = document.createElement('div');
+      host.className = 'readerControls';
+      document.body.appendChild(host);
+    }
+    // 模拟初始（暗色 wr_theme cookie 由测试环境注入? happy-dom 无 cookie 概念——
+    // 直接改 cookie：happy-dom document.cookie 可写）
+    // 预置暗色 cookie（写于 mount 之前，初始 sync 立即记录 dark）
+    document.cookie = 'wr_theme=dark; path=/';
+    await Bun.sleep(50); // mount 初始 sync（冷启动对齐）
+    expect(calls.map(c => c.value)).toContain('dark');
+    document.cookie = 'wr_theme=light; path=/';
+    await Bun.sleep(950); // watcher 800ms + 余量
+    const themes = calls.map(c => c.value);
+    expect(themes).toContain('light');       // 切亮后联动亮
+    // 恢复暗
+    document.cookie = 'wr_theme=dark; path=/';
+    await Bun.sleep(950);
+    expect(calls.map(c => c.value).pop()).toBe('dark'); // 最后一次回暗
+    localTeardown();
+    delete (window as any).__TAURI__;
+  }, 6000);
+});
+
+
+// BugHunter 中危项：watcher 契约用例写入的 wr_theme cookie 跨文件污染防线
+afterEach(() => {
+  ['wr_theme=light', 'wr_theme=dark'].forEach((k) => { document.cookie = `${k}; path=/; max-age=0`; });
 });
