@@ -1,6 +1,6 @@
 [package]
 name = "weixin-reader"
-version = "1.8.4"
+version = "1.8.5"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

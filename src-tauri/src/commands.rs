@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+// AtomicU64 仅被 Windows 专属的 hover 唤出菜单栏世代计数使用
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicU64;
 use tauri::{menu::MenuItemKind, AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 /// 摸鱼模式状态：true = 当前隐藏中
@@ -275,6 +278,7 @@ fn force_nonclient_recalc<R: Runtime>(win: &tauri::WebviewWindow<R>) {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)] // Windows-only 功能（菜单栏强制重算非客户区）的平台空 stub：调用点在 cfg(windows) 代码内
 fn force_nonclient_recalc<R: Runtime>(_win: &tauri::WebviewWindow<R>) {}
 
 #[tauri::command]
