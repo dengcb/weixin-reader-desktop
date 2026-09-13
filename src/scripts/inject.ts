@@ -1,7 +1,12 @@
 import { AppRuntime } from './core/app_runtime';
-import { attachKeyboardToSameOriginIframes } from './core/iframe_keyboard';
+import { attachEventToSameOriginIframes, attachKeyboardToSameOriginIframes } from './core/iframe_keyboard';
 import { log } from './core/logger';
-import { invoke } from './core/tauri';
+import { invoke, listen } from './core/tauri';
+import {
+  ensureExitButton,
+  isEdgeHit,
+  showExitButton,
+} from './core/fullscreen_exit_button';
 
 
 
@@ -125,7 +130,97 @@ async function main(): Promise<void> {
   // - 坐标语义：iframe 转发附加 __atreaderTopClientY（frame 偏移换算后的
   //   顶层视口坐标），主文档事件回退原 clientY。
   // 触发后 500ms 节流：避免驻留命中带期间 60Hz 连发 IPC。
-  // 全屏碰顶交互与整窗主题联动由后续提交链引入；本提交仅含注入时序修复。
+  if (isWindows) {
+    // 全屏碰顶交互（dev.9 重设计）：不再唤出菜单栏白色标题条，改为显示
+    // 页面内「退出全屏」叉号按钮（浏览器全屏式）；点击 = toggle_fullscreen
+    //（与 F11 同路径：退出全屏 + 菜单栏/标题回窗）。深浅主题双适配由
+    // fullscreen_exit_button 的 CSS 负责（wr_whiteTheme / prefers-color-scheme）。
+    let inFullscreen = false;
+    let suppressEdgeMove = false;
+    const hideTimer: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+    // 诊断窗（同第5轮方法论：先可观测再判定）：真机 CDP 直接读
+    // window.wxrdEdgeProbe 判定链路停在哪一步
+    const probe = { inFullscreen: false, suppressed: false, lastY: -1, handlerFired: 0, lastGuard: '' };
+    (window as any).wxrdEdgeProbe = probe;
+    // 真相源策略（dev.12 定案）：历史 inFullscreen 闭包只被
+    // fullscreen-changed 事件驱动，而启动全屏回放的 emit 与注入脚本
+    // listen 注册存在竞速（非持久广播在订阅前发生即丢失）——探针实证
+    // 全屏会话 inFullscreen 恒 false。改为 edgeHandler 触发时主动
+    // invoke is_main_fullscreen 查询（带 200ms 去抖缓存），事件仍
+    // 保留为加速器。
+    let fsProbeCache: { at: number; value: boolean } | null = null;
+    const fsNow = (): Promise<boolean> => {
+      const fresh = fsProbeCache && Date.now() - fsProbeCache.at < 200;
+      const cached = fsProbeCache?.value;
+      if (fresh && typeof cached === 'boolean') return Promise.resolve(cached);
+      return invoke<boolean>('is_main_fullscreen').catch(() => false).then((live) => {
+        const known = inFullscreen;
+        const value = live || known; // 事件加速器兜底（后端不可达时）
+        fsProbeCache = { at: Date.now(), value };
+        return value;
+      });
+    };
+    const edgeHandler = (e: MouseEvent) => {
+      probe.lastY = e.clientY;
+      probe.suppressed = suppressEdgeMove;
+      const topClientY = (e as { __atreaderTopClientY?: number }).__atreaderTopClientY;
+      const y = typeof topClientY === 'number' ? topClientY : e.clientY;
+      // 指针离开命中带较远时不隐藏（保留 EXIT_BUTTON_LINGER_MS 的找回窗口）；
+      // 只有隐藏计时到点才由 showExitButton 内部的 setTimeout 收回。
+      if (!isEdgeHit(y)) return;
+      // 全屏判定改为 fsNow() 主动查询（dev.12 探针实证闭包事件源会丢启动
+      // 全屏回放）。命中后先查询，真全屏才建钮；查询失败退化用事件缓存。
+      void fsNow().then((fs) => {
+        probe.inFullscreen = fs;
+        if (!fs || suppressEdgeMove) { probe.lastGuard = 'fullscreen-or-suppress'; return; }
+        probe.handlerFired += 1;
+        probe.lastGuard = 'pass';
+        const btn = ensureExitButton(document);
+        if (btn) {
+          showExitButton(btn, hideTimer);
+          if (btn.dataset.wxrdManagedHit !== '1') {
+            btn.dataset.wxrdManagedHit = '1';
+            // 自管理命中（dev.19 真机 hitmap 取证）：微信读书 readerTopBar
+            // (z=80, fixed) 会压住按钮矩形的边角层叠区——DOM 天然命中
+            // 不可达。改为捕获阶段几何判定：pointerdown 落点在按钮 rect 内
+            // 即触发，与层叠大战无关（"范围内皆可点"）。
+            document.addEventListener('pointerdown', (pe) => {
+              if (pe.button !== 0) return;
+              const r = btn.getBoundingClientRect();
+              if (pe.clientX < r.left || pe.clientX > r.right || pe.clientY < r.top || pe.clientY > r.bottom) return;
+              if (!btn.classList.contains('wxrd-edge-shown')) return;
+              pe.preventDefault(); pe.stopImmediatePropagation();
+              invoke('simulate_menu_click', { action: 'toggle_fullscreen' }).catch(() => {});
+            }, true);
+            btn.addEventListener('click', (ce) => {
+              ce.preventDefault();
+              invoke('simulate_menu_click', { action: 'toggle_fullscreen' }).catch(() => {});
+            });
+          }
+        }
+      });
+      return;  // 同步段到此为止（其余逻辑已并入异步回调）
+    };
+    window.addEventListener('mousemove', edgeHandler, true);
+    // 指针在正文 iframe 内时 mousemove 不冒泡出 frame——与 keydown 同构转发
+    // （监听随页面生命周期存在，无需 detach；失败只损失 hover 转发，
+    // 不得向上抛——main() 后续的 AppRuntime 初始化比它重要得多）
+    try {
+      void attachEventToSameOriginIframes('mousemove', edgeHandler as (event: never) => void);
+    } catch (error) {
+      log.error('[Inject] iframe mousemove 转发挂载失败（退出全屏按钮仍作用于主文档）', error);
+    }
+    void listen('fullscreen-changed', (event) => {
+      inFullscreen = event.payload === true;
+      if (inFullscreen) {
+        suppressEdgeMove = true;
+        setTimeout(() => { suppressEdgeMove = false; }, 200);
+      } else {
+        // 退出全屏时立刻收起按钮
+        document.getElementById('wxrd-exit-fullscreen')?.classList.remove('wxrd-edge-shown');
+      }
+    }).catch(() => {});
+  }
 
   const runtime = new AppRuntime();
   try {

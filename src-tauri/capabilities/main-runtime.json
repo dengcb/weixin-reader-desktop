@@ -29,6 +29,7 @@
     "allow-set-title",
     "allow-toggle-stealth",
     "allow-toggle-menu-bar",
+    "allow-reveal-menu-bar-transient",
     "allow-simulate-menu-click",
     "allow-switch-bookstore-by-index",
     "allow-apply-site-zoom",

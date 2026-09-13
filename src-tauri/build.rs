@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "toggle_stealth",
             "toggle_menu_bar",
             "is_main_fullscreen",
+            "reveal_menu_bar_transient",
             "simulate_menu_click",
             "set_content_source_enabled",
             "claim_settings_target",
