@@ -1716,8 +1716,19 @@ mod tests {
             Some(cwd.join("NOTES.TXT"))
         );
         assert_eq!(
-            book_path_from_argument("file:///tmp/%E4%B8%89%E4%BD%93.epub", cwd),
-            Some(PathBuf::from("/tmp/三体.epub"))
+            book_path_from_argument(
+                if cfg!(windows) {
+                    "file:///D:/tmp/%E4%B8%89%E4%BD%93.epub"
+                } else {
+                    "file:///tmp/%E4%B8%89%E4%BD%93.epub"
+                },
+                cwd
+            ),
+            Some(if cfg!(windows) {
+                PathBuf::from(r"D:\tmp\三体.epub")
+            } else {
+                PathBuf::from("/tmp/三体.epub")
+            })
         );
         assert_eq!(book_path_from_argument("plugin.atrd", cwd), None);
         assert_eq!(book_path_from_argument("/abs/path/novel.mobi", cwd), None);
