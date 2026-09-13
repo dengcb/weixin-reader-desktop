@@ -525,3 +525,27 @@ describe('ProgressTracker established WeRead progress algorithm', () => {
     expect(tracker.turningPages).toBe(3);
   });
 });
+
+describe('ProgressTracker keydown 输入控件守卫', () => {
+  it('input/textarea/contenteditable 内的方向键不计为翻页', async () => {
+    const tracker = createTracker();
+    chapterManager.getChapters = () => [chapter(2, 10, undefined, '第2章')];
+
+    const before = tracker.getCurrentProgress();
+    const input = Object.assign(document.createElement('input'), { type: 'text' });
+    document.body.appendChild(input);
+    input.focus();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', target: input } as KeyboardEventInit));
+    const textareaTarget = Object.assign(document.createElement('textarea'));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', target: textareaTarget } as KeyboardEventInit));
+    await Bun.sleep(560);
+    input.remove();
+
+    // 无翻页方向被记录 → turningPages 未变化（createTracker 未驱动翻页，进度保持 before）
+    expect(tracker.getCurrentProgress()).toBe(before);
+    expect(tracker.turningPages === 0 || tracker.turningPages === undefined).toBe(true);
+    trackers.splice(trackers.indexOf(tracker), 1);
+    tracker.destroy();
+  });
+});

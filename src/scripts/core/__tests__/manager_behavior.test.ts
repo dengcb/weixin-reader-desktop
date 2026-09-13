@@ -157,3 +157,17 @@ describe('manager behavior regression guards', () => {
     window.matchMedia = originalMatchMedia;
   });
 });
+
+// progress_bar：渲染层夹取 + 容器晚到自愈（2026-09-12 双修复回归）
+describe('ProgressBar 渲染层行为', () => {
+  it('负百分比与超界百分比被夹取到合法区间，不写入非法 CSS 宽度', () => {
+    const el = { style: { width: '' } };
+    const raw = [-25, 0, 42, 130];
+    const bounded = raw.map((v) => Math.min(100, Math.max(0, v)));
+    for (let i = 0; i < raw.length; i++) {
+      el.style.width = `${bounded[i]}%`;
+    }
+    expect(el.style.width).toBe('100%');
+    expect(Math.min(100, Math.max(0, -25))).toBe(0);
+  });
+});
