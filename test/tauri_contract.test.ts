@@ -318,6 +318,7 @@ describe('Tauri application contracts', () => {
       'allow-set-title',
       'allow-toggle-stealth',
       'allow-toggle-menu-bar',
+      'allow-reveal-menu-bar-transient',
       'allow-simulate-menu-click',
       'allow-switch-bookstore-by-index',
       'allow-apply-site-zoom',
@@ -348,5 +349,22 @@ describe('Tauri application contracts', () => {
       identifier: 'core:window:allow-set-theme',
       allow: [{ label: 'main' }],
     });
+  });
+
+  it('pins the fullscreen-changed event name on both the Rust and TS sides', async () => {
+    // 事件名是两端裸字符串，typo 会让 hover 唤出整体静默——两端集合必须相等
+    const rustSources = (await Promise.all([
+      readText('src-tauri/src/lib.rs'),
+      readText('src-tauri/src/menu.rs'),
+    ])).join('\n');
+    const rustEmits = new Set([
+      ...rustSources.matchAll(/emit\("([a-z-]+)"/g),
+    ].map((m) => m[1]));
+    const injectSource = await readText('src/scripts/inject.ts');
+    const tsListens = new Set([
+      ...injectSource.matchAll(/listen\('([a-z-]+)'/g),
+    ].map((m) => m[1]));
+    expect(rustEmits.has('fullscreen-changed')).toBe(true);
+    expect(tsListens.has('fullscreen-changed')).toBe(true);
   });
 });

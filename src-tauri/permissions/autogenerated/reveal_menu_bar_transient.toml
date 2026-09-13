@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reveal-menu-bar-transient"
+description = "Enables the reveal_menu_bar_transient command without any pre-configured scope."
+commands.allow = ["reveal_menu_bar_transient"]
+
+[[permission]]
+identifier = "deny-reveal-menu-bar-transient"
+description = "Denies the reveal_menu_bar_transient command without any pre-configured scope."
+commands.deny = ["reveal_menu_bar_transient"]
