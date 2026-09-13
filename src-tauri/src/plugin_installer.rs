@@ -303,8 +303,19 @@ mod tests {
             Some(cwd.join("FANQIE.ATRD"))
         );
         assert_eq!(
-            path_from_argument("file:///tmp/%E7%95%AA%E8%8C%84.atrd", cwd),
-            Some(PathBuf::from("/tmp/番茄.atrd"))
+            path_from_argument(
+                if cfg!(windows) {
+                    "file:///D:/tmp/%E7%95%AA%E8%8C%84.atrd"
+                } else {
+                    "file:///tmp/%E7%95%AA%E8%8C%84.atrd"
+                },
+                cwd
+            ),
+            Some(if cfg!(windows) {
+                PathBuf::from(r"D:\tmp\番茄.atrd")
+            } else {
+                PathBuf::from("/tmp/番茄.atrd")
+            })
         );
         assert_eq!(path_from_argument("notes.txt", cwd), None);
     }

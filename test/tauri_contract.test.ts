@@ -327,6 +327,7 @@ describe('Tauri application contracts', () => {
       'allow-get-reading-position',
       'allow-save-reading-position',
       'allow-get-runtime-plugin',
+      'allow-is-main-fullscreen',
     ]);
     expect(capability.permissions.map(permissionIdentifier).some(item =>
       /(?:fs|shell|updater|dialog|opener|create|install|uninstall|export)/i.test(item)

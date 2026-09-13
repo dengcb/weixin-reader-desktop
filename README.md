@@ -284,7 +284,7 @@ bun run release:clear    # 清理本地发布文件
 
 ```bash
 bun test                                    # TypeScript 前端
-cargo test --manifest-path src-tauri/Cargo.toml  # Rust 后端
+cargo test --lib --manifest-path src-tauri/Cargo.toml  # Rust 后端（Windows：--lib 必需，dev 全目标有已知 LNK1241，见 test/README.md）
 ```
 
 CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + build + IPC 检查 + inject.js 一致性校验）。
