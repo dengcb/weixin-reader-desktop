@@ -38,6 +38,15 @@ const assertWebkitCompatible = (label: string, code: string): void => {
       );
     }
   }
+  // [dev.6 事故守卫] 初始化脚本以经典脚本（AddScriptToExecuteOnDocumentCreated）
+  // 执行：任何顶层 export/import 语句都是语法错误，整个注入静默死亡
+  // （快捷键/样式面板/AppRuntime 全挂）。bun build 只在源码含 export 时
+  // 保留它——一旦产物尾部出现 export{...} 或顶层 export 声明即中止。
+  if (/(?:^|[;\n])\s*(?:export\s*[{*]|import\s*[({'"*])/.test(code)) {
+    throw new Error(
+      `${label} 含顶层 import/export 语句——WebView2 初始化脚本是经典脚本上下文，模块语法会导致整个注入解析失败（dev.6 回归根因）。可测单元放独立模块再引用，不要从 inject 源 re-export。`,
+    );
+  }
 };
 
 try {
