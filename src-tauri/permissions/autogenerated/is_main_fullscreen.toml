@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-main-fullscreen"
+description = "Enables the is_main_fullscreen command without any pre-configured scope."
+commands.allow = ["is_main_fullscreen"]
+
+[[permission]]
+identifier = "deny-is-main-fullscreen"
+description = "Denies the is_main_fullscreen command without any pre-configured scope."
+commands.deny = ["is_main_fullscreen"]

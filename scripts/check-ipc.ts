@@ -126,6 +126,7 @@ const expectedMainCommands = new Set([
   'set_title',
   'toggle_stealth',
   'toggle_menu_bar',
+  'is_main_fullscreen',
   'simulate_menu_click',
   'switch_bookstore_by_index',
   'apply_site_zoom',

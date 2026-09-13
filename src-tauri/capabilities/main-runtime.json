@@ -2,16 +2,25 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-runtime",
   "description": "Minimal reading runtime permissions for the remote main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "remote": {
-    "urls": ["https://*", "http://*"]
+    "urls": [
+      "https://*",
+      "http://*"
+    ]
   },
   "permissions": [
     "core:default",
     "core:event:default",
     {
       "identifier": "core:window:allow-set-theme",
-      "allow": [{ "label": "main" }]
+      "allow": [
+        {
+          "label": "main"
+        }
+      ]
     },
     "allow-log-to-file",
     "allow-update-menu-state",
@@ -28,6 +37,7 @@
     "allow-patch-settings",
     "allow-get-reading-position",
     "allow-save-reading-position",
-    "allow-get-runtime-plugin"
+    "allow-get-runtime-plugin",
+    "allow-is-main-fullscreen"
   ]
 }

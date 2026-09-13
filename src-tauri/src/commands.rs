@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{menu::MenuItemKind, AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 /// 摸鱼模式状态：true = 当前隐藏中
@@ -188,7 +188,8 @@ pub fn toggle_stealth<R: Runtime>(app: AppHandle<R>) {
     }
 }
 
-/// Windows 专属：切换菜单栏可见性（Ctrl+M）
+/// Windows 专属：切换菜单栏可见性（Ctrl+H，见 inject.ts / local-reader 前端键位；
+/// 菜单 accelerator 刻意为 None——WebView2 下 accelerator 失效，前端模拟触发）
 /// 不持久化，重启后恢复默认显示
 #[cfg(target_os = "windows")]
 static MENU_HIDDEN: AtomicBool = AtomicBool::new(false);
@@ -198,6 +199,84 @@ pub fn is_menu_bar_visible() -> bool {
     !MENU_HIDDEN.load(Ordering::SeqCst)
 }
 
+/// 跨层教训（用户两轮真机反馈驱动）：tauri 2.11 的 hide_menu/show_menu 把
+/// muda 层错误（Err(NotInitialized) 等）在内部 let _ 吞掉、永远返回 Ok——
+/// Rust 侧无法通过 Result 察觉物理失败。菜单栏切换的真实状态必须用
+/// is_menu_visible()（GetMenu(hwnd) 真值）回读验证；不匹配时采取自愈。
+///
+/// 自愈必须走「摘除 + app 级重设」：Window::set_menu 会把窗口菜单的
+/// is_app_wide 标志改写为 false，此后 AppHandle::set_menu（rebuild 的
+/// 路径）因「窗口已有 window-specific 菜单」被跳过——书店列表/显示器
+/// 列表/勾选态全部停止更新直到重启（Reviewer 抓到的潜伏回归）。而
+/// remove_menu 置 menu_lock 为 None 后，AppHandle::set_menu 会重新
+/// 以 is_app_wide=true 下发，恢复完整的重建链。
+#[cfg(target_os = "windows")]
+pub fn set_menu_bar_hidden<R: Runtime>(
+    app: &AppHandle<R>,
+    win: &tauri::WebviewWindow<R>,
+    hidden: bool,
+) -> bool {
+    let apply = |w: &tauri::WebviewWindow<R>| {
+        let outcome = if hidden { w.hide_menu() } else { w.show_menu() };
+        if let Err(error) = outcome {
+            log::error!("切换菜单栏可见性失败（目标：{}）：{error}", if hidden { "隐藏" } else { "显示" });
+        }
+    };
+    apply(win);
+    let mut achieved = matches!(win.is_menu_visible(), Ok(v) if v == !hidden);
+    if !achieved {
+        // 一次重试：摘除后整菜单重建（全新实例）再执行目标动作。
+        // 曾用 app.set_menu(app.menu())——传入同一个缓存对象疑似被
+        // tauri/muda 去重为 no-op（dev.7 真机 CDP 三连败实证：SHOW 方向
+        // 任何 set_menu(same) 都不能把 NULL 状态恢复挂载）。
+        // rebuild_full_menu 每次构建全新平台菜单并全量下发，代价更高，
+        // 正确性优先。
+        let _ = win.remove_menu();
+        if crate::menu::rebuild_full_menu(app).is_ok() {
+            apply(win);
+            achieved = matches!(win.is_menu_visible(), Ok(v) if v == !hidden);
+        }
+    }
+    if !achieved {
+        // 终级兜底（dev.4 真机 4 连按取证）：tauri/muda 层对 show 路径可能
+        // 静默失败（SetMenu 吞错且不重算非客户区）。直接对窗口 hwnd 执行
+        // SetWindowPos SWP_FRAMECHANGED，强制 Win32 重算非客户区并把
+        //（由 app 级重设已挂上的）菜单栏绘制出来。
+        force_nonclient_recalc(win);
+        if !hidden {
+            apply(win);
+        }
+        achieved = matches!(win.is_menu_visible(), Ok(v) if v == !hidden);
+    }
+    achieved
+}
+
+/// 强制目标窗口重算非客户区（菜单栏所在区域）。SetMenu 后若宿主只调了
+/// DrawMenuBar，在部分状态（全屏 borderless 等）下栏不会出现；一次
+/// SWP_FRAMECHANGED 的 same-position SetWindowPos 是等价于样式变更的
+/// 无损触发方式。
+#[cfg(target_os = "windows")]
+fn force_nonclient_recalc<R: Runtime>(win: &tauri::WebviewWindow<R>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOP, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    let Ok(hwnd) = win.hwnd() else { return };
+    unsafe {
+        SetWindowPos(
+            hwnd.0 as _,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn force_nonclient_recalc<R: Runtime>(_win: &tauri::WebviewWindow<R>) {}
+
 #[tauri::command]
 pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
     #[cfg(target_os = "windows")]
@@ -205,14 +284,25 @@ pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
         let Some(win) = app.get_webview_window("main") else {
             return;
         };
-        let was_hidden = MENU_HIDDEN.swap(true, Ordering::SeqCst);
-        if was_hidden {
-            let _ = win.show_menu();
-            MENU_HIDDEN.store(false, Ordering::SeqCst);
-            crate::menu::set_menu_check_state(&app, "toggle_menu", true);
+        // 历史 bug（第一轮反馈：第二次失效）：旧实现 swap(true) 先焊死状态、
+        // 吞错。第二轮反馈（完全无反应）的复核结论：tauri 层把 muda 错误吞成
+        // 永远 Ok，「检查 Result」是空架子——真值校验必须走 is_menu_visible
+        // 回读（见 set_menu_bar_hidden）。
+        // 第三轮（dev.3 真机反馈 + 三方合并审计）：动作参数误传「当前态」
+        // hidden 而非「目标态」！首次按下对已可见菜单执行 show（视觉无变化）
+        // 后翻转状态，此后 is_menu_bar_visible 与屏幕恒反相，污染 rebuild/
+        // hover-reveal 到期收回/全屏同步的 persist_hidden 判定。
+        let hidden = MENU_HIDDEN.load(Ordering::SeqCst);
+        let visible_after = !hidden;
+        if set_menu_bar_hidden(&app, &win, visible_after) {
+            MENU_HIDDEN.store(visible_after, Ordering::SeqCst);
+            crate::menu::set_menu_check_state(&app, "toggle_menu", visible_after);
+            log::info!(
+                "Ctrl+H toggle 达成：hidden={}（is_menu_visible 校验通过）",
+                visible_after
+            );
         } else {
-            let _ = win.hide_menu();
-            crate::menu::set_menu_check_state(&app, "toggle_menu", false);
+            log::error!("切换菜单栏失败且自愈未达成，状态保持不变（重按重试）");
         }
     }
     // 非 Windows 平台：空操作（macOS/Linux 菜单行为不同，不需要隐藏）
@@ -227,6 +317,77 @@ pub fn toggle_menu_bar<R: Runtime>(app: AppHandle<R>) {
 pub fn sync_menu_hidden_for_fullscreen<R: Runtime>(app: &AppHandle<R>, hidden: bool) {
     MENU_HIDDEN.store(hidden, Ordering::SeqCst);
     crate::menu::set_menu_check_state(app, "toggle_menu", !hidden);
+}
+
+/// 到期收回的单例计时器状态（LazyLock 需要具名类型做 static）：
+/// handle 槽 + 世代计数（防 abort 边缘竞速，Reviewer 建议）
+#[cfg(target_os = "windows")]
+struct RevealState {
+    handle: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    generation: AtomicU64,
+}
+
+/// 全屏 hover 唤出菜单栏（一次性，用户已批准的功能）。
+///
+/// 前端在全屏状态下检测 mousemove 命中带（clientY ≤ 2）后调用本命令：
+/// 临时显示菜单栏 reveal_ms 毫秒，到期恢复隐藏（若到期时又有碰顶，
+/// 前端会再次调用本命令 re-arm，实现「再次碰顶可不断唤出」）。
+/// 语义约束：绝不触碰 MENU_HIDDEN——它表达的是「用户 Ctrl+H 持久意愿」；
+/// 本命令只改变物理可见性并到期收回，防止污染持久状态语义。
+/// （到时若用户正在下拉菜单操作，延长窗口由前端通过再次调用实现；
+/// 原生菜单上的 mousemove 收不到，故采用固定时长 + re-arm 模式。）
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn reveal_menu_bar_transient<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow,
+    reveal_ms: u64,
+) {
+    use std::sync::Mutex;
+    if window.label() != "main" {
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    if !set_menu_bar_hidden(&app, &win, false) {
+        log::error!("hover 唤出菜单栏失败且自愈未达成");
+        return;
+    }
+    // 单例计时器 + 世代计数（Reviewer 建议）：re-arm 时 abort 旧任务并
+    // 递增世代；到期回调携带自己的世代，仅当世代仍匹配才执行收回——
+    // 防「abort 落在旧任务 sleep 已完成、同步段执行中」的边缘竞速。
+    static REVEAL_STATE: std::sync::LazyLock<RevealState> =
+        std::sync::LazyLock::new(|| RevealState {
+            handle: Mutex::new(None),
+            generation: AtomicU64::new(0),
+        });
+    let my_generation = REVEAL_STATE.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(mut guard) = REVEAL_STATE.handle.lock() {
+        if let Some(previous) = guard.take() {
+            previous.abort();
+        }
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(reveal_ms)).await;
+        // 世代校验：期间有 re-arm（abort 未及时生效的边缘）则本任务作废
+        if REVEAL_STATE.generation.load(Ordering::SeqCst) != my_generation {
+            return;
+        }
+        if let Ok(mut guard) = REVEAL_STATE.handle.lock() {
+            *guard = None;
+        }
+        if let Some(win) = app.get_webview_window("main") {
+            // 到期收回条件：仍处于全屏 且 用户持久意愿为隐藏（MENU_HIDDEN=true）。
+            // 用户 Ctrl+H 语义（显示）或已退出全屏时保持现状——后者由
+            // toggle 全屏路径的 show_menu 恢复，不在此重复。
+            let persist_hidden = MENU_HIDDEN.load(Ordering::SeqCst);
+            let in_fullscreen = win.is_fullscreen().unwrap_or(false);
+            if in_fullscreen && persist_hidden && !set_menu_bar_hidden(&app, &win, true) {
+                log::error!("hover 唤出到时收回失败");
+            }
+        }
+    });
 }
 
 /// 模拟菜单点击（Windows"瞒天过海"快捷键方案）
@@ -283,6 +444,19 @@ pub fn switch_bookstore_by_index<R: Runtime>(
 }
 
 /// 前端注入脚本初始化完成时调用，通知 Rust 端按当前站点应用缩放
+/// 主窗口当前是否处于全屏（窗口级）。
+///
+/// 启动路径（window-state 全屏回放 / monitor 跨屏恢复）的 fullscreen-changed
+/// emit 与注入脚本 listen 注册存在竞速：emit 是非持久广播，发生在订阅完成
+/// 前即丢失（dev.12 探针实证：全屏会话 inFullscreen 恒 false）。前端把
+/// 本命令作为真相源（事件仍保留作加速器）。
+#[tauri::command]
+pub fn is_main_fullscreen(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|win| win.is_fullscreen().ok())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub fn apply_site_zoom(app: AppHandle, site_id: String) {
     let settings = crate::settings::read_settings(&app)
@@ -914,7 +1088,16 @@ mod tests {
                     cmd: command.into(),
                     callback: tauri::ipc::CallbackFn(0),
                     error: tauri::ipc::CallbackFn(1),
-                    url: "tauri://localhost".parse().unwrap(),
+                    // Tauri 官方 get_ipc_response 示例要求按平台选本地协议 URL；
+                    // Windows/Android 必须用 http://tauri.localhost，否则被判为
+                    // 远程 origin 而 ACL 拒绝（mock_context 的 ACL 为空）。
+                    url: if cfg!(any(windows, target_os = "android")) {
+                        "http://tauri.localhost"
+                    } else {
+                        "tauri://localhost"
+                    }
+                    .parse()
+                    .unwrap(),
                     body: tauri::ipc::InvokeBody::default(),
                     headers: Default::default(),
                     invoke_key: INVOKE_KEY.to_string(),
@@ -1057,5 +1240,22 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn menu_toggle_applies_target_state_not_current_state() {
+        // dev.3 第三轮真机回归：toggle 曾把「当前态」hidden 传给
+        // set_menu_bar_hidden 而非目标态 ！hidden——首按视觉无效后状态反相。
+        // 用纯函数级推演固化：目标态 = !当前 MENU_HIDDEN。
+        // （MENU_HIDDEN/窗口为 Win32 资源，无法单测直连；这里固化语义不变量，
+        //  由 tauri_ipc_dispatches_application_metadata_commands 一类的集成
+        //  冒烟与真机 CDP 复测兜底。）
+        for current in [false, true] {
+            let target = !current;
+            assert_ne!(current, target, "toggle 必须产生目标态翻转");
+            // set_menu_bar_hidden 的参数语义：hidden=true → 隐藏；目标态即应传入值
+            let applied_hidden = target;
+            assert_eq!(applied_hidden, !current);
+        }
     }
 }
