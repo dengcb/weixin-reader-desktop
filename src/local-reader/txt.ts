@@ -19,8 +19,16 @@ export const splitTxtChapters = (input: string, bookTitle: string): TxtChapter[]
   if (matches.length === 0) {
     return [{ id: 'txt-0', title: bookTitle, text, start: 0 }];
   }
-  return matches.map((match, index) => {
-    const start = index === 0 ? 0 : match.index ?? 0;
+  // 首个标题前的正文（序/楔子/前言）不属于任何匹配章节：标题在正文开头
+  // 时不存在前导内容，单独成章时按书名命名，避免“楔子被并进第一章”。
+  const firstMatch = matches[0];
+  const firstHeadingStart = firstMatch.index ?? 0;
+  const prefix = text.slice(0, firstHeadingStart).trim();
+  const preamble = prefix
+    ? [{ id: 'txt-pre', title: prefix.length <= 80 ? prefix.split('\n')[0] : bookTitle, text: prefix, start: 0 }]
+    : [];
+  return [...preamble, ...matches.map((match, index) => {
+    const start = match.index ?? 0;
     const end = matches[index + 1]?.index ?? text.length;
     return {
       id: `txt-${index}`,
@@ -28,7 +36,7 @@ export const splitTxtChapters = (input: string, bookTitle: string): TxtChapter[]
       text: text.slice(start, end).trim(),
       start,
     };
-  });
+  })];
 };
 
 const escapeHTML = (value: string): string => value
