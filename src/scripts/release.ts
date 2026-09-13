@@ -237,7 +237,7 @@ async function runPreflight(): Promise<void> {
     [process.execPath, ['install', '--frozen-lockfile']],
     [process.execPath, ['run', 'check:version']],
     [process.execPath, ['run', 'typecheck']],
-    [process.execPath, ['test']],
+    [process.execPath, ['test', '--isolate']],
     [process.execPath, ['run', 'check:ipc']],
     [process.execPath, ['run', 'build']],
     ['cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked']],

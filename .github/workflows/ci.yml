@@ -43,7 +43,7 @@ jobs:
         run: |
           bun run check:version
           bun run typecheck
-          bun test
+          bun test --isolate
           bun run check:ipc
           bun run build
           git diff --exit-code -- src/scripts/inject.js
