@@ -34,7 +34,7 @@ export function showToast(text: string) {
         z-index: 2147483647; /* Max z-index */
         white-space: nowrap;
         user-select: none;
-        animation: wxrdToastFadeOut 0.5s ease-out forwards;
+        animation: wxrdToastFadeOut 1s ease-out forwards;
       }
     `;
     document.head.appendChild(style);

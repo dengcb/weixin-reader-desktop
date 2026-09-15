@@ -1050,7 +1050,7 @@ class LocalReader implements LocalReaderController {
     const shortcutMap: Record<string, string> = {
       ',': 'settings', r: 'refresh', '[': 'back', ']': 'forward', i: 'auto_flip',
       '=': 'zoom_in', '-': 'zoom_out', '0': 'zoom_reset', '9': 'reader_wide',
-      '8': 'hide_cursor', o: 'hide_toolbar',
+      '8': 'show_memory', o: 'hide_toolbar',
     };
     this.keyHandler = (event: KeyboardEvent) => {
       // 按键原始键值落盘：用于裁决遥控器事件是否到达前端及键值形态

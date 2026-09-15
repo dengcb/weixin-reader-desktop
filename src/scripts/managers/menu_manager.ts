@@ -148,7 +148,6 @@ export class MenuManager {
         readerWide: false,
         hideToolbar: false,
         hideNavbar: false,
-        hideCursor: false,
         autoFlip: false,
         previousChapter: false,
         nextChapter: false,
@@ -187,7 +186,6 @@ export class MenuManager {
       readerWide: capWide,
       hideToolbar: capToolbar,
       hideNavbar: capNavbar,
-      hideCursor: caps?.hideCursor === true,
       autoFlip: caps?.autoFlip === true,
       previousChapter: capPreviousChapter,
       nextChapter: capNextChapter,
@@ -199,7 +197,6 @@ export class MenuManager {
     readerWide: boolean;
     hideToolbar: boolean;
     hideNavbar: boolean;
-    hideCursor: boolean;
     autoFlip: boolean;
     previousChapter: boolean;
     nextChapter: boolean;
@@ -210,7 +207,6 @@ export class MenuManager {
         invoke('set_menu_item_enabled', { id: 'reader_wide', enabled: state.readerWide }),
         invoke('set_menu_item_enabled', { id: 'hide_toolbar', enabled: state.hideToolbar }),
         invoke('set_menu_item_enabled', { id: 'hide_navbar', enabled: state.hideNavbar }),
-        invoke('set_menu_item_enabled', { id: 'hide_cursor', enabled: state.hideCursor }),
         invoke('set_menu_item_enabled', { id: 'auto_flip', enabled: state.autoFlip }),
         invoke('set_menu_item_enabled', { id: 'reader_prev_page', enabled: state.autoFlip }),
         invoke('set_menu_item_enabled', { id: 'reader_next_page', enabled: state.autoFlip }),
@@ -275,7 +271,7 @@ export class MenuManager {
     log.debug('[MenuManager] Handling action:', action, 'siteId:', siteId);
 
     const readerActions = new Set([
-      'reader_wide', 'hide_toolbar', 'hide_navbar', 'hide_cursor', 'auto_flip',
+      'reader_wide', 'hide_toolbar', 'hide_navbar', 'auto_flip',
       'reader_prev_page', 'reader_next_page', 'reader_prev_chapter',
       'reader_next_chapter', 'reader_style',
     ]);
@@ -321,12 +317,6 @@ export class MenuManager {
           } else {
             settingsStore.update({ hideNavbar: !settings.hideNavbar });
           }
-        }
-        break;
-
-      case 'hide_cursor':
-        {
-          settingsStore.updateGlobal({ hideCursor: !settings.hideCursor });
         }
         break;
 

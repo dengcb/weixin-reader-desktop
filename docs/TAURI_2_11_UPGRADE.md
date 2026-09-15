@@ -321,7 +321,7 @@ macOS 不受影响——WKWebView 不拦截这些键，Cmd 系列快捷键走系
 | Ctrl+- | zoom_out | |
 | Ctrl+0 | zoom_reset | |
 | Ctrl+9 | reader_wide | |
-| Ctrl+8 | hide_cursor | |
+| Ctrl+8 | show_memory | 帮助菜单「内存占用」，点击/按键后 toast 显示主进程内存 |
 | Ctrl+O | hide_toolbar | preventDefault 拦住 WebView2 的打开文件对话框 |
 | Ctrl+Shift+O | open_local_book | 打开本地图书，避免占用既有的工具栏快捷键 |
 | F11 | toggle_fullscreen | 单功能键，WebView2 同样拦截 |
@@ -355,7 +355,7 @@ let stealth_key = Shortcut::new(Some(mod_key), Code::Backquote);
 
 ### 书店快捷键（Ctrl+1~7，跨平台）
 
-前端 keydown 监听，不走菜单 accelerator。序号 1-based 映射：1=微信读书，2=第一个插件站点，依此类推。8/9/0 被其他快捷键占用（隐藏光标/阅读变宽/实际大小），书店快捷键只用 1~7。
+前端 keydown 监听，不走菜单 accelerator。序号 1-based 映射：1=微信读书，2=第一个插件站点，依此类推。8/9/0 被其他快捷键占用（内存占用/阅读变宽/实际大小），书店快捷键只用 1~7。
 
 ## 平台条件编译注意
 

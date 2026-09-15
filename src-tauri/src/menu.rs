@@ -590,6 +590,80 @@ pub fn claim_settings_target(
         .map_err(|_| "设置导航状态锁已损坏".to_string())
 }
 
+/// 当前进程物理内存占用（字节）。
+/// macOS 取 MACH_TASK_BASIC_INFO 的 resident_size（RSS，已与 `ps` 对拍一致），
+/// Windows 取 PrivateUsage（任务管理器「提交大小」口径）。
+/// 仅统计主进程；WKWebView / WebView2 渲染子进程暂不聚合。
+#[cfg(target_os = "macos")]
+fn current_process_memory_bytes() -> Option<u64> {
+    // mach/task_info.h：MACH_TASK_BASIC_INFO = 20，结构 48 字节（count 12），
+    // resident_size 位于偏移 8..16。曾尝试 proc_pidinfo(PROC_PIDTASKINFO) 与
+    // TASK_VM_INFO 的 phys_footprint：前者 flavor 常量与文档不符，后者该
+    // 字段实测恒为 0（真机 2026-09 实证），故采用稳定多年的 RSS 口径。
+    const MACH_TASK_BASIC_INFO: u32 = 20;
+
+    #[repr(C, align(8))]
+    struct MachTaskBasicInfoBuffer([u8; 48]);
+
+    extern "C" {
+        fn task_info(
+            target: u32,
+            flavor: u32,
+            task_info_out: *mut std::os::raw::c_void,
+            task_info_outCnt: *mut u32,
+        ) -> i32;
+
+        static mach_task_self_: u32;
+    }
+
+    unsafe {
+        let mut buffer = MachTaskBasicInfoBuffer([0u8; 48]);
+        let mut count = (buffer.0.len() / 4) as u32;
+        let ret = task_info(
+            mach_task_self_,
+            MACH_TASK_BASIC_INFO,
+            buffer.0.as_mut_ptr() as *mut std::os::raw::c_void,
+            &mut count,
+        );
+        if ret != 0 {
+            return None;
+        }
+        let resident = u64::from_ne_bytes(buffer.0[8..16].try_into().ok()?);
+        (resident > 0).then_some(resident)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn current_process_memory_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    unsafe {
+        let mut counters: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let ok = GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut _,
+            counters.cb,
+        );
+        (ok != 0)
+            .then(|| counters.PrivateUsage as u64)
+            .filter(|bytes| *bytes > 0)
+    }
+}
+
+/// 其余平台未发布，统一显示未知占位。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn current_process_memory_bytes() -> Option<u64> {
+    None
+}
+
+fn format_memory_toast(bytes: u64) -> String {
+    format!("{} MB", bytes / (1024 * 1024))
+}
+
 fn action_requires_main_focus(id: &str) -> bool {
     matches!(
         id,
@@ -597,7 +671,7 @@ fn action_requires_main_focus(id: &str) -> bool {
             | "back"
             | "forward"
             | "reader_wide"
-            | "hide_cursor"
+            | "show_memory"
             | "hide_toolbar"
             | "hide_navbar"
             | "auto_flip"
@@ -656,11 +730,6 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
                 let _ = win.emit("menu-action", "reader_wide");
             }
         }
-        "hide_cursor" => {
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.emit("menu-action", "hide_cursor");
-            }
-        }
         "hide_toolbar" => {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.emit("menu-action", "hide_toolbar");
@@ -713,6 +782,14 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
                 let _ = win.set_zoom(1.0);
                 save_zoom(app, &site_id, 1.0);
                 let _ = win.emit("show-toast", "100%");
+            }
+        }
+        "show_memory" => {
+            if let Some(win) = app.get_webview_window("main") {
+                let text = current_process_memory_bytes()
+                    .map(format_memory_toast)
+                    .unwrap_or_else(|| "内存占用未知".to_string());
+                let _ = win.emit("show-toast", text);
             }
         }
         "toggle_fullscreen" => {
@@ -1022,6 +1099,7 @@ fn build_app_menu<R: Runtime>(
             true,
             &[
                 &MenuItem::with_id(handle, "shortcuts", "快捷键参考…", true, None::<&str>)?,
+                &MenuItem::with_id(handle, "show_memory", "内存占用", true, Some("CmdOrCtrl+8"))?,
                 &MenuItem::with_id(handle, "help", "使用帮助", true, None::<&str>)?,
                 &MenuItem::with_id(handle, "feedback", "反馈问题", true, None::<&str>)?,
                 &help_sep,
@@ -1039,6 +1117,7 @@ fn build_app_menu<R: Runtime>(
             true,
             &[
                 &MenuItem::with_id(handle, "shortcuts", "快捷键参考…", true, None::<&str>)?,
+                &MenuItem::with_id(handle, "show_memory", "内存占用", true, Some("CmdOrCtrl+8"))?,
                 &MenuItem::with_id(handle, "help", "使用帮助", true, None::<&str>)?,
                 &MenuItem::with_id(handle, "feedback", "反馈问题", true, None::<&str>)?,
             ],
@@ -1182,7 +1261,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             | "reader_next_chapter"
             | "reader_style"
             | "reader_wide"
-            | "hide_cursor"
+            | "show_memory"
             | "hide_toolbar"
             | "hide_navbar"
             | "auto_flip"
@@ -1307,7 +1386,6 @@ struct InitialSettings {
     hide_toolbar: bool,
     hide_navbar: bool,
     auto_flip_active: bool,
-    hide_cursor: bool,
 }
 
 fn initial_settings_from_document(document: &serde_json::Value) -> InitialSettings {
@@ -1342,10 +1420,6 @@ fn initial_settings_from_document(document: &serde_json::Value) -> InitialSettin
             .and_then(|value| value.get("active"))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
-        hide_cursor: global
-            .and_then(|value| value.get("hideCursor"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
     }
 }
 
@@ -1373,13 +1447,37 @@ mod tests {
     }
 
     #[test]
+    fn memory_toast_formats_whole_megabytes() {
+        assert_eq!(format_memory_toast(0), "0 MB");
+        assert_eq!(format_memory_toast(128 * 1024 * 1024), "128 MB");
+        assert_eq!(
+            format_memory_toast(128 * 1024 * 1024 + 1024 * 1024 - 1),
+            "128 MB"
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn current_process_memory_reports_positive_plausible_bytes() {
+        let bytes = current_process_memory_bytes().expect("进程内存读取应成功");
+        assert!(bytes > 0);
+        // 口径哨兵：读错字段时常见为 0 或天文数字，16 GiB 上限拦截。
+        assert!(bytes < 16 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn show_memory_belongs_to_main_focus_actions() {
+        assert!(action_requires_main_focus("show_memory"));
+        assert!(!action_requires_main_focus("about"));
+    }
+
+    #[test]
     fn initial_menu_state_reads_global_and_active_site_from_schema_v2() {
         let document = json!({
             "schemaVersion": 2,
             "_version": 3,
             "global": {
                 "lastSiteId": "fanqie",
-                "hideCursor": true,
                 "autoFlip": { "active": true, "interval": 20, "keepAwake": false }
             },
             "sites": {
@@ -1400,7 +1498,6 @@ mod tests {
                 hide_toolbar: true,
                 hide_navbar: true,
                 auto_flip_active: true,
-                hide_cursor: true,
             }
         );
     }
@@ -1414,12 +1511,11 @@ mod tests {
                 hide_toolbar: false,
                 hide_navbar: false,
                 auto_flip_active: false,
-                hide_cursor: false,
             }
         );
         assert_eq!(
             initial_settings_from_document(&json!({
-                "global": { "lastSiteId": 7, "hideCursor": "yes" },
+                "global": { "lastSiteId": 7 },
                 "sites": { "weread": { "readerWide": "yes" } }
             })),
             InitialSettings {
@@ -1427,7 +1523,6 @@ mod tests {
                 hide_toolbar: false,
                 hide_navbar: false,
                 auto_flip_active: false,
-                hide_cursor: false,
             }
         );
     }

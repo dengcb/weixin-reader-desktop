@@ -30,7 +30,6 @@ pub const READER_ACTION_IDS: &[&str] = &[
     "reader_wide",
     "hide_toolbar",
     "hide_navbar",
-    "hide_cursor",
 ];
 
 /// 菜单是否可执行的原生端镜像。前端只负责报告能力，最终执行仍由 Rust 裁决。
@@ -51,7 +50,6 @@ pub const SIMULATED_ACTION_IDS: &[&str] = &[
     "reader_prev_chapter",
     "reader_next_chapter",
     "reader_style",
-    "hide_cursor",
     "reader_wide",
     "hide_toolbar",
     "hide_navbar",
@@ -65,6 +63,7 @@ pub const SIMULATED_ACTION_IDS: &[&str] = &[
     "settings_content",
     "settings_data",
     "shortcuts",
+    "show_memory",
 ];
 
 pub const MENU_STATE_IDS: &[&str] = &[
@@ -77,7 +76,6 @@ pub const MENU_STATE_IDS: &[&str] = &[
     "reader_prev_chapter",
     "reader_next_chapter",
     "reader_style",
-    "hide_cursor",
     "zoom_in",
     "zoom_out",
     "zoom_reset",

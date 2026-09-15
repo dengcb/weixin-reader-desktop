@@ -90,16 +90,13 @@ describe('MenuManager behavior', () => {
     expect(settingsStore.updateSite).toHaveBeenCalledWith('demo', { hideNavbar: true });
   });
 
-  it('keeps cursor and automatic flip settings global', () => {
+  it('keeps automatic flip settings global', () => {
     settingsStore.get = () => settings({
-      hideCursor: false,
       autoFlip: { active: true, interval: 20, keepAwake: false },
     });
     const manager = createBareManager();
 
-    (manager as any).handleMenuAction('hide_cursor');
     (manager as any).handleMenuAction('auto_flip');
-    expect(settingsStore.updateGlobal).toHaveBeenCalledWith({ hideCursor: true });
     expect(settingsStore.updateGlobal).toHaveBeenCalledWith({
       autoFlip: { active: false, interval: 20, keepAwake: false },
     });
@@ -169,14 +166,13 @@ describe('MenuManager behavior', () => {
 
     await (manager as any).syncMenuState(settings({
       readerWide: true,
-      hideCursor: true,
       hideToolbar: false,
       hideNavbar: true,
       autoFlip: { active: true, interval: 15, keepAwake: true },
     }));
 
     const calls = invokeMock.mock.calls.map(([command, args]) => ({ command, args }));
-    expect(calls.filter(call => call.command === 'set_menu_item_enabled')).toHaveLength(13);
+    expect(calls.filter(call => call.command === 'set_menu_item_enabled')).toHaveLength(12);
     expect(calls).toContainEqual({
       command: 'update_menu_state',
       args: { id: 'reader_wide', state: true },
