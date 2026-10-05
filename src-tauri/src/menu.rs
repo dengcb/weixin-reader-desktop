@@ -839,7 +839,21 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
             );
         }
         "about" => open_settings_target(app, "about", None, None),
-        "check_update" => open_settings_target(app, "about", Some("update"), Some("check_update")),
+        "check_update" => {
+            // 静默更新完成下载后，菜单文本已变为「重启并安装」——此时点击
+            // 必须执行重启安装，而不是再次打开关于页（此前文本与行为脱节：
+            // 用户点击后只打开了关于窗口，已下载的更新永远不生效）
+            if crate::update::is_update_downloaded(app.clone()) {
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = crate::update::install_update_now(app_handle).await {
+                        log::error!("[Update] 重启并安装失败：{error}");
+                    }
+                });
+            } else {
+                open_settings_target(app, "about", Some("update"), Some("check_update"));
+            }
+        }
         "stealth" => crate::commands::toggle_stealth(app.clone()),
         "toggle_menu" => crate::commands::toggle_menu_bar(app.clone()),
         _ => {}
