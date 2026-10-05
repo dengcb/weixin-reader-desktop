@@ -607,7 +607,10 @@ pub fn run() {
             local_books::drain_pending_open_book(app.handle());
 
             // 摸鱼键全局热键：Cmd/Ctrl + `
-            // 必须用全局热键，因为窗口 hide() 后不接收键盘事件，窗口内 keydown 监听失效
+            // 必须用全局热键，因为窗口 hide() 后不接收键盘事件，窗口内 keydown 监听失效。
+            // 被其他程序占用时不得阻断启动（issue #24：Windows 上 Ctrl+` 被占用 →
+            // AlreadyRegistered → setup panic → 启动闪退）：降级为停用后台热键并记
+            // 日志；应用内菜单「快速隐藏 ⌘`」仍可用。
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -618,16 +621,25 @@ pub fn run() {
                 let mod_key = Modifiers::CONTROL;
                 let stealth_key = Shortcut::new(Some(mod_key), Code::Backquote);
                 let stealth_handle = app.handle().clone();
-                app.handle().plugin(
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(move |_app, shortcut, event| {
-                            if shortcut == &stealth_key && event.state() == ShortcutState::Pressed {
-                                commands::toggle_stealth(stealth_handle.clone());
-                            }
-                        })
-                        .build(),
-                )?;
-                app.global_shortcut().register(stealth_key)?;
+                let stealth_plugin = tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(move |_app, shortcut, event| {
+                        if shortcut == &stealth_key && event.state() == ShortcutState::Pressed {
+                            commands::toggle_stealth(stealth_handle.clone());
+                        }
+                    })
+                    .build();
+                if let Err(plugin_error) = app.handle().plugin(stealth_plugin) {
+                    log::warn!(
+                        "[Init] 全局快捷键插件初始化失败，摸鱼键已停用（应用内菜单「快速隐藏 ⌘`」仍可用）：{plugin_error}"
+                    );
+                } else {
+                    match app.global_shortcut().register(stealth_key) {
+                        Ok(()) => {}
+                        Err(register_error) => log::warn!(
+                            "[Init] 摸鱼键热键已被其他程序占用，后台唤出已停用（应用内菜单「快速隐藏 ⌘`」仍可用）：{register_error}"
+                        ),
+                    }
+                }
             }
 
             Ok(())
