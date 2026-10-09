@@ -289,6 +289,86 @@ body::before{
   .btn-primary{padding:13px 30px;font-size:15px}
 }
 
+/* ===== 翻页方式 ===== */
+.pageflip{
+  padding:50px 0;
+  border-top:1px solid var(--line);
+}
+
+.pageflip-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:24px;
+}
+
+.pageflip-card{
+  padding:28px;
+  border-radius:10px;
+  background:linear-gradient(135deg,var(--paper-warm) 0%,var(--paper) 100%);
+  border:1px solid var(--line);
+  transition:all .3s ease;
+}
+
+.pageflip-card:hover{
+  border-color:var(--brand);
+  box-shadow:0 8px 24px rgba(0,0,0,.06);
+  transform:translateY(-4px);
+}
+
+.pageflip-head{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.pageflip-icon{
+  flex-shrink:0;
+  width:48px;
+  height:48px;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--paper);
+  border:1px solid var(--line);
+}
+
+.pageflip-icon svg{
+  width:26px;
+  height:26px;
+}
+
+.pageflip-head h3{
+  font-size:18px;
+  font-weight:700;
+  color:var(--ink);
+}
+
+.new-badge{
+  display:inline-block;
+  font-size:12px;
+  font-weight:600;
+  color:var(--paper);
+  background:var(--brand);
+  padding:2px 8px;
+  border-radius:3px;
+  margin-left:8px;
+  vertical-align:2px;
+  letter-spacing:1px;
+}
+
+.pageflip-card p{
+  font-size:14px;
+  color:var(--ink-light);
+  line-height:1.7;
+  margin-bottom:12px;
+}
+
+@media(max-width:700px){
+  .pageflip-grid{grid-template-columns:1fr}
+}
+
 /* ===== 插件生态 ===== */
 .plugins{
   padding:50px 0;
@@ -401,8 +481,9 @@ body::before{
 .hero{animation:fadeUp .8s ease}
 .features{animation:fadeUp .8s ease .15s both}
 .highlights{animation:fadeUp .8s ease .3s both}
-.plugins{animation:fadeUp .8s ease .4s both}
-.footer{animation:fadeUp .8s ease .55s both}
+.pageflip{animation:fadeUp .8s ease .4s both}
+.plugins{animation:fadeUp .8s ease .5s both}
+.footer{animation:fadeUp .8s ease .65s both}
 </style>
 </head>
 <body>
@@ -520,6 +601,50 @@ body::before{
       <div class="highlight-item">
         <span class="mark">✦</span>
         <span class="text"><strong>缩放控制</strong> · 站点独立记忆比例</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 翻页方式 ===== -->
+  <section class="pageflip">
+    <h2 class="section-title">解放双手</h2>
+    <p class="section-sub">语音一说 · 蓝牙一按 · 翻页不打断</p>
+
+    <div class="pageflip-grid">
+      <div class="pageflip-card">
+        <div class="pageflip-head">
+          <div class="pageflip-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#349f66" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+            </svg>
+          </div>
+          <h3>语音翻页<span class="new-badge">v1.9.0 新增</span></h3>
+        </div>
+        <p>设置开启后，说出「翻页」，章节自动向后翻。语音识别在系统端完成，数据不出本机；翻页词可自定义，连续阅读不误触。</p>
+        <div class="plugin-tags">
+          <span class="plugin-tag">macOS / Windows</span>
+          <span class="plugin-tag">端侧识别</span>
+          <span class="plugin-tag">自定义翻页词</span>
+        </div>
+      </div>
+
+      <div class="pageflip-card">
+        <div class="pageflip-head">
+          <div class="pageflip-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#349f66" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>
+            </svg>
+          </div>
+          <h3>蓝牙遥控翻页</h3>
+        </div>
+        <p>配对小米蓝牙遥控器、iReader 遥控器等蓝牙翻页器，方向键远程翻页，菜单键一键收起工具栏，躺卧追书不用伸手够键盘。</p>
+        <div class="plugin-tags">
+          <span class="plugin-tag">小米蓝牙遥控器</span>
+          <span class="plugin-tag">iReader 遥控器</span>
+          <span class="plugin-tag">免持阅读</span>
+        </div>
       </div>
     </div>
   </section>
