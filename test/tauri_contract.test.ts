@@ -245,12 +245,13 @@ describe('Tauri application contracts', () => {
   });
 
   it('keeps menu actions stable, nested and bounded across native and web runtimes', async () => {
-    const [menu, model, commands, inject, localReader] = await Promise.all([
+    const [menu, model, commands, inject, localReader, voiceTurner] = await Promise.all([
       readText('src-tauri/src/menu.rs'),
       readText('src-tauri/src/menu_model.rs'),
       readText('src-tauri/src/commands.rs'),
       readText('src/scripts/inject.ts'),
       readText('src/local-reader/index.ts'),
+      readText('src-tauri/src/voice_turner.rs'),
     ]);
 
     for (const id of ['menu_file', 'menu_reading', 'menu_go', 'menu_view', 'menu_window', 'menu_help']) {
@@ -283,6 +284,10 @@ describe('Tauri application contracts', () => {
     expect(localReader).toContain("'8': 'show_memory'");
     expect(localReader).toContain("? 'open_local_book'");
     expect(localReader).not.toContain("p: 'hide_navbar'");
+    // 语音翻页：触发复用菜单动作链路，强制设备端识别，不模拟键盘输入。
+    expect(voiceTurner).toContain('handle_menu_action(&page_app, "reader_next_page")');
+    expect(voiceTurner).toContain('setRequiresOnDeviceRecognition(true)');
+    expect(voiceTurner).toContain('sync_from_settings');
   });
 
   it('uses monotonic settings snapshots, atomic source intent and claimable hot deep-links', async () => {
@@ -294,6 +299,9 @@ describe('Tauri application contracts', () => {
     ]);
 
     expect(settingsPage).toContain('next._version >= documentState._version');
+    expect(settingsPage).toContain('data-global="voicePageTurn"');
+    expect(settingsPage).toContain('data-global="voicePageTurnPhrase"');
+    expect(settingsPage).toContain('语音翻页当前仅支持 macOS');
     expect(settingsPage).toContain("invoke('set_content_source_enabled'");
     expect(settingsPage).toContain("invoke('claim_settings_target')");
     expect(settingsPage).toContain("listen('plugins-updated',()=>refreshPluginsFromRepository())");

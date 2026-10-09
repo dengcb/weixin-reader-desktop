@@ -16,6 +16,7 @@ mod settings;
 mod sites;
 mod tracker_blocker;
 mod update;
+mod voice_turner;
 
 const LIBRARY_PAGE_PATH: &str = "/library";
 const LIBRARY_SCHEME: &str = "atreader";
@@ -566,6 +567,12 @@ pub fn run() {
 
             // Menu Init - AFTER main window is created
             menu::init(app)?;
+
+            // 语音翻页：注册监听管理状态，并按记忆的开关状态恢复监听。
+            app.manage(voice_turner::VoiceTurnerState::new());
+            let startup_settings = settings::read_settings(app.handle())
+                .unwrap_or_else(|_| settings::default_settings());
+            voice_turner::sync_from_settings(app.handle(), &startup_settings);
 
             // 网络错误或第三方页面永远不发送 Finished 时不能把用户永久困在启动页。
             // 正常路径通常在数百毫秒到数秒内由上面的稳定窗口提前揭示。

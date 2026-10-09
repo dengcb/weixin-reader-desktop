@@ -43,6 +43,8 @@ pub fn default_settings() -> Value {
             "lastPage": true,
             "rememberSite": true,
             "hideCursor": false,
+            "voicePageTurn": false,
+            "voicePageTurnPhrase": "翻页",
             "autoFlip": {
                 "active": false,
                 "interval": 15,
@@ -311,6 +313,8 @@ pub fn patch_settings<R: Runtime>(
     // 文件已经提交后，事件广播失败不能伪装成保存失败，否则前端回滚会与
     // 磁盘状态产生永久分叉。窗口重载时仍会从 Repository 读到最新状态。
     let _ = app.emit("settings-updated", current);
+    // 语音翻页监听跟随设置文档（事件驱动启停/热更新）。
+    crate::voice_turner::sync_from_settings(&app, current);
     Ok(outcome)
 }
 
@@ -321,6 +325,7 @@ pub fn update_setting<R: Runtime>(
 ) -> Result<Value, String> {
     let current = SettingsRepository::update_path(&get_settings_path(app), path, value)?;
     let _ = app.emit("settings-updated", &current);
+    crate::voice_turner::sync_from_settings(app, &current);
     Ok(current)
 }
 
@@ -384,6 +389,8 @@ mod tests {
         assert!(is_current_schema(&default_settings()));
         assert_eq!(default_settings()["global"]["autoUpdate"], true);
         assert_eq!(default_settings()["global"]["autoFlip"]["active"], false);
+        assert_eq!(default_settings()["global"]["voicePageTurn"], false);
+        assert_eq!(default_settings()["global"]["voicePageTurnPhrase"], "翻页");
         assert!(default_settings()["global"].get("enabledPlugins").is_none());
     }
 

@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- 语音翻页（设置可开启）：麦克风与设备端语音识别的权限说明，缺失会 TCC 崩溃。 -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>语音翻页需要访问麦克风，在本机识别翻页词。</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>语音翻页使用系统语音识别在本机判断翻页词，语音不会上传。</string>
   <!-- 本应用仅提供简体中文；让 AppKit 原生面板也以 zh-Hans 作为应用语言。 -->
   <key>CFBundleDevelopmentRegion</key>
   <string>zh-Hans</string>
