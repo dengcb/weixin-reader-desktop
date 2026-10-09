@@ -301,7 +301,8 @@ describe('Tauri application contracts', () => {
     expect(settingsPage).toContain('next._version >= documentState._version');
     expect(settingsPage).toContain('data-global="voicePageTurn"');
     expect(settingsPage).toContain('data-global="voicePageTurnPhrase"');
-    expect(settingsPage).toContain('语音翻页当前仅支持 macOS');
+    // 双平台可用：不得残留一期仅 macOS 的禁用提示。
+    expect(settingsPage).not.toContain('仅支持 macOS');
     expect(settingsPage).toContain("invoke('set_content_source_enabled'");
     expect(settingsPage).toContain("invoke('claim_settings_target')");
     expect(settingsPage).toContain("listen('plugins-updated',()=>refreshPluginsFromRepository())");

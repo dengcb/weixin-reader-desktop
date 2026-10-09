@@ -1,13 +1,13 @@
 # 测试与验收指南
 
-本文描述当前测试体系。最后核对日期：2026-09-10。
+本文描述当前测试体系。最后核对日期：2026-10-09。
 
 ## 当前结果
 
 | 层级 | 结果 | 说明 |
 |---|---:|---|
-| Bun DOM/契约测试 | 346 通过 | 40 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
-| Rust 单元测试 | 60 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新与 Tauri mock |
+| Bun DOM/契约测试 | 378 通过 | 45 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
+| Rust 单元测试 | 100 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新、语音翻页触发判定与 Tauri mock |
 | Rust 集成测试 | 6 通过 | `src-tauri/tests/plugin_test.rs` |
 | 真机硬件测试 | 1 忽略 | 需要真实 macOS 显示会话 |
 | 模拟 E2E | 6 通过 | Python Playwright + 临时 Chromium，本地 `test-page.html` |
@@ -156,6 +156,7 @@ Rust 核心测试与被测实现放在同一模块的 `#[cfg(test)]` 中，便�
 | `commands.rs` | DNS label、编辑器文件边界、运行时插件窗口限制、真实 Tauri IPC metadata 分发 |
 | `lib.rs` | 启动站点、启动 URL、rememberSite/lastPage 和站点缩放归属 |
 | `menu.rs` | schema v2 菜单初值、缩放邻级与 mock App 菜单 |
+| `voice_turner.rs` | 翻页词 N-best 命中、同音词候选救援、冷却窗口、词归一化与设置读取 |
 | `monitor.rs` | 纯位置计算与显式真机测试 |
 | `sites.rs` | 内置站点与已安装插件首页解析 |
 | `update.rs` | schema v2 自动更新开关、定时策略、序列化与 managed state |
@@ -189,7 +190,7 @@ cargo test --manifest-path src-tauri/Cargo.toml \
 `bun run check:ipc` 自动检查：
 
 - `build.rs` AppManifest 与 `generate_handler![]` 完全一致。
-- 23 个命令都有生成 permission。
+- 40 个命令都有生成 permission。
 - Capability permission 没有缺失或残留命令。
 - `tauri.conf.json` 启用的 Capability 文件集合正确。
 - `main-runtime` 的命令集合精确匹配阅读运行时白名单。

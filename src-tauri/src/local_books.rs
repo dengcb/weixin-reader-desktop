@@ -1033,6 +1033,7 @@ fn book_path_from_argument(argument: &str, cwd: &Path) -> Option<PathBuf> {
 }
 
 /// macOS RunEvent::Opened 入口：双击关联的 EPUB 或拖到 Dock 图标时接收文件 URL。
+#[cfg(target_os = "macos")]
 pub fn handle_opened_urls<R: Runtime>(app: &AppHandle<R>, urls: &[tauri::Url]) {
     let Some(path) = urls.iter().find_map(|url| {
         (url.scheme() == "file")

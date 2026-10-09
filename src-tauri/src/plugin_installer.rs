@@ -198,6 +198,7 @@ pub fn handle_external_arguments(app: &AppHandle, arguments: &[String], cwd: &Pa
     try_request_plugin_install(app, &path);
 }
 
+#[cfg(target_os = "macos")]
 pub fn handle_opened_urls(app: &AppHandle, urls: &[tauri::Url]) {
     let Some(path) = urls.iter().find_map(|url| {
         (url.scheme() == "file")

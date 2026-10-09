@@ -42,6 +42,9 @@ impl TriggerGate {
         }
     }
 
+    /// 热更新翻页词：仅 macOS 回调路径调用（Windows 词表编译后
+    /// 不可变，改词由 sync 统一重启监听）。
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn update_phrase(&mut self, phrase: &str) {
         self.phrase = phrase.to_string();
     }
@@ -107,17 +110,31 @@ impl VoiceTurnerState {
     }
 }
 
-/// 设置写入后的统一入口：与当前状态 diff——开→启、关→停、词变→热更新。
+/// 设置写入后的统一入口：与当前状态 diff——开→启、关→停、词变→重启。
 /// 所有写入路径（patch_settings / update_setting / 启动恢复）都必须经过这里，
 /// 保证监听状态永远跟随设置文档（事件驱动，无轮询）。
+/// 词变化统一重启监听：Windows 词表编译后不可变，macOS 虽可热更，
+/// 但重启路径已随开关切换验证可靠，统一行为最简。
 pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
     let Some(state) = app.try_state::<VoiceTurnerState>() else {
         return;
     };
     let (enabled, phrase) = voice_settings_from_document(settings);
-    *state.phrase.lock().unwrap() = phrase;
+    let previous_phrase =
+        std::mem::replace(&mut *state.phrase.lock().unwrap(), phrase.clone());
 
     let mut listener = state.listener.lock().unwrap();
+    if enabled && listener.is_some() && previous_phrase != phrase {
+        let active = listener.take();
+        drop(listener);
+        if let Some(active) = active {
+            active
+                .stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = active.thread.join();
+        }
+        listener = state.listener.lock().unwrap();
+    }
     if !enabled {
         let active = listener.take();
         // 释放锁后再 join：监听线程的失败回滚会再次进入本函数等锁。
@@ -130,11 +147,17 @@ pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
         }
         return;
     }
-    // 已在监听：翻页词已在上方热更新，无需重启线程。
+    // 已在监听：无需动作。
     if listener.is_some() {
         return;
     }
+    // 平台实现：macOS / Windows 有监听实现；其余平台防御性回滚。
     #[cfg(target_os = "macos")]
+    let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = macos::listen;
+    #[cfg(target_os = "windows")]
+    let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = windows_impl::listen;
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
@@ -142,24 +165,71 @@ pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
         let thread = std::thread::Builder::new()
             .name("voice-turner".into())
             .spawn(move || {
-                macos::listen(handle, thread_stop);
+                entry(handle, thread_stop, phrase);
             })
             .expect("spawn voice turner thread");
         *listener = Some(ActiveListener { stop, thread });
     }
-    // 非 macOS：设置页已禁用该开关，此为防御路径——提示并回滚。
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let rollback_app = app.clone();
-        let _ = rollback_app.get_webview_window("main").map(|win| {
-            let _ = win.emit("show-toast", "语音翻页当前仅支持 macOS");
+        drop(listener);
+        let _ = app.get_webview_window("main").map(|win| {
+            let _ = win.emit("show-toast", "语音翻页当前仅支持 macOS 与 Windows");
         });
         let _ = crate::settings::update_setting(
-            &rollback_app,
+            app,
             "global.voicePageTurn",
             Value::Bool(false),
         );
     }
+}
+
+/// 监听线程退出时的自清理：把自己从 state 摘除。
+/// 否则失败回滚路径的 sync 会尝试 join 自己所在的线程。
+fn cleanup_after_listen<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(state) = app.try_state::<VoiceTurnerState>() {
+        if let Ok(mut listener) = state.listener.lock() {
+            let self_id = std::thread::current().id();
+            let is_self = listener
+                .as_ref()
+                .is_some_and(|active| active.thread.thread().id() == self_id);
+            if is_self {
+                *listener = None;
+            }
+        }
+    }
+}
+
+/// 触发翻页：回主线程执行菜单动作。
+/// 真机实证（macOS）：系统语音组件可能瞬时抢窗口焦点造成误拒，
+/// 实时焦点为真时 500ms 重试一次；Windows 保留同一自愈逻辑。
+fn fire_page_turn<R: Runtime>(app: &AppHandle<R>) {
+    let page_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Err(error) = crate::menu::handle_menu_action(&page_app, "reader_next_page") {
+            let realtime = page_app
+                .get_webview_window("main")
+                .and_then(|win| win.is_focused().ok());
+            log::info!(
+                target: "voice-turner",
+                "翻页动作被拒绝：{error}；main 实时焦点={realtime:?}"
+            );
+            if realtime == Some(true) {
+                let retry_app = page_app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let inner_app = retry_app.clone();
+                    let _ = retry_app.run_on_main_thread(move || {
+                        if let Err(retry_error) =
+                            crate::menu::handle_menu_action(&inner_app, "reader_next_page")
+                        {
+                            log::info!(target: "voice-turner", "重试仍被拒：{retry_error}");
+                        }
+                    });
+                });
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -265,21 +335,14 @@ mod macos {
         }
     }
 
-    pub(super) fn listen<R: Runtime>(app: AppHandle<R>, stop: Arc<AtomicBool>) {
+    pub(super) fn listen<R: Runtime>(
+        app: AppHandle<R>,
+        stop: Arc<AtomicBool>,
+        _phrase: String,
+    ) {
+        // 提示词在 listen_inner 内读当前设置；改词由 sync 统一重启监听。
         listen_inner(&app, &stop);
-        // 自清理：本线程退出时把自己从 state 摘除。
-        // 否则失败回滚路径的 sync 会尝试 join 自己所在的线程。
-        if let Some(state) = app.try_state::<crate::voice_turner::VoiceTurnerState>() {
-            if let Ok(mut listener) = state.listener.lock() {
-                let self_id = std::thread::current().id();
-                let is_self = listener
-                    .as_ref()
-                    .is_some_and(|active| active.thread.thread().id() == self_id);
-                if is_self {
-                    *listener = None;
-                }
-            }
-        }
+        super::cleanup_after_listen(&app);
     }
 
     fn listen_inner<R: Runtime>(app: &AppHandle<R>, stop: &Arc<AtomicBool>) {
@@ -397,8 +460,6 @@ mod macos {
                     }
                 }
                 if gate.feed(&candidates) {
-                    // 取证：触发时刻的实时焦点（与事件维护的镜像对比，
-                    // 区分镜像 bug 与真实被抢焦点）。
                     let realtime_focus = handler_app
                         .get_webview_window("main")
                         .and_then(|win| win.is_focused().ok());
@@ -406,41 +467,7 @@ mod macos {
                         target: "voice-turner",
                         "trigger fired; main realtime focus={realtime_focus:?}"
                     );
-                    let page_app = handler_app.clone();
-                    // 菜单动作统一回到主线程执行，与原生菜单点击同路径。
-                    let _ = handler_app.run_on_main_thread(move || {
-                        if let Err(error) =
-                            crate::menu::handle_menu_action(&page_app, "reader_next_page")
-                        {
-                            let realtime = page_app
-                                .get_webview_window("main")
-                                .and_then(|win| win.is_focused().ok());
-                            log::info!(
-                                target: "voice-turner",
-                                "翻页动作被拒绝：{error}；main 实时焦点={realtime:?}"
-                            );
-                            // 焦点误报自愈：真机实证系统语音组件会瞬时抢 key
-                            //（windowDidResignKey 后数百毫秒内自行归还），
-                            // 稍候重试一次，仍失败才视为真后台。
-                            if realtime == Some(true) {
-                                let retry_app = page_app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                    let inner_app = retry_app.clone();
-                                    let _ = retry_app.run_on_main_thread(move || {
-                                        if let Err(retry_error) = crate::menu::
-                                            handle_menu_action(&inner_app, "reader_next_page")
-                                        {
-                                            log::info!(
-                                                target: "voice-turner",
-                                                "重试仍被拒：{retry_error}"
-                                            );
-                                        }
-                                    });
-                                });
-                            }
-                        }
-                    });
+                    super::fire_page_turn(&handler_app);
                 }
             },
         );
@@ -458,6 +485,180 @@ mod macos {
         }
         unsafe { task.cancel() };
         unsafe { engine.stop() };
+        log::info!(target: "voice-turner", "listening stopped");
+    }
+}
+
+/// Windows 二期：WinRT Windows.Media.SpeechRecognition。
+/// 引擎与模型系统自带（零 C++、零模型体积），音频由
+/// ContinuousRecognitionSession 自采集。词表约束（ListConstraint）
+/// 把识别结果限定在翻页词内，同音词歧义天然不存在。
+#[cfg(target_os = "windows")]
+mod windows_impl {
+    use super::{cleanup_after_listen, fire_page_turn, TriggerGate};
+    use serde_json::Value;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tauri::{AppHandle, Emitter, Manager, Runtime};
+    use windows::core::HSTRING;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Media::SpeechRecognition::{
+        SpeechContinuousRecognitionResultGeneratedEventArgs,
+        SpeechContinuousRecognitionSession, SpeechRecognitionHypothesisGeneratedEventArgs,
+        SpeechRecognitionListConstraint, SpeechRecognitionResultStatus, SpeechRecognizer,
+    };
+
+    fn toast<R: Runtime>(app: &AppHandle<R>, text: &str) {
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.emit("show-toast", text);
+        }
+    }
+
+    /// 启动失败统一收口：提示用户并回滚开关（回滚会再次进入 sync，幂等停止）。
+    fn fail_with_rollback<R: Runtime>(app: &AppHandle<R>, message: &str) {
+        toast(app, message);
+        let _ = crate::settings::update_setting(app, "global.voicePageTurn", Value::Bool(false));
+    }
+
+    pub(super) fn listen<R: Runtime>(
+        app: AppHandle<R>,
+        stop: Arc<AtomicBool>,
+        phrase: String,
+    ) {
+        listen_inner(&app, &stop, &phrase);
+        cleanup_after_listen(&app);
+    }
+
+    fn listen_inner<R: Runtime>(app: &AppHandle<R>, stop: &Arc<AtomicBool>, phrase: &str) {
+        // 跟随系统语言创建识别器（中文系统即 zh-CN）；未安装对应
+        // 语音识别语言包时创建/编译失败，按提示引导安装。
+        let recognizer = match SpeechRecognizer::new() {
+            Ok(recognizer) => recognizer,
+            Err(_) => {
+                fail_with_rollback(
+                    app,
+                    "未安装系统语音识别，请在 Windows 设置 → 时间和语言 → 语音 中添加后重试",
+                );
+                return;
+            }
+        };
+
+        // 词表约束：编译后不可变，改词由 sync 统一重启监听。
+        let commands =
+            windows_collections::IIterable::from(vec![HSTRING::from(phrase)]);
+        let Ok(constraint) = SpeechRecognitionListConstraint::Create(&commands) else {
+            fail_with_rollback(app, "语音识别词表创建失败，语音翻页未开启");
+            return;
+        };
+        if let Err(_) = recognizer.Constraints().and_then(|list| list.Append(&constraint)) {
+            fail_with_rollback(app, "语音识别词表安装失败，语音翻页未开启");
+            return;
+        }
+        let compiled = recognizer
+            .CompileConstraintsAsync()
+            .and_then(|op| tauri::async_runtime::block_on(async move { op.await }));
+        let compiled_ok = matches!(
+            compiled,
+            Ok(result)
+                if matches!(
+                    result.Status(),
+                    Ok(SpeechRecognitionResultStatus::Success)
+                )
+        );
+        if !compiled_ok {
+            fail_with_rollback(app, "语音识别初始化失败，语音翻页未开启");
+            return;
+        }
+
+        let Ok(session) = recognizer.ContinuousRecognitionSession() else {
+            fail_with_rollback(app, "语音识别会话创建失败，语音翻页未开启");
+            return;
+        };
+
+        let gate = Arc::new(std::sync::Mutex::new(TriggerGate::new(phrase)));
+        let result_app = app.clone();
+        let result_stop = Arc::clone(stop);
+        let result_gate = Arc::clone(&gate);
+        let result_handler = TypedEventHandler::<
+            SpeechContinuousRecognitionSession,
+            SpeechContinuousRecognitionResultGeneratedEventArgs,
+        >::new(move |_sender, args| {
+            if result_stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let args = &*args;
+            let Some(args) = args else {
+                return Ok(());
+            };
+            let text = args.Result()?.Text()?.to_string();
+            log::info!(target: "voice-turner", "asr result text={text:?}");
+            if result_gate.lock().unwrap().feed(&[text]) {
+                log::info!(target: "voice-turner", "trigger fired");
+                fire_page_turn(&result_app);
+            }
+            Ok(())
+        });
+        let Ok(result_token) = session.ResultGenerated(&result_handler) else {
+            fail_with_rollback(app, "语音识别事件注册失败，语音翻页未开启");
+            return;
+        };
+
+        // 中间假设（说到词尾即触发，不等整句）：事件在 recognizer 上。
+        let hypothesis_app = app.clone();
+        let hypothesis_stop = Arc::clone(stop);
+        let hypothesis_gate = Arc::clone(&gate);
+        let hypothesis_handler = TypedEventHandler::<
+            SpeechRecognizer,
+            SpeechRecognitionHypothesisGeneratedEventArgs,
+        >::new(move |_sender, args| {
+            if hypothesis_stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let args = &*args;
+            let Some(args) = args else {
+                return Ok(());
+            };
+            let text = args.Hypothesis()?.Text()?.to_string();
+            log::info!(target: "voice-turner", "asr hypothesis text={text:?}");
+            if hypothesis_gate.lock().unwrap().feed(&[text]) {
+                log::info!(target: "voice-turner", "trigger fired");
+                fire_page_turn(&hypothesis_app);
+            }
+            Ok(())
+        });
+        let Ok(hypothesis_token) = recognizer.HypothesisGenerated(&hypothesis_handler) else {
+            let _ = session.RemoveResultGenerated(result_token);
+            fail_with_rollback(app, "语音识别事件注册失败，语音翻页未开启");
+            return;
+        };
+
+        if session
+            .StartAsync()
+            .and_then(|op| tauri::async_runtime::block_on(async move { op.await }))
+            .is_err()
+        {
+            let _ = session.RemoveResultGenerated(result_token);
+            let _ = recognizer.RemoveHypothesisGenerated(hypothesis_token);
+            fail_with_rollback(app, "语音识别会话启动失败，语音翻页未开启");
+            return;
+        }
+
+        log::info!(target: "voice-turner", "listening started");
+        // WinRT 回调在线程池分发，保活只需轮询 stop（无需 runloop）。
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        // 停止：注销事件 → 停会话；迟到回调由 stop 标志拦截。
+        let _ = session.RemoveResultGenerated(result_token);
+        let _ = recognizer.RemoveHypothesisGenerated(hypothesis_token);
+        let _ = session
+            .StopAsync()
+            .and_then(|op| tauri::async_runtime::block_on(async move { op.await }));
+        let _ = recognizer.Close();
         log::info!(target: "voice-turner", "listening stopped");
     }
 }

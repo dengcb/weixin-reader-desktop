@@ -867,6 +867,8 @@ fn build_app_menu<R: Runtime>(
     handle: &tauri::AppHandle<R>,
 ) -> tauri::Result<(Menu<R>, MenuItem<R>)> {
     let initial = get_initial_settings(handle);
+    // 仅 macOS 应用菜单使用；Windows 下避免 unused 警告。
+    #[cfg(target_os = "macos")]
     let app_name = "艾特阅读";
 
     let about = MenuItem::with_id(handle, "about", "关于艾特阅读", true, None::<&str>)?;
@@ -898,6 +900,8 @@ fn build_app_menu<R: Runtime>(
     )?;
     let recent_menu = build_recent_books_menu(handle, &settings_data)?;
     let file_sep = PredefinedMenuItem::separator(handle)?;
+    // 仅 macOS 文件菜单使用；Windows 分支不展示关闭窗口项。
+    #[cfg(target_os = "macos")]
     let close_window = PredefinedMenuItem::close_window(handle, Some("关闭窗口"))?;
 
     #[cfg(target_os = "macos")]
