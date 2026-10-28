@@ -10,6 +10,7 @@
 | Rust | Copyright (c) The Rust Project Contributors | MIT OR Apache-2.0 |
 | TypeScript | Copyright (c) Microsoft Corporation | Apache-2.0 |
 | foliate-js | Copyright (c) 2022 John Factotum | MIT |
+| pdf-extract | Copyright (c) 2019 Junrui Li | MIT |
 
 ## Tauri
 
@@ -34,11 +35,18 @@
 - 项目：https://github.com/johnfactotum/foliate-js
 - 固定提交：`78914aef4466eb960965702401634c2cb348e9b1`
 - Copyright (c) 2022 John Factotum
-- 用途：本地 EPUB 阅读的解析与分页内核
+- 用途：本地 EPUB 与 MOBI/AZW3 阅读的解析与分页内核
 - 协议：MIT License
 - 完整许可文本：[`third-party/foliate-js/LICENSE`](third-party/foliate-js/LICENSE)
 
-本项目仅集成 EPUB 解析与分页所需的核心模块。
+本项目集成 EPUB 与 MOBI/AZW3 解析及分页所需的核心模块（mobi.js 含两处就地修补，见文件头注释）；PDF 文字版提取使用 pdf-extract（纯 Rust）。
+
+## pdf-extract
+
+- 项目：https://github.com/jrmuizel/pdf-extract
+- 用途：PDF 文字版文本提取（导入时提取为纯文本并缓存）
+- 协议：MIT License
+
 
 ## 致谢
 

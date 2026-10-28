@@ -62,7 +62,15 @@ export const chapterBreakCss = (hashes: string[]): string => {
   return selectors ? `${selectors} { break-before: column; }` : '';
 };
 
-export const sanitizeEpubMarkup = (markup: string, mediaType: string, extraCss = ''): string => {
+export interface SanitizeOptions {
+  /** KindleGen 转制书归一（仅 MOBI 管线启用）：①剥掉 p/blockquote 开头的
+   * 前导全角空格（手工缩进且段落间参差）；②把 `<br/>＋全角空格` 编码的
+   * 逻辑段落还原成真实段落边界（br 只有行距没有段距，是「行间贴死」的
+   * 根因；实测全书 br 均为 p/blockquote 直接子级，字符串手术安全）。 */
+  stripLeadingWhitespace?: boolean;
+}
+
+export const sanitizeEpubMarkup = (markup: string, mediaType: string, extraCss = '', options: SanitizeOptions = {}): string => {
   if (!EPUB_DOCUMENT_TYPES.has(mediaType)) return markup;
   const parserType = mediaType === 'text/html' ? 'text/html' : 'application/xml';
   let doc = new DOMParser().parseFromString(markup, parserType);
@@ -92,6 +100,40 @@ export const sanitizeEpubMarkup = (markup: string, mediaType: string, extraCss =
     }
   }
   removeExecutableContent(doc);
+  if (options.stripLeadingWhitespace) {
+    // KindleGen 转制残留：p 上的 height/width/align 属性（如 height="1em"、
+    // height="0pt"）是排版噪声，统一剥除
+    for (const node of doc.querySelectorAll('p, blockquote')) {
+      node.removeAttribute('height');
+      node.removeAttribute('width');
+      node.removeAttribute('align');
+    }
+    // 前导空白（KindleGen 转制手工缩进）的实际藏身处：段落容器的前几个
+    // 子节点常是空 filepos 锚点或「编号链接」（<a id=filepos…></a><font>　　正文），
+    // 因此不能只看首个文本节点——需横向跳过空行内元素与纯空白文本，
+    // 在第一个有内容的行内分支里递归剥离；遇块级元素视为段落起点已过。
+    const inlineSkip = new Set(['A', 'B', 'STRONG', 'FONT', 'SPAN', 'I', 'EM', 'U', 'SMALL', 'BIG']);
+    const stripLeadingFrom = (parent: Node): void => {
+      for (const child of Array.from(parent.childNodes)) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent ?? '';
+          if (text.trim()) {
+            child.textContent = text.replace(/^[\s\u3000]+/, '');
+          }
+          continue;
+        }
+        if (child.nodeType === Node.ELEMENT_NODE && inlineSkip.has((child as Element).tagName)) {
+          if ((child.textContent ?? '').trim()) {
+            stripLeadingFrom(child);
+            return;
+          }
+          continue;
+        }
+        return;
+      }
+    };
+    for (const node of doc.querySelectorAll('p, blockquote')) stripLeadingFrom(node);
+  }
   if (mediaType !== 'image/svg+xml') {
     prependCsp(doc);
     if (extraCss.trim()) {
@@ -101,7 +143,17 @@ export const sanitizeEpubMarkup = (markup: string, mediaType: string, extraCss =
       head.append(style);
     }
   }
-  return new XMLSerializer().serializeToString(doc);
+  let serialized = new XMLSerializer().serializeToString(doc);
+  if (options.stripLeadingWhitespace) {
+    // 两种实测形态：<br/>　　正文（空格直接跟随）与
+    // </font><br/><font color="#000000">　　正文（空格在开标签内部，
+    // 占比绝大多数）。序列化器输出 <br/>（WebKit）或 <br />（测试环境）
+    // 两种形态都要兼容；后瞻拒绝 <（</p> 收尾等）避免误拆。
+    serialized = serialized
+      .replace(/<br\s*\/>\s*((?:<[a-zA-Z][^>]*>)+)[\u3000\s]*(?=[^\s<])/g, '</p><p>$1')
+      .replace(/<br\s*\/>[ \t\r\n\u3000]*(?=[^\s<])/g, '</p><p>');
+  }
+  return serialized;
 };
 
 const finiteDimension = (value: string | null): number | null => {

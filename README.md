@@ -4,7 +4,7 @@
 
 ### 🚀 艾特阅读 · 基于 Tauri v2 + Rust 的高性能多站点桌面阅读客户端
 
-**官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB 电子书**
+**官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB / MOBI / PDF(文字版) 电子书**
 
 <p>
   <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v1.9.5-orange?style=flat-square" alt="Release"></a>
@@ -123,7 +123,7 @@ CPU 占用低
 
 ```
 ✓ 支持 .atrd 插件包安装/卸载     ✓ 微信读书作为内置默认插件
-✓ 标准化插件开发接口             ✓ 内置本地阅读(EPUB/TXT)插件
+✓ 标准化插件开发接口             ✓ 内置本地阅读(EPUB/TXT/MOBI/PDF)插件
 ✓ 插件级命名空间隔离             ✓ 配置命名空间与独立阅读位置
 ```
 
@@ -174,13 +174,15 @@ CPU 占用低
 
 ### 📚 本地电子书阅读 <sup>v1.6.0 新增</sup>
 
-> 内置「本地书屋」：TXT / EPUB 开箱即读，文件不出本机
+> 内置「本地书屋」：TXT / EPUB / MOBI(AZW3) / PDF(文字版) 开箱即读，文件不出本机
 
 ```
 ✓ TXT 中文章节智能切分             ✓ EPUB 多级目录折叠导航
+✓ MOBI/AZW3（无 DRM）直读        ✓ PDF 文字版提取重排
+✓ 共用分页内核与沙箱消毒
 ✓ 双栏/单列切换与排版自定义        ✓ 阅读进度与章节位置记忆
 ✓ 深浅主题自由切换                 ✓ 沙箱渲染，禁用书籍内脚本
-✓ 拖拽 TXT/EPUB 到窗口直接打开      ✓ EPUB 注册系统文件关联，双击即读
+✓ 拖拽 TXT/EPUB/MOBI/PDF 直接打开  ✓ EPUB/MOBI 注册系统文件关联，双击即读
 ```
 
 ### 🔄 智能更新
@@ -529,7 +531,7 @@ tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安�
 
 Windows 代码签名由 [SignPath Foundation](https://signpath.org/) 免费提供 —— 感谢他们为开源项目消除 SmartScreen "未知发布者" 警告。
 
-本地 EPUB 阅读使用 [foliate-js](https://github.com/johnfactotum/foliate-js) 核心模块，采用 MIT License。第三方许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+本地 EPUB 与 MOBI/AZW3 阅读使用 [foliate-js](https://github.com/johnfactotum/foliate-js) 核心模块，采用 MIT License。第三方许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ---
 

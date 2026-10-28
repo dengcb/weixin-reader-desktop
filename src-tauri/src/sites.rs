@@ -207,7 +207,13 @@ pub fn reader_action_supported<R: Runtime>(
         // 自定义协议本地阅读器的能力由内置 manifest 固定提供。
         return true;
     };
-    if host == "atreader.localhost" || host_matches_domain(host, "weread.qq.com") {
+    // 本地阅读页两种平台形态：Windows http://atreader.localhost、
+    // macOS atreader://localhost（host 是 localhost 而非 None，不能落入
+    // 下方按站点域名的查找——本地插件无 site 配置，会全部误判为不支持）。
+    if host == "atreader.localhost"
+        || (url.scheme() == "atreader" && host == "localhost")
+        || host_matches_domain(host, "weread.qq.com")
+    {
         return true;
     }
     let capability = match action {

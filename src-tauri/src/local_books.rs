@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -17,6 +17,8 @@ const HISTORY_VERSION: u64 = 1;
 const MAX_RECENT_BOOKS: usize = 10;
 const MAX_PROTOCOL_ENTRY_SIZE: u64 = 128 * 1024 * 1024;
 const MAX_TXT_FILE_SIZE: u64 = 256 * 1024 * 1024;
+const MAX_MOBI_FILE_SIZE: u64 = 128 * 1024 * 1024;
+const MAX_PDF_FILE_SIZE: u64 = 128 * 1024 * 1024;
 const MAX_EPUB_ENTRIES: usize = 20_000;
 const MAX_EPUB_TOTAL_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 const LOCAL_READER_HTML: &[u8] = include_bytes!("../../src/windows/local-reader.html");
@@ -38,6 +40,8 @@ static PENDING_OPEN_BOOK: Mutex<Option<PathBuf>> = Mutex::new(None);
 pub enum LocalBookFormat {
     Txt,
     Epub,
+    Mobi,
+    Pdf,
 }
 
 impl LocalBookFormat {
@@ -45,6 +49,8 @@ impl LocalBookFormat {
         match self {
             Self::Txt => "txt",
             Self::Epub => "epub",
+            Self::Mobi => "mobi",
+            Self::Pdf => "pdf",
         }
     }
 }
@@ -537,6 +543,203 @@ fn parse_epub_inner(path: &Path) -> Result<(String, bool), String> {
     Ok((title, fixed_layout))
 }
 
+fn be_u16(bytes: &[u8]) -> Option<u16> {
+    Some(u16::from_be_bytes(bytes.try_into().ok()?))
+}
+
+fn be_u32(bytes: &[u8]) -> Option<u32> {
+    Some(u32::from_be_bytes(bytes.try_into().ok()?))
+}
+
+/// MOBI 导入只读取文件头部：校验 PDB/MOBI 魔数、拒绝 DRM、抽取书名；
+/// 章节解析全部留给前端 mobi.js（与 EPUB 的 Rust 预解析职责对齐）。
+fn parse_mobi(path: &Path) -> Result<String, String> {
+    let result = parse_mobi_inner(path);
+    if let Err(error) = &result {
+        log::warn!(target: "local-books", "mobi_parse_failed error={error}");
+        log::warn!(target: "frontend", "[LocalBooks] mobi_parse_failed error={error}");
+    } else {
+        log::info!(target: "local-books", "mobi_parse_succeeded");
+    }
+    result
+}
+
+fn parse_mobi_inner(path: &Path) -> Result<String, String> {
+    const MOBI_HEAD_LIMIT: u64 = 64 * 1024;
+    let mut file = File::open(path).map_err(|error| format!("无法打开 MOBI：{error}"))?;
+    let file_len = file.metadata().map_err(|error| format!("无法读取 MOBI 文件信息：{error}"))?.len();
+    let mut pdb = vec![0u8; 78];
+    file.read_exact(&mut pdb)
+        .map_err(|error| format!("MOBI 文件损坏：{error}"))?;
+    if &pdb[60..68] != b"BOOKMOBI" {
+        return Err("不是有效的 MOBI/AZW3 文件".to_string());
+    }
+    let num_records = usize::from(be_u16(&pdb[76..78]).unwrap_or(0));
+    if num_records == 0 {
+        return Err("MOBI 文件损坏：没有数据记录".to_string());
+    }
+    let mut offsets = vec![0u8; num_records * 8];
+    file.read_exact(&mut offsets)
+        .map_err(|error| format!("MOBI 文件损坏：{error}"))?;
+    let record0_offset = u64::from(be_u32(&offsets[0..4]).unwrap_or(0));
+    let record_end = if num_records > 1 {
+        u64::from(be_u32(&offsets[8..12]).unwrap_or(0))
+    } else {
+        file_len
+    };
+    if record0_offset >= record_end || record_end > file_len {
+        return Err("MOBI 文件损坏：记录表无效".to_string());
+    }
+    // 记录 0 = PalmDOC/MOBI 头 + EXTH + 内嵌标题，极端情况可超过一页；
+    // 只读头部窗口，越界字段一律走书名回退而不是报错。
+    let head_len = (record_end - record0_offset).min(MOBI_HEAD_LIMIT) as usize;
+    file.seek(SeekFrom::Start(record0_offset))
+        .map_err(|error| format!("无法读取 MOBI：{error}"))?;
+    let mut record0 = vec![0u8; head_len];
+    file.read_exact(&mut record0)
+        .map_err(|error| format!("MOBI 文件损坏：{error}"))?;
+    if record0.len() < 100 || &record0[16..20] != b"MOBI" {
+        return Err("不是有效的 MOBI/AZW3 文件".to_string());
+    }
+    let encryption = be_u16(&record0[12..14]).unwrap_or(0);
+    if encryption != 0 {
+        return Err("暂不支持受 DRM 保护的 MOBI/AZW3".to_string());
+    }
+    // 书名：优先 MOBI 头内嵌标题（titleOffset 相对记录 0 起点），
+    // 其次 PDB 头名称（前 32 字节 NUL 结尾），都没有则空串由调用方回退文件名。
+    let decode = |bytes: &[u8]| -> String {
+        let trimmed = bytes.split(|byte| *byte == 0).next().unwrap_or(bytes);
+        if be_u32(&record0[28..32]) == Some(65001) {
+            String::from_utf8_lossy(trimmed).trim().to_string()
+        } else {
+            encoding_rs::WINDOWS_1252.decode(trimmed).0.trim().to_string()
+        }
+    };
+    let title_offset = be_u32(&record0[84..88]).unwrap_or(0) as usize;
+    let title_length = be_u32(&record0[88..92]).unwrap_or(0) as usize;
+    let title = record0
+        .get(title_offset..title_offset.saturating_add(title_length))
+        .map(decode)
+        .unwrap_or_default();
+    if !title.is_empty() {
+        return Ok(title);
+    }
+    Ok(decode(&pdb[0..32]))
+}
+
+/// CJK 部首补充区（U+2E80..=U+2EFF）无 Unicode 兼容分解的简化部首 →
+/// 统一表意文字显式映射（名称对照 Unicode NamesList，如 ⻓ C-SIMPLIFIED
+/// LONG → 长）。繁体形态部首（⻑⻒⻇ 等）不映射：应用面向简体中文，
+/// 且这些字形独立成字时几乎不出现。
+fn radical_supplement_char(c: char) -> Option<char> {
+    Some(match c {
+        '\u{2E9F}' => '母', // ⺟
+        '\u{2EB0}' => '纟', // ⺰
+        '\u{2EC5}' => '见', // ⻅
+        '\u{2EC6}' => '角', // ⻆
+        '\u{2EC8}' => '讠', // ⻈
+        '\u{2EC9}' => '贝', // ⻉
+        '\u{2ECC}' => '辶', // ⻌
+        '\u{2ED0}' => '钅', // ⻐
+        '\u{2ED3}' => '长', // ⻓
+        '\u{2ED4}' => '门', // ⻔
+        '\u{2ED9}' => '韦', // ⻙
+        '\u{2EDA}' => '页', // ⻚
+        '\u{2EDB}' => '风', // ⻛
+        '\u{2EDC}' => '飞', // ⻜
+        '\u{2EE0}' => '饣', // ⻠
+        '\u{2EE2}' => '马', // ⻢
+        '\u{2EE5}' => '鱼', // ⻥
+        '\u{2EE6}' => '鸟', // ⻦
+        '\u{2EE7}' => '卤', // ⻧
+        '\u{2EE8}' => '麦', // ⻨
+        '\u{2EE9}' => '黄', // ⻩
+        '\u{2EEA}' => '黾', // ⻪
+        '\u{2EEC}' => '齐', // ⻬
+        '\u{2EEE}' => '齿', // ⻮
+        '\u{2EF0}' => '龙', // ⻰
+        '\u{2EF3}' => '龟', // ⻳
+        _ => return None,
+    })
+}
+
+/// 打印管线（Chrome/Skia 等）常把与部首同形的汉字落在康熙部首区
+/// （U+2F00..=U+2FD5，「⼀」而非「一」）或部首补充区（⻓⻔⻢等简化部
+/// 首形）。字形无异但破坏「第X章」切分与全文搜索。康熙区逐字符 NFKC
+/// 归一（该区 214 码位全部有兼容分解），补充区查显式映射表；NFKC 全局
+/// 应用会把全角标点半角化，故绝不整串使用。
+fn normalize_pdf_text(text: String) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.chars()
+        .map(|c| {
+            if ('\u{2F00}'..='\u{2FD5}').contains(&c) {
+                String::from(c).nfkc().collect::<String>()
+            } else {
+                radical_supplement_char(c).map(String::from).unwrap_or_else(|| c.to_string())
+            }
+        })
+        .collect()
+}
+
+/// PDF 文本缓存：导入打开时提取一次，之后 /text 端点完全复用 TXT 阅读管线
+/// （章节切分、进度、排版）。缓存以源文件 mtime 判定新鲜度。空文本（扫描
+/// 版/纯图片）与加密文件给出友好错误；pdf-extract 对畸形文件可能 panic
+/// （第三方解析器，不受我们控制），catch_unwind 兜底转成打开失败。
+fn extract_pdf_text<R: Runtime>(
+    app: &AppHandle<R>,
+    record: &LocalBookRecord,
+) -> Result<PathBuf, String> {
+    let cache = cache_dir(app)?.join(format!("pdf-{}.txt", record.book_id));
+    let cache_current = fs::metadata(&cache)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .zip(fs::metadata(&record.path).ok().and_then(|meta| meta.modified().ok()))
+        .is_some_and(|(cached_at, source_at)| cached_at >= source_at);
+    if cache_current {
+        return Ok(cache);
+    }
+    let started = std::time::Instant::now();
+    let result = std::panic::catch_unwind(|| pdf_extract::extract_text_by_pages(&record.path));
+    let pages = result
+        .map_err(|_| "PDF 解析失败，文件可能已损坏或不受支持".to_string())?
+        .map_err(|error| {
+            log::warn!(target: "local-books", "pdf_extract_failed book_id={} error={error}", record.book_id);
+            log::warn!(target: "frontend", "[LocalBooks] pdf_extract_failed book_id={} error={error}", record.book_id);
+            if error.to_string().contains("assword") {
+                "暂不支持带密码的 PDF".to_string()
+            } else {
+                format!("PDF 解析失败：{error}")
+            }
+        })?;
+    let page_count = pages.len();
+    let text = normalize_pdf_text(
+        pages
+            .into_iter()
+            .map(|page| page.trim().to_string())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    );
+    if text.trim().is_empty() {
+        return Err("PDF 没有可提取的文字，可能是扫描版或纯图片 PDF".to_string());
+    }
+    let temporary = cache.with_extension("txt.part");
+    // clear_local_history 会整个删除缓存目录，写入前先确保存在
+    if let Some(parent) = cache.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建 PDF 缓存目录：{error}"))?;
+    }
+    fs::write(&temporary, &text).map_err(|error| format!("无法写入 PDF 文本缓存：{error}"))?;
+    replace_file(&temporary, &cache)?;
+    log::info!(
+        target: "local-books",
+        "pdf_extract_succeeded book_id={} pages={} chars={} elapsed_ms={}",
+        record.book_id,
+        page_count,
+        text.len(),
+        started.elapsed().as_millis()
+    );
+    Ok(cache)
+}
+
 pub fn decode_txt_bytes(bytes: &[u8]) -> Result<(String, &'static str), String> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8(bytes[3..].to_vec())
@@ -667,6 +870,39 @@ fn ensure_txt_size(metadata: &fs::Metadata) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_mobi_size(metadata: &fs::Metadata) -> Result<(), String> {
+    if metadata.len() > MAX_MOBI_FILE_SIZE {
+        return Err(format!(
+            "MOBI 文件过大（最大支持 {} MB）",
+            MAX_MOBI_FILE_SIZE / 1024 / 1024
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_pdf_size(metadata: &fs::Metadata) -> Result<(), String> {
+    if metadata.len() > MAX_PDF_FILE_SIZE {
+        return Err(format!(
+            "PDF 文件过大（最大支持 {} MB）",
+            MAX_PDF_FILE_SIZE / 1024 / 1024
+        ));
+    }
+    Ok(())
+}
+
+/// PDF 只读文件头魔数做轻校验；文本提取（可能秒级）延迟到打开流程，
+/// 结果落缓存后经 /text 端点完全复用 TXT 阅读管线。
+fn pdf_magic_valid(path: &Path) -> Result<(), String> {
+    let mut magic = [0u8; 5];
+    let mut file = File::open(path).map_err(|error| format!("无法打开 PDF：{error}"))?;
+    file.read_exact(&mut magic)
+        .map_err(|error| format!("PDF 文件损坏：{error}"))?;
+    if &magic != b"%PDF-" {
+        return Err("不是有效的 PDF 文件".to_string());
+    }
+    Ok(())
+}
+
 fn inspect_path(path: &Path) -> Result<LocalBookRecord, String> {
     let canonical = path
         .canonicalize()
@@ -680,7 +916,7 @@ fn inspect_path(path: &Path) -> Result<LocalBookRecord, String> {
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase)
-        .ok_or("只支持 TXT 和 EPUB 文件")?;
+        .ok_or("只支持 TXT、EPUB、MOBI/AZW3、PDF 文件")?;
     log::info!(
         target: "local-books",
         "inspect_start format={} size={}",
@@ -718,7 +954,26 @@ fn inspect_path(path: &Path) -> Result<LocalBookRecord, String> {
                 fixed_layout,
             )
         }
-        _ => return Err("只支持 TXT 和 EPUB 文件".to_string()),
+        "mobi" | "azw3" => {
+            ensure_mobi_size(&metadata)?;
+            let title = parse_mobi(&canonical)?;
+            (
+                LocalBookFormat::Mobi,
+                if title.is_empty() {
+                    fallback_title.clone()
+                } else {
+                    title
+                },
+                false,
+            )
+        }
+        // PDF 导入只做轻校验；秒级文本提取延迟到打开流程（extract_pdf_text）
+        "pdf" => {
+            ensure_pdf_size(&metadata)?;
+            pdf_magic_valid(&canonical)?;
+            (LocalBookFormat::Pdf, fallback_title.clone(), false)
+        }
+        _ => return Err("只支持 TXT、EPUB、MOBI/AZW3、PDF 文件".to_string()),
     };
     let path_key = canonical.to_string_lossy();
     let digest = Sha256::digest(path_key.as_bytes());
@@ -944,6 +1199,10 @@ pub fn open_book_by_id<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<
 /// 文件选择框、窗口拖拽、系统文件关联等入口共用。
 pub fn open_book_from_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Result<(), String> {
     let record = inspect_path(path)?;
+    // PDF 的文本提取（秒级）在打开流程执行并落缓存；失败即打开失败
+    if record.format == LocalBookFormat::Pdf {
+        extract_pdf_text(app, &record)?;
+    }
     log::info!(target: "local-books", "history_upsert_start");
     log::info!(target: "frontend", "[LocalBooks] history_upsert_start");
     upsert_record(app, record.clone())?;
@@ -986,7 +1245,7 @@ pub fn open_dialog<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     app.dialog()
         .file()
-        .add_filter("本地图书", &["txt", "epub"])
+        .add_filter("本地图书", &["txt", "epub", "mobi", "azw3", "pdf"])
         .set_title("打开本地图书")
         .pick_file(move |selected| {
             let Some(selected) = selected else {
@@ -1007,12 +1266,16 @@ pub fn open_dialog<R: Runtime>(app: &AppHandle<R>) {
         });
 }
 
-/// 路径扩展名是否为支持的本地图书格式（TXT / EPUB，大小写不敏感）。
+/// 路径扩展名是否为支持的本地图书格式（TXT / EPUB / MOBI/AZW3 / PDF，大小写不敏感）。
 pub fn is_book_path(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("txt") || extension.eq_ignore_ascii_case("epub")
+            extension.eq_ignore_ascii_case("txt")
+                || extension.eq_ignore_ascii_case("epub")
+                || extension.eq_ignore_ascii_case("mobi")
+                || extension.eq_ignore_ascii_case("azw3")
+                || extension.eq_ignore_ascii_case("pdf")
         })
 }
 
@@ -1277,7 +1540,10 @@ fn response(
     if local_reader {
         builder = builder.header(
             "content-security-policy",
-            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self'; frame-src blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
+            // connect-src 需含 blob:：MOBI 章节消毒管线要在页面上下文 fetch
+            // mobi.js 生成的章节 blob 再重消毒；blob 为同实例内存数据，无网络面。
+            // 书籍内容 iframe 另有 STRICT_EPUB_CSP（connect-src 'none'），不受影响。
+            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob:; frame-src blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'",
         );
     }
     builder.body(body).expect("valid local protocol response")
@@ -1567,6 +1833,19 @@ pub fn protocol_response_with_referer<R: Runtime>(
             serde_json::to_vec(&LocalBookPublic::from(&record)).unwrap_or_default(),
             true,
         ),
+        // PDF 文本缓存缺失时的兜底重建（extract_pdf_text 对新鲜缓存零开销）
+        "text" if record.format == LocalBookFormat::Pdf => {
+            match extract_pdf_text(app, &record).and_then(|cache| {
+                fs::read(&cache).map_err(|error| format!("无法读取 PDF 文本缓存：{error}"))
+            }) {
+                Ok(bytes) => response(200, "text/plain; charset=utf-8", bytes, true),
+                Err(error) => {
+                    log::warn!(target: "local-books", "pdf_text_failed book_id={} error={}", book_id, error);
+                    log::warn!(target: "frontend", "[LocalBooks] pdf_text_failed book_id={} error={}", book_id, error);
+                    error_response(422, error)
+                }
+            }
+        }
         "text" if record.format == LocalBookFormat::Txt => match fs::metadata(&record.path)
             .map_err(|error| format!("无法读取 TXT 文件信息：{error}"))
             .and_then(|metadata| ensure_txt_size(&metadata))
@@ -1577,6 +1856,18 @@ pub fn protocol_response_with_referer<R: Runtime>(
             Err(error) => {
                 log::warn!(target: "local-books", "txt_resource_failed book_id={} error={}", book_id, error);
                 log::warn!(target: "frontend", "[LocalBooks] txt_resource_failed book_id={} error={}", book_id, error);
+                error_response(422, error)
+            }
+        },
+        "file" if record.format == LocalBookFormat::Mobi => match fs::metadata(&record.path)
+            .map_err(|error| format!("无法读取 MOBI 文件信息：{error}"))
+            .and_then(|metadata| ensure_mobi_size(&metadata))
+            .and_then(|()| fs::read(&record.path).map_err(|error| format!("无法读取 MOBI：{error}")))
+        {
+            Ok(bytes) => response(200, "application/octet-stream", bytes, true),
+            Err(error) => {
+                log::warn!(target: "local-books", "mobi_resource_failed book_id={} error={}", book_id, error);
+                log::warn!(target: "frontend", "[LocalBooks] mobi_resource_failed book_id={} error={}", book_id, error);
                 error_response(422, error)
             }
         },
@@ -1706,7 +1997,7 @@ mod tests {
     }
 
     #[test]
-    fn book_argument_accepts_only_txt_and_epub_paths() {
+    fn book_argument_accepts_supported_book_paths() {
         let cwd = Path::new("/tmp/local-books-tests");
         assert_eq!(
             book_path_from_argument("三体.epub", cwd),
@@ -1715,6 +2006,17 @@ mod tests {
         assert_eq!(
             book_path_from_argument("NOTES.TXT", cwd),
             Some(cwd.join("NOTES.TXT"))
+        );
+        assert_eq!(
+            book_path_from_argument("书.mobi", cwd),
+            Some(cwd.join("书.mobi"))
+        );
+        assert_eq!(book_path_from_argument("书.AZW3", cwd),
+            Some(cwd.join("书.AZW3"))
+        );
+        assert_eq!(
+            book_path_from_argument("论文.pdf", cwd),
+            Some(cwd.join("论文.pdf"))
         );
         assert_eq!(
             book_path_from_argument(
@@ -1732,7 +2034,126 @@ mod tests {
             })
         );
         assert_eq!(book_path_from_argument("plugin.atrd", cwd), None);
-        assert_eq!(book_path_from_argument("/abs/path/novel.mobi", cwd), None);
+        // PRC 是未支持的旧格式，即使内容是 MOBI 也不经由扩展名放行
+        assert_eq!(book_path_from_argument("/abs/path/novel.prc", cwd), None);
+    }
+
+    /// 构造最小 MOBI：PDB 头 78 字节 + 记录表 8 字节 + 记录 0（256 字节，
+    /// MOBI 头长 232 + 内嵌标题区）。
+    fn write_test_mobi(title: Option<&str>, pdb_name: &str, encryption: u16) -> PathBuf {
+        let mut data = vec![0u8; 86 + 256];
+        let name_bytes = pdb_name.as_bytes();
+        let name_len = name_bytes.len().min(32);
+        data[0..name_len].copy_from_slice(&name_bytes[..name_len]);
+        data[60..68].copy_from_slice(b"BOOKMOBI");
+        data[76..78].copy_from_slice(&1u16.to_be_bytes());
+        data[78..82].copy_from_slice(&86u32.to_be_bytes());
+        let record0 = &mut data[86..];
+        record0[0..2].copy_from_slice(&2u16.to_be_bytes());
+        record0[12..14].copy_from_slice(&encryption.to_be_bytes());
+        record0[16..20].copy_from_slice(b"MOBI");
+        record0[20..24].copy_from_slice(&232u32.to_be_bytes());
+        record0[28..32].copy_from_slice(&65001u32.to_be_bytes());
+        if let Some(title) = title {
+            let bytes = title.as_bytes();
+            let len = bytes.len().min(24);
+            record0[84..88].copy_from_slice(&232u32.to_be_bytes());
+            record0[88..92].copy_from_slice(&(len as u32).to_be_bytes());
+            record0[232..232 + len].copy_from_slice(&bytes[..len]);
+        }
+        let path = test_path("book.mobi");
+        fs::write(&path, &data).unwrap();
+        path
+    }
+
+    #[test]
+    fn parses_mobi_title_and_rejects_drm() {
+        let path = write_test_mobi(Some("测试书名"), "PalmName", 0);
+        assert_eq!(parse_mobi(&path).unwrap(), "测试书名");
+
+        let path = write_test_mobi(None, "PalmName", 0);
+        assert_eq!(parse_mobi(&path).unwrap(), "PalmName");
+
+        let path = write_test_mobi(Some("测试书名"), "PalmName", 1);
+        let error = parse_mobi(&path).unwrap_err();
+        assert!(error.contains("DRM"), "unexpected error: {error}");
+
+        let path = test_path("book.mobi");
+        fs::write(&path, vec![0u8; 40]).unwrap();
+        assert!(parse_mobi(&path).is_err());
+    }
+
+    /// 构造最小有效 PDF：单页 + Helvetica 文本对象，xref 偏移按实际字节
+    /// 位置计算。content_stream 传非 BT/ET 操作符即模拟无文字层（扫描版）。
+    fn write_test_pdf(content_stream: &str) -> PathBuf {
+        let objects: [(&str, bool); 5] = [
+            ("<</Type/Catalog/Pages 2 0 R>>", false),
+            ("<</Type/Pages/Kids[3 0 R]/Count 1>>", false),
+            (
+                "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+                false,
+            ),
+            ("", true),
+            ("<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>", false),
+        ];
+        let mut buf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, (body, is_stream)) in objects.iter().enumerate() {
+            offsets.push(buf.len() as u32);
+            let entry = if *is_stream {
+                format!("{0} 0 obj\n<</Length {1}>>\nstream\n{2}\nendstream\nendobj\n", index + 1, content_stream.len(), content_stream)
+            } else {
+                format!("{} 0 obj\n{}\nendobj\n", index + 1, body)
+            };
+            buf.extend_from_slice(entry.as_bytes());
+        }
+        let xref_pos = buf.len();
+        buf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+        for offset in &offsets {
+            buf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!("trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n{xref_pos}\n%%EOF").as_bytes(),
+        );
+        let path = test_path("book.pdf");
+        fs::write(&path, &buf).unwrap();
+        path
+    }
+
+    #[test]
+    fn extracts_pdf_text_and_rejects_empty_or_invalid() {
+        let path = write_test_pdf("BT /F1 24 Tf 72 720 Td (Hello atreader) Tj ET");
+        let pages = pdf_extract::extract_text_by_pages(&path).unwrap();
+        assert!(pages.iter().any(|page| page.contains("Hello atreader")));
+        assert!(pdf_magic_valid(&path).is_ok());
+
+        // 无文字操作符 = 扫描版/纯图片形态：提取结果为空白
+        let empty = write_test_pdf("0 0 0 RG");
+        let pages = pdf_extract::extract_text_by_pages(&empty).unwrap();
+        assert!(pages.iter().all(|page| page.trim().is_empty()));
+
+        let bad = test_path("bad.pdf");
+        fs::write(&bad, b"not a pdf at all........").unwrap();
+        assert!(pdf_magic_valid(&bad).is_err());
+
+        let record = inspect_path(&path).unwrap();
+        assert_eq!(record.format, LocalBookFormat::Pdf);
+        assert_eq!(record.fixed_layout, false);
+    }
+
+    #[test]
+    fn normalizes_kangxi_radicals_in_pdf_text() {
+        // Chrome 打印的 PDF 把「一/用/文」等与部首同形的字落在康熙部首区，
+        // 「长/门」等简化部首形落在补充区
+        assert_eq!(
+            normalize_pdf_text("第⼀章 ⽤⼆ 中⽂ ⾜够 ⻓度 ⼊⻔ ⻢".to_string()),
+            "第一章 用二 中文 足够 长度 入门 马"
+        );
+        // 全角标点与其余字符必须原样保留（NFKC 全局应用会半角化标点）
+        assert_eq!(
+            normalize_pdf_text("「你好」，！？；：１２３".to_string()),
+            "「你好」，！？；：１２３"
+        );
     }
 
     #[test]

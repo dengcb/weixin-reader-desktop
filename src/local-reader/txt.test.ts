@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { splitTxtChapters, txtChapterToXHTML } from './txt';
+import { PDF_CHAPTER_HEADING, splitTxtChapters, txtChapterToXHTML } from './txt';
 
 describe('本地 TXT 章节识别', () => {
   it('只按明确章节标题切分（前导序言单独成章）', () => {
@@ -39,5 +39,28 @@ describe('本地 TXT 章节识别', () => {
     const html = txtChapterToXHTML(chapter);
     expect(html).toContain('&lt;script&gt;');
     expect(html).not.toContain('<script>');
+  });
+});
+
+describe('PDF 提取文本章节形态', () => {
+  it('识别中文数字序号＋空格分隔标题（KindleGen 宽松排版）', () => {
+    const input = [
+      '版权页内容',
+      '一   宇 宙 一 律',
+      '第一章正文内容甲。',
+      '二 、 宇 宙 元 规 律',
+      '第二章正文内容乙。',
+      '第一是工业生产。数字孪生技术可以用于建立工厂、生产线、设备等数字模型，这是正文列举行不应误判。',
+    ].join('\n');
+    const chapters = splitTxtChapters(input, '测试书', [PDF_CHAPTER_HEADING]);
+    expect(chapters.map(c => c.title)).toEqual(['版权页内容', '一   宇 宙 一 律', '二 、 宇 宙 元 规 律']);
+    expect(chapters[1].text).toContain('正文内容甲');
+  });
+
+  it('附加正则命中不足 2 处时不启用（防正文巧合误切）', () => {
+    const input = '前言段落。\n一   只有这一处像标题\n后面还有很长的正文内容继续，不应该被切开。';
+    const chapters = splitTxtChapters(input, '测试书', [PDF_CHAPTER_HEADING]);
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0].title).toBe('测试书');
   });
 });

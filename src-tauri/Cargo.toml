@@ -39,6 +39,8 @@ encoding_rs = "0.8"
 percent-encoding = "2"
 roxmltree = "0.20"
 regex = "1"
+pdf-extract = "0.12.1"
+unicode-normalization = "0.1.26"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

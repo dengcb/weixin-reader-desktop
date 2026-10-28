@@ -75,6 +75,11 @@ describe('Tauri application contracts', () => {
         rank: 'Alternate',
         mimeType: 'application/epub+zip',
       }),
+      expect.objectContaining({
+        ext: ['mobi', 'azw3'],
+        rank: 'Alternate',
+        mimeType: 'application/x-mobipocket-ebook',
+      }),
     ]);
     expect(config.bundle.macOS.infoPlist).toBe('Info.plist');
     expect(infoPlist).toContain('<key>UTTypeIconFile</key>');
@@ -220,13 +225,13 @@ describe('Tauri application contracts', () => {
       readText('third-party/foliate-js/LICENSE'),
     ]);
 
-    expect(config.bundle.fileAssociations.flatMap(item => item.ext)).toEqual(['atrd', 'epub']);
+    expect(config.bundle.fileAssociations.flatMap(item => item.ext)).toEqual(['atrd', 'epub', 'mobi', 'azw3']);
     expect(menu).toContain('menu_id::RECENT');
     expect(menu).toContain('"打开本地图书…"');
     expect(menu).toContain('open_local_book_');
     expect(settings).toContain('本地阅读数据');
     expect(settings).toContain('清除本地阅读记录');
-    expect(settings).toContain('原始 TXT/EPUB 文件不会被删除');
+    expect(settings).toContain('原始 TXT/EPUB/MOBI 文件不会被删除');
     expect(settings).toContain('id="clearLocalHistoryBtn"');
     expect(localPage.match(/class="tool-button"/g)).toHaveLength(4);
     expect(localPage).toContain('id="pageProgress"');

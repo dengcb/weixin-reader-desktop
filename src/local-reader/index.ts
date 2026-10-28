@@ -7,18 +7,20 @@ import type { Chapter, PluginAPI } from '../scripts/core/plugin_types';
 import { EPUB_DOCUMENT_TYPES, chapterBreakCss as buildChapterBreakCss, sanitizeEpubMarkup, wrapSvgSpineDocument } from './epub_security';
 import { resolveLocalKeyboardAction, shouldHandleLocalKeyboardAction } from './keyboard';
 import { PositionHistory } from './position_history';
-import { splitTxtChapters, txtChapterToXHTML, type TxtChapter } from './txt';
+import { PDF_CHAPTER_HEADING, splitTxtChapters, txtChapterToXHTML, type TxtChapter } from './txt';
 import { buildToc, findTopLevelGroup, type FlatTocItem, type TocTreeNode } from './toc';
 
 // 固定提交的上游原生 ES modules；源码与 LICENSE 位于 third-party/foliate-js。
 // @ts-expect-error vendored JavaScript module has no TypeScript declarations
 import { EPUB } from '../../third-party/foliate-js/epub.js';
 // @ts-expect-error vendored JavaScript module has no TypeScript declarations
+import { MOBI } from '../../third-party/foliate-js/mobi.js';
+// @ts-expect-error vendored JavaScript module has no TypeScript declarations
 import * as CFI from '../../third-party/foliate-js/epubcfi.js';
 import '../../third-party/foliate-js/paginator.js';
 import '../../third-party/foliate-js/fixed-layout.js';
 
-type LocalBookFormat = 'txt' | 'epub';
+type LocalBookFormat = 'txt' | 'epub' | 'mobi' | 'pdf';
 
 interface LocalBookMetadata {
   bookId: string;
@@ -149,6 +151,9 @@ const localReaderLog = (stage: string, details?: Record<string, unknown>): void 
 };
 
 const localReaderError = (message: string): string => {
+  if (/DRM/i.test(message)) {
+    return '暂不支持受 DRM 保护的电子书，请使用无 DRM 的文件';
+  }
   if (/Failed to load package document|No package document defined/i.test(message)) {
     return 'EPUB 缺少可读取的 package 文档';
   }
@@ -157,6 +162,11 @@ const localReaderError = (message: string): string => {
   }
   if (/Invalid (?:archive|zip)|End of central directory|central directory/i.test(message)) {
     return 'EPUB 文件损坏或不是有效的 EPUB 文件';
+  }
+  if (
+    /Missing MOBI header|Unknown compression type|Invalid (?:HUFF|CDIC|INDX|TAGX|FDST)(?: record| section)|Record index out of bounds/i.test(message)
+  ) {
+    return 'MOBI 文件损坏或不是有效的 MOBI/AZW3 文件';
   }
   if (/MISSING:/i.test(message)) return '图书文件已不存在';
   return message;
@@ -295,9 +305,12 @@ class LocalReader implements LocalReaderController {
     });
     this.fixedLayout = this.metadata.fixedLayout;
     this.typography = this.readTypography();
-    this.book = this.metadata.format === 'txt'
+    // TXT 与 PDF 共用文字流管线：PDF 已在壳层提取为纯文本（/text 端点）
+    this.book = this.metadata.format === 'txt' || this.metadata.format === 'pdf'
       ? await this.loadTxtBook()
-      : await this.loadEpubBook();
+      : this.metadata.format === 'mobi'
+        ? await this.loadMobiBook()
+        : await this.loadEpubBook();
     localReaderLog('book_loaded', {
       bookId: this.bookId,
       format: this.metadata.format,
@@ -307,7 +320,13 @@ class LocalReader implements LocalReaderController {
     const toc = buildToc(this.book.toc ?? []);
     this.toc = toc.flat;
     this.tocTree = toc.tree;
-    this.resolveTocIndices();
+    // MOBI6 目录项是 filepos: 锚点，init 时注入的 <a id="fileposN"> 可据此在
+    // 同 section 内区分多章；KF8 的 kindle:pos: 无对应 DOM id，保持无 hash。
+    for (const item of this.toc) {
+      const match = item.href.match(/^filepos:(\d+)$/);
+      if (match) item.hash = `filepos${match[1]}`;
+    }
+    await this.resolveTocIndices();
     this.createRenderer();
     localReaderLog('renderer_created', { bookId: this.bookId, fixedLayout: this.fixedLayout });
     this.bindUI();
@@ -347,9 +366,86 @@ class LocalReader implements LocalReaderController {
 
   private async loadTxtBook(): Promise<FoliateBook> {
     const response = await fetchChecked(`/local/books/${this.bookId}/text`, 'txt.text');
-    const chapters = splitTxtChapters(await response.text(), this.metadata!.title);
+    const isPdf = this.metadata!.format === 'pdf';
+    const chapters = splitTxtChapters(
+      await response.text(), this.metadata!.title, isPdf ? [PDF_CHAPTER_HEADING] : []);
     localReaderLog('txt_loaded', { bookId: this.bookId, chapters: chapters.length });
     return createTxtBook(chapters, this.metadata!.title);
+  }
+
+  private async loadMobiBook(): Promise<FoliateBook> {
+    const response = await fetchChecked(`/local/books/${this.bookId}/file`, 'mobi.file');
+    const file = await response.blob();
+    localReaderLog('mobi_loaded', { bookId: this.bookId, bytes: file.size });
+    // unzlib 仅用于内嵌字体的 zlib 解压：Safari 15 基线没有 DecompressionStream，
+    // 内嵌字体（KF8 少见）直接降级为正文字体，不影响阅读。
+    let book: FoliateBook;
+    try {
+      book = await new MOBI({
+        unzlib: () => Promise.reject(new Error('embedded font decompression unsupported')),
+      }).open(file) as FoliateBook;
+    } catch (error) {
+      localReaderLog('mobi_init_failed', { bookId: this.bookId, error: errorMessage(error) });
+      throw new Error(localReaderError(errorMessage(error)));
+    }
+    localReaderLog('mobi_initialized', {
+      bookId: this.bookId,
+      sections: book.sections.length,
+      toc: book.toc?.length ?? 0,
+      layout: book.rendition?.layout ?? 'reflowable',
+    });
+    // mobi.js 没有 EPUB 的 transform 事件（MOBI6 无 transformTarget），消毒统一
+    // 挂在 section.load：抓取序列化后的章节文档 → sanitizeEpubMarkup → 重新落
+    // blob。原 blob 归 mobi.js 内部缓存所有，不可 revoke，只缓存消毒产物复用。
+    const sanitizedURLs = new Map<string, Promise<string>>();
+    book.sections = book.sections.map((section, sectionIndex) => {
+      // KF8 的 linear=no 节没有 load（不参与渲染），原样透传
+      if (!section.load) return section;
+      const originalLoad = section.load.bind(section);
+      return {
+        ...section,
+        load: () => {
+          const pending = Promise.resolve(originalLoad()).then(async (source) => {
+            const cached = sanitizedURLs.get(source);
+            if (cached) return cached;
+            const promise = (async (): Promise<string> => {
+              const blob = await (await fetch(source)).blob();
+              const mediaType = EPUB_DOCUMENT_TYPES.has(blob.type) ? blob.type : 'text/html';
+              // 同 section 内多章（MOBI6 缺尾部 pagebreak 时）：目录 filepos
+              // 锚点起新栏，语义与 EPUB 的 chapterBreakCss 一致。
+              const hashes = this.toc
+                .filter(item => item.index === sectionIndex && item.hash)
+                .map(item => item.hash!);
+              const sanitized = sanitizeEpubMarkup(
+                await blob.text(), mediaType, buildChapterBreakCss(hashes),
+                { stripLeadingWhitespace: true });
+              return URL.createObjectURL(new Blob([sanitized], { type: mediaType }));
+            })();
+            sanitizedURLs.set(source, promise);
+            // 分页器会吞掉 section 加载异常只留 console.warn（主窗口外不可见），
+            // 这里落盘原始错误供排障（失败触发，健康加载零输出）。
+            promise.catch(error => {
+              localReaderLog('mobi_section_load_failed', {
+                bookId: this.bookId,
+                sectionIndex,
+                error: errorMessage(error),
+              });
+            });
+            return promise;
+          });
+          return pending;
+        },
+      };
+    });
+    const originalDestroy = book.destroy?.bind(book);
+    book.destroy = () => {
+      for (const promise of sanitizedURLs.values()) {
+        void promise.then(url => URL.revokeObjectURL(url)).catch(() => {});
+      }
+      sanitizedURLs.clear();
+      originalDestroy?.();
+    };
+    return book;
   }
 
   private async loadEpubBook(): Promise<FoliateBook> {
@@ -519,10 +615,12 @@ class LocalReader implements LocalReaderController {
       const href = anchor.getAttribute('href');
       if (!href) return;
       clickEvent.preventDefault();
-      const absoluteHref = this.book.sections[index]?.resolveHref?.(href) ?? href;
-      const resolved = this.book.resolveHref(absoluteHref);
-      if (!resolved) return;
-      void this.navigate(resolved, true);
+      void (async () => {
+        const absoluteHref = this.book!.sections[index]?.resolveHref?.(href) ?? href;
+        const resolved = await this.resolveBookHref(absoluteHref);
+        if (!resolved) return;
+        await this.navigate(resolved, true);
+      })();
     });
   }
 
@@ -553,7 +651,7 @@ class LocalReader implements LocalReaderController {
     }
     this.currentCFI = this.makeCFI(detail.index, detail.range);
     this.currentRange = detail.range ?? null;
-    this.currentCharacterOffset = this.metadata?.format === 'txt'
+    this.currentCharacterOffset = this.metadata?.format === 'txt' || this.metadata?.format === 'pdf'
       ? this.characterOffsetFromRange(detail.range)
       : undefined;
     element('pageProgress').textContent = `${this.currentPage} / ${this.totalPages}`;
@@ -618,7 +716,9 @@ class LocalReader implements LocalReaderController {
       bookFraction: (this.currentSection + this.currentFraction)
         / Math.max(1, this.book?.sections.length ?? 1),
       chapterId: this.book?.sections[this.currentSection]?.id ?? String(this.currentSection),
-      characterOffset: this.metadata!.format === 'txt' ? this.currentCharacterOffset : undefined,
+      characterOffset: this.metadata!.format === 'txt' || this.metadata!.format === 'pdf'
+        ? this.currentCharacterOffset
+        : undefined,
       updatedAt: this.lastProgressUpdatedAt,
     };
   }
@@ -637,7 +737,7 @@ class LocalReader implements LocalReaderController {
     });
     let timeoutId = 0;
     const timeout = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(() => reject(new Error('本地 EPUB 首章加载超时')), 12_000);
+      timeoutId = window.setTimeout(() => reject(new Error('本地图书首章加载超时')), 12_000);
     });
     try {
       await Promise.race([this.renderer!.goTo(target), timeout]);
@@ -678,7 +778,7 @@ class LocalReader implements LocalReaderController {
       if (resolved && this.isValidSectionIndex(resolved.index)) return resolved;
     }
     const fallbackIndex = this.fallbackSectionIndex(progress);
-    if (progress.format === 'txt') {
+    if (progress.format === 'txt' || progress.format === 'pdf') {
       const chapterIndex = this.book?.sections.findIndex(section => section.id === progress.chapterId) ?? -1;
       const index = chapterIndex >= 0 ? chapterIndex : fallbackIndex;
       if (Number.isInteger(progress.characterOffset) && progress.characterOffset! >= 0) {
@@ -712,9 +812,26 @@ class LocalReader implements LocalReaderController {
     );
   }
 
-  private resolveTocIndices(): void {
+  /**
+   * 统一的站内链接解析：EPUB/TXT 的 resolveHref 是同步的，而 MOBI KF8 是
+   * 异步的（foliate view.js 亦 await）；MOBI 解析遇到外部链接等非内部 URI
+   * 会直接抛错，这里一并吞掉返回 null（不可导航）。
+   */
+  private async resolveBookHref(href: string): Promise<{ index: number; anchor?: unknown } | null> {
+    try {
+      const resolved = await this.book?.resolveHref?.(href);
+      if (!resolved || !this.isValidSectionIndex(resolved.index)) return null;
+      return resolved;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveTocIndices(): Promise<void> {
     if (!this.book?.resolveHref) return;
-    for (const item of this.toc) item.index = this.book.resolveHref(item.href)?.index ?? -1;
+    await Promise.all(this.toc.map(async (item) => {
+      item.index = (await this.resolveBookHref(item.href))?.index ?? -1;
+    }));
   }
 
   /**
@@ -879,6 +996,19 @@ class LocalReader implements LocalReaderController {
         :root { color-scheme: ${dark ? 'dark' : 'light'}; background: ${dark ? '#262522' : '#f5f1e8'} !important; }
         html, body { background: ${dark ? '#262522' : '#f5f1e8'} !important; color: ${dark ? '#dedbd2' : '#2e2b26'} !important; }
         body { box-sizing: border-box; padding-inline: ${this.typography.pagePaddingX}px !important; font-family: ${this.typography.fontFamily} !important; font-weight: ${CONTENT_FONT_WEIGHT} !important; font-size: ${this.typography.fontSize}px !important; line-height: ${this.typography.lineHeight} !important; }
+        /* KindleGen 转制的书（MOBI7 常见）用 <font color> presentation hint
+           或 inline style 钉死文字颜色：元素自身声明胜过继承的主题色，暗色
+           主题下变成深底深字（「黑浮层」）。主题化阅读统一收回；链接例外，
+           沿用下方 a 规则的主题链接色。 */
+        font[color], [style*="color"] { color: inherit !important; }
+        ${this.metadata?.format === 'mobi' ? `
+        /* 转制噪声归一（仅 MOBI）：正文被整段 <b> 包裹（实测 1416 处）、
+           段落被塞进多层 <blockquote>（831 处，目录缩进层）、目录残留 <u>。
+           统一到与其他格式一致的无缩进+段距+细体排版。 */
+        blockquote { margin: 0 0 ${this.typography.paragraphSpacing}em !important; }
+        b, strong { font-weight: inherit !important; }
+        u { text-decoration: none !important; }
+        font[size] { font-size: inherit !important; }` : ''}
         p { margin-block: 0 ${this.typography.paragraphSpacing}em !important; text-align: justify; }
         h1, h2, h3 { break-after: avoid; line-height: 1.45; }
         img, svg, video { max-width: 100% !important; max-height: 100% !important; object-fit: contain; }
@@ -963,15 +1093,14 @@ class LocalReader implements LocalReaderController {
     label.textContent = node.label;
     row.append(index, label);
     const navigateToNode = (): void => {
-      const resolved = this.book?.resolveHref?.(node.href);
-      if (resolved) {
-        void (async () => {
-          await this.navigate(resolved, true);
-          this.overrideTocPosition = node.position;
-          this.updateTitles();
-          this.updateActiveChapter();
-        })();
-      }
+      void (async () => {
+        const resolved = await this.resolveBookHref(node.href);
+        if (!resolved) return;
+        await this.navigate(resolved, true);
+        this.overrideTocPosition = node.position;
+        this.updateTitles();
+        this.updateActiveChapter();
+      })();
       this.closePanels();
     };
 

@@ -102,4 +102,31 @@ describe('本地 EPUB 内容安全', () => {
     expect(wrapped).not.toContain('foreignObject');
     expect(wrapped).not.toContain('onload=');
   });
+
+  it('按选项剥掉段落前导空白（KindleGen 转制书的手工缩进）', () => {
+    const markup = '<html xmlns="http://www.w3.org/1999/xhtml"><head><title/></head><body>' +
+      '<p>\u3000\u3000缩进段落</p>' +
+      '<p><a id="filepos0000000109"><font size="4">\u3000 锚点内包裹的缩进</font></a></p>' +
+      '<blockquote>\u3000 引用段落</blockquote><p>顶格段落</p></body></html>';
+    const kept = sanitizeEpubMarkup(markup, 'text/html');
+    expect(kept).toContain('\u3000\u3000缩进段落');
+    const stripped = sanitizeEpubMarkup(markup, 'text/html', '', { stripLeadingWhitespace: true });
+    expect(stripped).not.toContain('\u3000');
+    expect(stripped).toContain('缩进段落');
+    expect(stripped).toContain('锚点内包裹的缩进');
+    expect(stripped).toContain('引用段落');
+    expect(stripped).toContain('顶格段落');
+  });
+
+  it('把 br＋全角空格编码的逻辑段落还原成真实段落边界', () => {
+    const markup = '<html xmlns="http://www.w3.org/1999/xhtml"><head><title/></head><body>' +
+      '<p>第一段正文<br/>\u3000\u3000第二段正文</p>' +
+      '<p>甲段<br/><font color="#000000">\u3000\u3000乙段（空格在开标签内）</font></p>' +
+      '<p>结尾段<br/></p></body></html>';
+    const stripped = sanitizeEpubMarkup(markup, 'text/html', '', { stripLeadingWhitespace: true });
+    expect(stripped).toContain('第一段正文</p><p>第二段正文');
+    expect(stripped).toContain('甲段</p><p><font color="#000000">乙段');
+    // 尾随 br（后无内容）不拆段
+    expect(stripped).toContain('结尾段<br />');
+  });
 });

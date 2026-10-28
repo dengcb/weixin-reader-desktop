@@ -75,6 +75,17 @@
         "role": "Viewer",
         "rank": "Alternate",
         "mimeType": "application/epub+zip"
+      },
+      {
+        "ext": [
+          "mobi",
+          "azw3"
+        ],
+        "name": "MOBI/AZW3 电子书",
+        "description": "MOBI/AZW3 电子书",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "application/x-mobipocket-ebook"
       }
     ],
     "macOS": {
