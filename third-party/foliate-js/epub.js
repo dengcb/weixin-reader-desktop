@@ -1,3 +1,6 @@
+// In-tree patches (vs upstream 78914ae):
+//  1. Resources: manifest/spine lookups use Maps instead of linear scans
+//     (thousand-entry TOC resolution was O(entries × spine)).
 import * as CFI from './epubcfi.js'
 
 const NS = {
@@ -678,6 +681,12 @@ class Resources {
         this.spine = $$itemref
             .map(getAttributes('idref', 'id', 'linear', 'properties'))
             .map(item => (item.properties = item.properties?.split(/\s/), item))
+        // In-tree patch: first-wins idref→index map (matches findIndex); the
+        // naive per-lookup linear scan made thousand-entry TOC resolution slow.
+        this.spineIndexByIdref = new Map()
+        for (const [index, item] of this.spine.entries())
+            if (!this.spineIndexByIdref.has(item.idref))
+                this.spineIndexByIdref.set(item.idref, index)
         this.pageProgressionDirection = $spine
             .getAttribute('page-progression-direction')
 
@@ -708,7 +717,11 @@ class Resources {
         return this.manifestById.get(id)
     }
     getItemByHref(href) {
-        return this.manifest.find(item => item.href === href)
+        // In-tree patch: manifest linear scans are O(n) per lookup, which with
+        // thousands of TOC entries (resolveHref does one per entry) costs
+        // seconds on big collections; index both lookups once instead.
+        this.manifestByHref ??= new Map(this.manifest.map(item => [item.href, item]))
+        return this.manifestByHref.get(href)
     }
     getItemByProperty(prop) {
         return this.manifest.find(item => item.properties?.includes(prop))
@@ -1077,7 +1090,7 @@ ${doc.querySelector('parsererror').innerText}`)
         const [path, hash] = href.split('#')
         const item = this.resources.getItemByHref(decodeURI(path))
         if (!item) return null
-        const index = this.resources.spine.findIndex(({ idref }) => idref === item.id)
+        const index = this.resources.spineIndexByIdref.get(item.id) ?? -1
         const anchor = hash ? doc => getHTMLFragment(doc, hash) : () => 0
         return { index, anchor }
     }

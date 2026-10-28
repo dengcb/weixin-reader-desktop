@@ -7,6 +7,7 @@ import type { Chapter, PluginAPI } from '../scripts/core/plugin_types';
 import { EPUB_DOCUMENT_TYPES, chapterBreakCss as buildChapterBreakCss, sanitizeEpubMarkup, wrapSvgSpineDocument } from './epub_security';
 import { resolveLocalKeyboardAction, shouldHandleLocalKeyboardAction } from './keyboard';
 import { PositionHistory } from './position_history';
+import { RangedFile } from './ranged_file';
 import { PDF_CHAPTER_HEADING, splitTxtChapters, txtChapterToXHTML, type TxtChapter } from './txt';
 import { buildToc, findTopLevelGroup, type FlatTocItem, type TocTreeNode } from './toc';
 
@@ -267,6 +268,7 @@ class LocalReader implements LocalReaderController {
   private lastProgressUpdatedAt = 0;
   private toc: FlatTocItem[] = [];
   private tocTree: TocTreeNode[] = [];
+  private tocRendered = false;
   /** 当前 section 内各目录项的锚点节点，用于区分同文件内的多个章节。 */
   private sectionAnchors: Array<{ position: number; node: Node }> | null = null;
   private currentRange: Range | null = null;
@@ -342,7 +344,6 @@ class LocalReader implements LocalReaderController {
       this.applyTypography();
     });
     this.updateTitles();
-    this.renderChapterList();
     this.hideLoading();
     this.setupKeyboard();
     window.__ATREADER_RUNTIME__ = this;
@@ -374,9 +375,27 @@ class LocalReader implements LocalReaderController {
   }
 
   private async loadMobiBook(): Promise<FoliateBook> {
-    const response = await fetchChecked(`/local/books/${this.bookId}/file`, 'mobi.file');
-    const file = await response.blob();
-    localReaderLog('mobi_loaded', { bookId: this.bookId, bytes: file.size });
+    // 惰性区间读取：mobi.js 只按 slice 取数，不再整本拉进内存（15MB 书实测
+    // 整本传输 3~6 秒，100MB 书将达 30 秒+）。MOBI6 会在 open 时按记录顺序
+    // 解压全书（~4KB/段），逐段发请求会产生数千次小请求，因此按 4MB 窗口
+    // 顺序预读：头部探测与 MOBI6 的顺序解压各命中一两窗，KF8 按节取整窗。
+    const fileUrl = `/local/books/${this.bookId}/file`;
+    const WINDOW_BYTES = 4 * 1024 * 1024;
+    const size = this.metadata!.fileSize;
+    let windowStart = 0;
+    let window: ArrayBuffer | null = null;
+    const file = new RangedFile(async (start, end) => {
+      if (!window || start < windowStart || end > windowStart + window.byteLength) {
+        const response = await fetchChecked(
+          `${fileUrl}?start=${start}&end=${Math.min(size, Math.max(end, start + WINDOW_BYTES))}`,
+          'mobi.slice',
+        );
+        window = await response.arrayBuffer();
+        windowStart = start;
+      }
+      return window.slice(start - windowStart, end - windowStart);
+    }, size);
+    localReaderLog('mobi_loaded', { bookId: this.bookId, bytes: file.size, ranged: true });
     // unzlib 仅用于内嵌字体的 zlib 解压：Safari 15 基线没有 DecompressionStream，
     // 内嵌字体（KF8 少见）直接降级为正文字体，不影响阅读。
     let book: FoliateBook;
@@ -828,8 +847,19 @@ class LocalReader implements LocalReaderController {
   }
 
   private async resolveTocIndices(): Promise<void> {
-    if (!this.book?.resolveHref) return;
+    if (!this.book) return;
+    // MOBI/KF8 的 splitTOCHref 是纯计算（字节偏移→节下标，零 I/O）；resolveHref
+    // 则要对每个目录项现场解压 raw 节（实测 KF8 每项 150~500ms，目录越多越慢），
+    // 现场解压只在真正需要锚点的导航时发生。EPUB 无 splitTOCHref，走原路径。
+    const book = this.book as FoliateBook & {
+      splitTOCHref?(href: string): [number, string] | null;
+    };
     await Promise.all(this.toc.map(async (item) => {
+      if (book.splitTOCHref) {
+        const [index] = book.splitTOCHref(item.href) ?? [-1, ''];
+        item.index = index ?? -1;
+        return;
+      }
       item.index = (await this.resolveBookHref(item.href))?.index ?? -1;
     }));
   }
@@ -1041,6 +1071,12 @@ class LocalReader implements LocalReaderController {
       element(id === 'chapterPanel' ? 'chapterButton' : 'styleButton').classList.add('active');
       // 打开章节面板时重算展开路径：全部折叠后仅展开当前章节的祖先分组。
       if (id === 'chapterPanel') {
+        // 目录 DOM 首次打开面板才构建：万节书（目录数千行）在 init 时构建会
+        // 拖慢开书首屏，而多数阅读会话根本不展开目录。
+        if (!this.tocRendered) {
+          this.tocRendered = true;
+          this.renderChapterList();
+        }
         this.expandActivePath();
         this.updateActiveChapter();
       }

@@ -387,40 +387,27 @@ fn parse_epub_xml(markup: &str) -> Result<roxmltree::Document<'_>, roxmltree::Er
     )
 }
 
+/// 预检只做廉价的结构校验（存在、非空、媒体类型受支持）。spine 文件不做严格
+/// XML 解析：万节书的逐文件解析是每次打开的秒级开销，且 `&nbsp;` 等 HTML 实体
+/// 在严格 XML 下非法，会错杀 Apple Books 等阅读器都能打开的书；渲染层
+/// foliate-js 对解析失败的 XHTML 自动回退 HTML 模式，单文件损坏只降级该节。
 fn validate_spine_entry(
     archive: &mut zip::ZipArchive<File>,
     path: &str,
     media_type: &str,
 ) -> Result<(), String> {
-    let mut entry = archive
+    let entry = archive
         .by_name(path)
         .map_err(|_| format!("EPUB spine 资源不存在：{path}"))?;
     if entry.is_dir() || entry.size() == 0 {
         return Err(format!("EPUB spine 资源为空：{path}"));
     }
-    match media_type {
-        "application/xhtml+xml" | "image/svg+xml" => {
-            let mut markup = String::new();
-            entry
-                .read_to_string(&mut markup)
-                .map_err(|error| format!("无法读取 EPUB spine 资源 {path}：{error}"))?;
-            let document = parse_epub_xml(&markup)
-                .map_err(|error| format!("EPUB spine XML 无效 {path}：{error}"))?;
-            if media_type == "image/svg+xml" && document.root_element().tag_name().name() != "svg" {
-                return Err(format!("EPUB SVG spine 根元素无效：{path}"));
-            }
-        }
-        "text/html" => {
-            let mut markup = String::new();
-            entry
-                .read_to_string(&mut markup)
-                .map_err(|error| format!("无法读取 EPUB HTML spine 资源 {path}：{error}"))?;
-            if markup.trim().is_empty() {
-                return Err(format!("EPUB HTML spine 资源为空：{path}"));
-            }
-        }
-        value if value.starts_with("image/") => {}
-        _ => return Err(format!("EPUB spine 使用不支持的媒体类型：{media_type}")),
+    let supported = media_type == "application/xhtml+xml"
+        || media_type == "text/html"
+        || media_type == "image/svg+xml"
+        || media_type.starts_with("image/");
+    if !supported {
+        return Err(format!("EPUB spine 使用不支持的媒体类型：{media_type}"));
     }
     Ok(())
 }
@@ -878,6 +865,64 @@ fn ensure_mobi_size(metadata: &fs::Metadata) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+// /file 区间读取的单次上限：mobi.js 按 PDB 记录/节取数，单段远小于此值；
+// 上限只用于约束异常参数的内存占用。
+const MOBI_RANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// 解析 /file 的 ?start=&end= 区间（含头不含尾）。参数必须成对出现且合法；
+/// 无 query 时返回 None 表示整本读取。
+fn parse_mobi_byte_range(query: Option<&str>) -> Result<Option<(u64, u64)>, String> {
+    let Some(query) = query else {
+        return Ok(None);
+    };
+    let mut start = None;
+    let mut end = None;
+    for pair in query.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            match key {
+                "start" => start = value.parse::<u64>().ok(),
+                "end" => end = value.parse::<u64>().ok(),
+                _ => {}
+            }
+        }
+    }
+    match (start, end) {
+        (None, None) => Ok(None),
+        (Some(s), Some(e)) if s < e && e - s <= MOBI_RANGE_MAX_BYTES => Ok(Some((s, e))),
+        _ => Err("MOBI 区间参数无效".to_string()),
+    }
+}
+
+/// MOBI 文件按需读取：惰性 Blob 只按 mobi.js 的 slice 请求取字节，
+/// 打开大书时不再整本读入内存。
+fn read_mobi_bytes(record: &LocalBookRecord, query: Option<&str>) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(&record.path)
+        .map_err(|error| format!("无法读取 MOBI 文件信息：{error}"))?;
+    ensure_mobi_size(&metadata)?;
+    let mut file = File::open(&record.path).map_err(|error| format!("无法读取 MOBI：{error}"))?;
+    match parse_mobi_byte_range(query)? {
+        Some((start, end)) => {
+            if end > metadata.len() {
+                return Err("MOBI 区间超出文件大小".to_string());
+            }
+            file.seek(SeekFrom::Start(start))
+                .map_err(|error| format!("无法读取 MOBI：{error}"))?;
+            let mut bytes = Vec::with_capacity((end - start) as usize);
+            (&mut file)
+                .take(end - start)
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("无法读取 MOBI：{error}"))?;
+            Ok(bytes)
+        }
+        None => {
+            let mut bytes = Vec::with_capacity(metadata.len() as usize);
+            file.read_to_end(&mut bytes)
+                .map_err(|error| format!("无法读取 MOBI：{error}"))?;
+            Ok(bytes)
+        }
+    }
 }
 
 fn ensure_pdf_size(metadata: &fs::Metadata) -> Result<(), String> {
@@ -1859,11 +1904,7 @@ pub fn protocol_response_with_referer<R: Runtime>(
                 error_response(422, error)
             }
         },
-        "file" if record.format == LocalBookFormat::Mobi => match fs::metadata(&record.path)
-            .map_err(|error| format!("无法读取 MOBI 文件信息：{error}"))
-            .and_then(|metadata| ensure_mobi_size(&metadata))
-            .and_then(|()| fs::read(&record.path).map_err(|error| format!("无法读取 MOBI：{error}")))
-        {
+        "file" if record.format == LocalBookFormat::Mobi => match read_mobi_bytes(&record, query) {
             Ok(bytes) => response(200, "application/octet-stream", bytes, true),
             Err(error) => {
                 log::warn!(target: "local-books", "mobi_resource_failed book_id={} error={}", book_id, error);
@@ -2083,6 +2124,33 @@ mod tests {
         assert!(parse_mobi(&path).is_err());
     }
 
+    #[test]
+    fn mobi_file_range_reads_exact_bytes_and_rejects_bad_params() {
+        let path = write_test_mobi(Some("测试书名"), "PalmName", 0);
+        let record = LocalBookRecord {
+            book_id: "test".into(),
+            path: path.clone(),
+            format: LocalBookFormat::Mobi,
+            title: "测试书名".into(),
+            file_size: fs::metadata(&path).unwrap().len(),
+            modified_at: 0,
+            last_opened_at: 0,
+            fixed_layout: false,
+        };
+        let whole = read_mobi_bytes(&record, None).unwrap();
+        let ranged = read_mobi_bytes(&record, Some("start=60&end=68")).unwrap();
+        assert_eq!(&whole[60..68], &ranged[..]);
+        assert_eq!(
+            read_mobi_bytes(&record, Some("start=78&end=78")).is_ok(),
+            false
+        );
+        assert!(read_mobi_bytes(&record, Some("start=68&end=60")).is_err());
+        assert!(read_mobi_bytes(&record, Some("start=0&end=999999999")).is_err());
+        assert!(read_mobi_bytes(&record, Some("start=5")).is_err());
+        assert!(parse_mobi_byte_range(None).unwrap().is_none());
+        fs::remove_file(&path).unwrap();
+    }
+
     /// 构造最小有效 PDF：单页 + Helvetica 文本对象，xref 偏移按实际字节
     /// 位置计算。content_stream 传非 BT/ET 操作符即模拟无文字层（扫描版）。
     fn write_test_pdf(content_stream: &str) -> PathBuf {
@@ -2296,10 +2364,15 @@ mod tests {
         assert!(error.contains("spine 资源不存在"), "{error}");
         fs::remove_file(&missing).unwrap();
 
-        let broken = write_test_epub(opf, Some("<html><body>"));
-        let error = parse_epub(&broken).unwrap_err();
-        assert!(error.contains("spine XML 无效"), "{error}");
+        // 损坏 XHTML 与 HTML 实体不再被预检错杀（渲染层有 HTML 回退），仅缺资源仍报错
+        let broken = write_test_epub(opf, Some("<html><body>&nbsp;</body></html>"));
+        assert_eq!(parse_epub(&broken).unwrap(), ("测试书".to_string(), false));
         fs::remove_file(&broken).unwrap();
+
+        let empty = write_test_epub(opf, Some(""));
+        let error = parse_epub(&empty).unwrap_err();
+        assert!(error.contains("spine 资源为空"), "{error}");
+        fs::remove_file(&empty).unwrap();
     }
 
     #[test]
