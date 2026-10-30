@@ -6,6 +6,12 @@ import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 import { invoke } from '../core/tauri';
 import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
+import { showSiteSwitchLoading, startupWindowFromGlobal } from '../core/site_switch_loading';
+import {
+  RemoteHidButtonEvent,
+  resolveRemoteHidAction,
+  subscribeRemoteHidButtons,
+} from '../core/remote_hid_source';
 
 const MENU_KEY_DEBOUNCE_MS = 1000;
 const MENU_CONTEXT_GUARD_MS = 1500;
@@ -22,6 +28,7 @@ export class RemoteManager {
   private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
   private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
   private detachIframeKeyboard: (() => void) | null = null;
+  private unsubscribeRemoteHid: (() => void) | null = null;
   private menuKeyDebouncing = false;
   private menuDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastMenuKeyAt = 0;
@@ -245,6 +252,10 @@ export class RemoteManager {
       this.detachIframeKeyboard();
       this.detachIframeKeyboard = null;
     }
+    if (this.unsubscribeRemoteHid) {
+      this.unsubscribeRemoteHid();
+      this.unsubscribeRemoteHid = null;
+    }
     this.lastMenuKeyAt = 0;
     this.enabled = false;
     log.info('[RemoteManager] 已禁用');
@@ -347,6 +358,65 @@ export class RemoteManager {
     window.addEventListener('keydown', this.keyboardHandler, { passive: false, capture: true });
     window.addEventListener('keyup', this.keyupHandler, { capture: true });
     window.addEventListener('contextmenu', this.contextMenuHandler, { capture: true });
+
+    // 自有蓝牙识别层：只消费系统键盘路径给不到的按键（音量±/语音/返回/电源），
+    // 既有键继续走上面的键盘事件路径，两条链路按 button 天然分工。
+    this.unsubscribeRemoteHid = subscribeRemoteHidButtons((event) =>
+      this.handleRemoteHidButton(event),
+    );
+  }
+
+  private handleRemoteHidButton(event: RemoteHidButtonEvent) {
+    const action = resolveRemoteHidAction(event.button, event.phase, this.siteContext.isReaderPage);
+    if (action === 'page-forward') {
+      this.performPageTurn('forward');
+      return;
+    }
+    if (action === 'page-backward') {
+      this.performPageTurn('backward');
+      return;
+    }
+    if (action === 'toggle-stealth') {
+      invoke('toggle_stealth').catch(() => {});
+      return;
+    }
+    if (action === 'toggle-wide') {
+      // 走菜单动作路径，继承阅读页门禁与状态同步
+      invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {});
+      return;
+    }
+    if (action === 'switch-bookstore') {
+      void this.switchToNextBookstore();
+      return;
+    }
+    // 未绑定动作且系统路径也给不到的键：记日志便于后续映射（voice 留给三期 ATVV）。
+    if (event.phase === 'press') {
+      if (event.button === 'voice' || event.button.startsWith('usage_')) {
+        log.info(`[RemoteHid] 按键 ${event.button}（暂未绑定动作）`);
+      }
+    }
+  }
+
+  /** 返回键：循环切换到下一个书城，语义与书城切换浮层的提交路径一致。 */
+  private async switchToNextBookstore(): Promise<void> {
+    try {
+      const list = await invoke<Array<{ index: number; current: boolean }>>('get_bookstore_list');
+      if (!Array.isArray(list) || list.length === 0) return;
+      const currentIdx = list.findIndex((item) => item.current);
+      const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % list.length;
+      if (currentIdx >= 0 && nextIdx === currentIdx) return;
+      const target = list[nextIdx];
+      if (!target) return;
+      // 与浮层一致：启动窗口期不预铺过场，其余情况先铺 sticky 过场再切换
+      if (!startupWindowFromGlobal()) {
+        showSiteSwitchLoading(document, { sticky: true });
+      }
+      invoke('switch_bookstore_by_index', { index: target.index }).catch((error) =>
+        log.error('[RemoteManager] 切换书城失败', error),
+      );
+    } catch (error) {
+      log.error('[RemoteManager] 获取书城列表失败', error);
+    }
   }
 
   private isRemoteMenuKeyboardEvent(e: KeyboardEvent): boolean {

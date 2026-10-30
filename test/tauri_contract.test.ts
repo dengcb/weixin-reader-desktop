@@ -313,7 +313,7 @@ describe('Tauri application contracts', () => {
     expect(settingsPage).toContain("invoke('set_content_source_enabled'");
     expect(settingsPage).toContain("invoke('claim_settings_target')");
     expect(settingsPage).toContain("listen('plugins-updated',()=>refreshPluginsFromRepository())");
-    expect(settingsPage.match(/class="nav-icon"/g)).toHaveLength(5);
+    expect(settingsPage.match(/class="nav-icon"/g)).toHaveLength(6);
     expect(settingsPage).toContain('class="search-icon"');
     expect(settingsPage).toContain("mask:url('atrd-logo.svg')");
     expect(settingsPage).not.toContain("background:url('icon.png')");

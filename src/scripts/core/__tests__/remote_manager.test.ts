@@ -11,8 +11,8 @@ const originals = {
 };
 
 // invoke() 动态读 window.__TAURI__.core.invoke，mock 这个全局即可，
-// 不需要碰 ES module 的只读导出。
-const tauriInvoke = mock(async () => undefined);
+// 不需要碰 ES module 的只读导出。签名带 cmd/args 以便按命令返回不同值。
+const tauriInvoke = mock(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined);
 const installTauriMock = () => {
   (window as any).__TAURI__ = {
     core: { invoke: tauriInvoke },
@@ -244,5 +244,129 @@ describe('RemoteManager keyboard contract', () => {
     const contextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     document.body.dispatchEvent(contextMenu);
     expect(contextMenu.defaultPrevented).toBe(false);
+  });
+});
+
+describe('RemoteManager HID button contract', () => {
+  let hidListeners: Map<string, (event: { payload: any }) => void>;
+
+  const emitHid = (button: string, phase: string) => {
+    hidListeners.get('remote-hid-button')?.({
+      payload: { button, phase, usage: 0 },
+    });
+  };
+
+  beforeEach(() => {
+    hidListeners = new Map();
+    (window as any).__TAURI__ = {
+      core: { invoke: tauriInvoke },
+      event: {
+        listen: async (event: string, handler: (event: { payload: any }) => void) => {
+          hidListeners.set(event, handler);
+          return () => {
+            hidListeners.delete(event);
+          };
+        },
+      },
+    };
+    tauriInvoke.mockClear();
+    tauriInvoke.mockImplementation(async () => undefined);
+    settingsStore.get = () => ({
+      schemaVersion: 2,
+      _version: 0,
+      global: {},
+      sites: {},
+      pluginConfigs: {},
+      readerWide: false,
+      hideNavbar: false,
+      hideToolbar: false,
+    });
+    settingsStore.update = mock(async () => undefined);
+    EventBus.clearHistory();
+  });
+
+  afterEach(() => {
+    settingsStore.get = originals.get;
+    settingsStore.update = originals.update;
+    uninstallTauriMock();
+    EventBus.clearHistory();
+  });
+
+  it('音量键仅阅读页翻页：Vol+ 上一页，Vol- 下一页', () => {
+    const { manager, nextPage, prevPage } = createManager();
+    emitHid('volume_up', 'press');
+    emitHid('volume_down', 'press');
+    expect(prevPage).toHaveBeenCalledTimes(1);
+    expect(nextPage).toHaveBeenCalledTimes(1);
+
+    (manager as any).siteContext.isReaderPage = false;
+    emitHid('volume_up', 'press');
+    expect(prevPage).toHaveBeenCalledTimes(1);
+    manager.destroy();
+  });
+
+  it('电源键在任意页面触发摸鱼键', () => {
+    const { manager } = createManager();
+    (manager as any).siteContext.isReaderPage = false;
+    emitHid('power', 'press');
+    expect(tauriInvoke).toHaveBeenCalledWith('toggle_stealth', undefined);
+    manager.destroy();
+  });
+
+  it('TV 键走菜单动作切换宽屏', () => {
+    const { manager } = createManager();
+    emitHid('tv', 'press');
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'reader_wide' });
+    manager.destroy();
+  });
+
+  it('返回键循环切换到下一个书城', async () => {
+    tauriInvoke.mockImplementation(async (cmd: string) =>
+      cmd === 'get_bookstore_list'
+        ? [
+            { index: 1, current: true },
+            { index: 2, current: false },
+          ]
+        : undefined,
+    );
+    const { manager } = createManager();
+    emitHid('back', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tauriInvoke).toHaveBeenCalledWith('switch_bookstore_by_index', { index: 2 });
+    manager.destroy();
+  });
+
+  it('只有一个书城时返回键不切换', async () => {
+    tauriInvoke.mockImplementation(async (cmd: string) =>
+      cmd === 'get_bookstore_list' ? [{ index: 1, current: true }] : undefined,
+    );
+    const { manager } = createManager();
+    emitHid('back', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tauriInvoke).not.toHaveBeenCalledWith('switch_bookstore_by_index', expect.anything());
+    manager.destroy();
+  });
+
+  it('release 与未绑定按键不触发任何动作', () => {
+    const { manager, nextPage, prevPage } = createManager();
+    emitHid('volume_up', 'release');
+    emitHid('power', 'release');
+    emitHid('voice', 'press');
+    emitHid('usage_0x99', 'press');
+    expect(nextPage).not.toHaveBeenCalled();
+    expect(prevPage).not.toHaveBeenCalled();
+    expect(tauriInvoke).not.toHaveBeenCalledWith('toggle_stealth', undefined);
+    expect(tauriInvoke).not.toHaveBeenCalledWith('simulate_menu_click', expect.anything());
+    expect(tauriInvoke).not.toHaveBeenCalledWith('switch_bookstore_by_index', expect.anything());
+    manager.destroy();
+  });
+
+  it('destroy 后取消 HID 订阅', async () => {
+    const { manager, nextPage } = createManager();
+    manager.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hidListeners.has('remote-hid-button')).toBe(false);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'PageDown' }));
+    expect(nextPage).not.toHaveBeenCalled();
   });
 });

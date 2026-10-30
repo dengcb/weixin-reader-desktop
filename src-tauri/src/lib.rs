@@ -13,6 +13,9 @@ pub mod monitor;
 mod plugin_installer;
 pub mod plugin_manager;
 mod reading_progress;
+#[cfg(target_os = "macos")]
+mod remote_hid;
+mod remote_hid_windows;
 mod settings;
 mod sites;
 mod tracker_blocker;
@@ -602,6 +605,18 @@ pub fn run() {
             let startup_settings = settings::read_settings(app.handle())
                 .unwrap_or_else(|_| settings::default_settings());
             voice_turner::sync_from_settings(app.handle(), &startup_settings);
+
+            // 蓝牙遥控器 HID 识别（macOS）：监听小米遥控器原始报文，
+            // 识别全部按键（含系统不映射的音量/返回/语音键），
+            // 广播 remote-hid-button 事件给主窗口。
+            #[cfg(target_os = "macos")]
+            remote_hid::start(app.handle());
+
+            // 蓝牙遥控器 Raw Input 识别（Windows，零提权）：键盘通道增补
+            // TV/语音/媒体音量与 RC001 厂商键族；音量±/返回被 kbdhid 丢弃
+            // 不可得（见 remote_hid_windows.rs 模块注释）。
+            #[cfg(target_os = "windows")]
+            remote_hid_windows::start(app.handle());
 
             // 网络错误或第三方页面永远不发送 Finished 时不能把用户永久困在启动页。
             // 正常路径通常在数百毫秒到数秒内由上面的稳定窗口提前揭示。
