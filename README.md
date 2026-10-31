@@ -7,7 +7,7 @@
 **官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB / MOBI / PDF(文字版) 电子书**
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v2.0.0-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v2.0.1-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -197,7 +197,8 @@ CPU 占用低
 
 - macOS 首次使用需在「系统设置 → 隐私与安全性 → 输入监控」中允许艾特阅读；键位图示见「设置 → 蓝牙遥控」
 - 方向、确认、主页、菜单按键在各平台均可用；TV 键 Windows 同样支持；音量、返回、电源与遥控器语音翻页目前仅 macOS（Windows 键码映射限制）
-- 按住语音键对遥控器说话即可语音翻页（macOS，不依赖「语音翻页」开关；首次使用会请求语音识别权限，仅按键时收音，本机识别不上传）
+- 按住语音键对遥控器说话即可语音翻页（macOS，仅支持二代（小米蓝牙遥控器 2 / 2 Pro）；不依赖「语音翻页」开关；首次使用会请求语音识别权限，仅按键时收音，本机识别不上传）
+- 一代小米蓝牙语音遥控器在 Mac 配对下不暴露麦克风通道，语音翻页不可用
 
 ### 🔄 智能更新
 

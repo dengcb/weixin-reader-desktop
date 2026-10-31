@@ -367,9 +367,15 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 - 事件契约与 macOS 相同（`remote-hid-button` `{button, phase, usage}`），前端零改动。
 - 验证状态：VK 映射与边沿纯逻辑已单测（macOS 上运行）；`x86_64-pc-windows-msvc` cargo xwin check 通过；aarch64 本地交叉检查被既有工具链问题阻挡（ring 0.17 构建脚本与 cargo-xwin 的 `/imsvc` 参数注入不兼容，与本模块无关），由 CI 原生 Windows ARM64 构建验证；**运行时行为待 Windows 真机验收**。
 
-## 10. 三期：ATVV 语音翻页（2026-10-31 已实现，待真机验收）
+## 10. 三期：ATVV 语音翻页（2026-10-31 已实现，仅二代 2 / 2 Pro）
 
 小米遥控器的语音走 Android TV 私有 ATVV 服务（GATT），macOS 不认识它——**本项目进程内充当遥控器专属语音客户端**，系统蓝牙栈只搬运字节，语义由 `remote_voice.rs` 与遥控器按协议约定（机制参照 remote-mic/SayAll，GPL-3.0，只学机制不抄代码；ADPCM 按公开 IMA 算法独立实现）。
+
+### 型号兼容性（2026-10-31 真机定案）
+
+- **二代普通版与 Pro（2 / 2 Pro，Pro 即 RC003-MS）均支持**：广播包含 ATVV 服务，按住语音键由遥控器主动发起语音会话。
+- **一代小米蓝牙语音遥控器不支持**：RTKBee（PID `0x32B8`、固件 18667），Mac 配对下 GATT 只有 `180F` 电池、`180A` 设备信息与 `FEF6`（Wiced Smart 通用框架，无音频寄存器与可用控制点）；语音键只发标准 HID F5；按住时 `FEF6` 通知特征零数据，Wiced Smart 标准读命令无响应。其语音链路只存在于与小米电视的配对协议中，公开资料未覆盖。
+- 实现侧边界：连接后发现 ATVV 缺失即置 `unsupported` 并停止重连（避免对不支持的硬件空转），设置页与 README 均标注「仅二代 2 / 2 Pro」。
 
 ### 协议规格（真机与参考实现核对，规格注在模块头注释）
 
@@ -380,7 +386,8 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 
 ### 架构与交互（用户拍板的模型）
 
-- `remote_voice.rs`（macOS，约 1050 行）：CoreBluetooth 客户端（`define_class!` 委托 + 主队列回调）+ ATVV 协议解析 + IMA ADPCM 解码 + 帧累积（纯逻辑 6 项单测：编解码往返、能力/控制解析、帧切分、竞态守卫）。**链路生命周期与「语音翻页」开关解耦**：遥控器经 HID 连接即 `ensure_started()` 建链，开关关闭也不拆链；开关开启时也会提前建链（不依赖输入监控权限）。进程级静态状态不进 tauri State。
+- `remote_voice.rs`（macOS，约 1050 行）：CoreBluetooth 客户端（`define_class!` 委托 + 主队列回调）+ ATVV 协议解析 + IMA ADPCM 解码 + 帧累积（纯逻辑 6 项单测：编解码往返、能力/控制解析、帧切分、竞态守卫）。**链路生命周期与「语音翻页」开关解耦**：有标识缓存时启动即建链，否则由 HID 连接触发；开关关闭也不拆链。发现顺序：缓存标识直连 → 系统已连外设（`1812/180F/ATVV` 种子服务，按名称过滤）→ 扫描配对广播；连接 8 秒未完成则取消重试。进程级静态状态不进 tauri State。
+- CoreBluetooth 两个运行时坑（均已修）：`CBCentralManager/CBPeripheral.delegate` 是 weak 属性，委托对象必须静态持有，否则回调全部静默丢失；`define_class!` 的方法选择器参数个数在类注册时断言，`didUpdateValueForCharacteristic` 必须写全 `…:error:`，否则遥控器一连上即 abort。
 - `voice_turner.rs`：新增 `ListenMode`（Microphone/RemotePush）。语音键是独立输入：ATVV 就绪且（开关开启或语音键按过）→ PTT 监听器；开关开启但遥控器未就绪 → 常开麦克监听；两者皆无 → 不监听。断开自动回落，设置本身不变。
 - 音频出口：解码样本经 mpsc 送 PTT 监听线程，装 `AVAudioPCMBuffer`（16kHz 单声道 Float32）喂 `SFSpeechAudioBufferRecognitionRequest`；识别回调与 TriggerGate/翻页动作完全复用既有链路。ATVV 模式**不需要麦克风权限**（不用系统录音设备），只要语音识别授权 + 新增的蓝牙授权。
 - `Info.plist` 新增 `NSBluetoothAlwaysUsageDescription`；dev 裸二进制缺该键时链路不启动（TCC 守卫）。
@@ -393,3 +400,4 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 - [ ] 松开：「流结束」；重复按住可持续会话。
 - [ ] 断开遥控器 → 开关开启则回常开麦克监听、关闭则停止监听；重连 → 回 PTT。关闭设置「语音翻页」→ 只停常开麦克风，蓝牙链路与语音键保持可用。
 - [ ] 全程系统麦克风列表无新设备、其他 app 不受影响。
+- [ ] 一代遥控器：连接后日志出现「该遥控器不提供 ATVV 语音服务」且不再重连；按住语音键不触发语音翻页（设置页已标注仅支持二代 2 / 2 Pro）。

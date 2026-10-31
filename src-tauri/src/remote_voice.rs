@@ -5,6 +5,11 @@
 //! 与遥控器按 ATVV 协议约定（机制参照 remote-mic / SayAll，GPL-3.0，
 //! 只学机制不抄代码；ADPCM 为公开 IMA 算法）。
 //!
+//! 型号边界（2026-10-31 真机）：二代普通版与 Pro（2 / 2 Pro）均提供 ATVV；一代
+//! （RTKBee，PID 0x32B8，固件 18667）在 Mac 配对下 GATT 只有电池/设备信息/
+//! Wiced Smart，语音键仅发 HID F5，没有任何麦克风通道；本模块连接后检测到
+//! ATVV 缺失即停止重连，不再尝试。
+//!
 //! 协议规格（真机与参考实现核对）：
 //! - 服务 `AB5E0001-5A21-4F05-BC7D-AF01F617B664`；特征：AB5E0002 下行命令
 //!   （写）、AB5E0003 上行音频（通知）、AB5E0004 上行控制（通知）。
@@ -345,6 +350,16 @@ pub fn sync_master_switch(enabled: bool) {
     }
 }
 
+/// 启动时调用：仅当曾发现过遥控器（有标识缓存）才提前建链。
+/// 首次使用由 HID 连接触发建链，进入配对模式后 HID 断开但链路保留，
+/// 仍能扫到广播；没有遥控器的用户不会在启动时无意义地持续扫描。
+#[cfg(target_os = "macos")]
+pub fn ensure_started_if_known() {
+    if macos::has_cached_identifier() {
+        ensure_started();
+    }
+}
+
 /// ATVV 链路是否就绪。
 pub fn is_ready() -> bool {
     VOICE.lock().unwrap().ready.load(Ordering::SeqCst)
@@ -403,22 +418,34 @@ pub fn pcm_buffer_for(samples: &[i16]) -> Option<objc2::rc::Retained<objc2_avf_a
 mod macos {
     use super::*;
     use objc2::rc::Retained;
-    use objc2::runtime::ProtocolObject;
+    use objc2::runtime::{AnyObject, ProtocolObject};
     use objc2::{define_class, msg_send, AllocAnyThread, MainThreadMarker, MainThreadOnly};
     use objc2_avf_audio::{AVAudioFormat, AVAudioPCMBuffer};
     use objc2_core_bluetooth::{
-        CBCentralManager, CBCentralManagerDelegate, CBCharacteristic, CBManagerState,
-        CBPeripheral, CBPeripheralDelegate, CBService, CBUUID,
+        CBCentralManager, CBCentralManagerDelegate, CBCharacteristic,
+        CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService, CBUUID,
     };
-    use objc2_foundation::{NSArray, NSData, NSError, NSString};
+    use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSNumber, NSString, NSUUID};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
+    use tauri::Manager;
 
     // ---- 链路状态（仅主队列线程触碰；静态存储需 Send/Sync 声明） ----
 
     struct LinkState {
+        /// CoreBluetooth 的 delegate 是 weak 属性：必须由我们持有，否则
+        /// 委托对象立刻释放，所有回调静默丢失。
+        delegate: Mutex<Option<SendRetained<AtvvDelegate>>>,
         central: Mutex<Option<SendRetained<CBCentralManager>>>,
+        /// 是否正在扫描（避免每 5 秒的检索重试叠加扫描）。
+        scanning: AtomicBool,
+        /// 缓存标识直连失败过：本轮改为扫描，避免对失效标识死循环重连。
+        cached_failed: AtomicBool,
+        /// 连接请求已发出、尚未收到 didConnect/didFail 的回调。
+        connecting: AtomicBool,
+        /// 已确认遥控器固件不提供语音服务：本次运行内不再重试。
+        unsupported: AtomicBool,
         peripheral: Mutex<Option<SendRetained<CBPeripheral>>>,
         transmit: Mutex<Option<SendRetained<CBCharacteristic>>>,
         audio_subscribed: AtomicBool,
@@ -437,7 +464,12 @@ mod macos {
 
     fn link() -> &'static LinkState {
         LINK.get_or_init(|| LinkState {
+            delegate: Mutex::new(None),
             central: Mutex::new(None),
+            scanning: AtomicBool::new(false),
+            cached_failed: AtomicBool::new(false),
+            connecting: AtomicBool::new(false),
+            unsupported: AtomicBool::new(false),
             peripheral: Mutex::new(None),
             transmit: Mutex::new(None),
             audio_subscribed: AtomicBool::new(false),
@@ -445,6 +477,35 @@ mod macos {
             capabilities_requested: AtomicBool::new(false),
             link: Mutex::new(VoiceLink::new()),
         })
+    }
+
+    /// 遥控器 CoreBluetooth 标识的缓存文件（每台机器不同，随应用数据目录）。
+    fn identifier_cache_path() -> Option<std::path::PathBuf> {
+        let app = VOICE.lock().ok()?.app.clone()?;
+        let dir = app.path().app_data_dir().ok()?;
+        Some(dir.join("remote-voice-peripheral"))
+    }
+
+    pub(crate) fn has_cached_identifier() -> bool {
+        load_cached_identifier().is_some()
+    }
+
+    fn load_cached_identifier() -> Option<String> {
+        let raw = std::fs::read_to_string(identifier_cache_path()?).ok()?;
+        let value = raw.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
+
+    fn save_cached_identifier(identifier: &str) {
+        let Some(path) = identifier_cache_path() else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&path, identifier).is_ok() {
+            log::info!(target: TARGET, "已缓存遥控器标识，后续启动直连");
+        }
     }
 
     // ---- 委托类：静态定义，方法只访问进程级状态 ----
@@ -466,25 +527,34 @@ mod macos {
                 if state == CBManagerState::PoweredOn {
                     log::info!(target: TARGET, "蓝牙已就绪，检索遥控器（ATVV）");
                     retrieve_peripherals();
+                } else {
+                    // 0=未知 1=重置中 2=不支持 3=未授权 4=已关闭
+                    log::warn!(
+                        target: TARGET,
+                        "蓝牙不可用 state={}（3=未授权，需在 系统设置 → 隐私与安全性 → 蓝牙 中允许）",
+                        state.0
+                    );
                 }
             }
 
             #[unsafe(method(centralManager:didConnectPeripheral:))]
             fn central_did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
                 log::info!(target: TARGET, "遥控器已连接（ATVV）");
+                link().connecting.store(false, Ordering::SeqCst);
                 let raw: *mut CBPeripheral = unsafe { msg_send![peripheral, retain] };
                 let Some(retained) = (unsafe { Retained::from_raw(raw) }) else {
                     return;
                 };
                 *link().peripheral.lock().unwrap() = Some(SendRetained(retained.clone()));
+                link().cached_failed.store(false, Ordering::SeqCst);
                 link().audio_subscribed.store(false, Ordering::SeqCst);
                 link().control_subscribed.store(false, Ordering::SeqCst);
                 link().capabilities_requested.store(false, Ordering::SeqCst);
                 unsafe {
-                    retained.setDelegate(Some(ProtocolObject::from_ref(&*new_delegate())));
-                    let uuid = CBUUID::UUIDWithString(&NSString::from_str(SERVICE_UUID));
-                    let services = NSArray::from_retained_slice(&[uuid]);
-                    retained.discoverServices(Some(&services));
+                    if let Some(delegate) = retained_delegate() {
+                        retained.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+                    }
+                    retained.discoverServices(None);
                 }
             }
 
@@ -507,7 +577,61 @@ mod macos {
                 _error: *mut NSError,
             ) {
                 log::warn!(target: TARGET, "遥控器连接失败（ATVV），3 秒后重试");
+                link().cached_failed.store(true, Ordering::SeqCst);
+                link().connecting.store(false, Ordering::SeqCst);
                 handle_disconnect();
+            }
+
+            #[unsafe(method(centralManager:didDiscoverPeripheral:advertisementData:RSSI:))]
+            fn central_did_discover(
+                &self,
+                _central: &CBCentralManager,
+                peripheral: &CBPeripheral,
+                advertisement_data: &NSDictionary<NSString, AnyObject>,
+                _rssi: &NSNumber,
+            ) {
+                let name = unsafe { peripheral.name() }
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                let identifier = unsafe { peripheral.identifier().UUIDString() }.to_string();
+                let advertised = advertisement_data
+                    .objectForKey(&NSString::from_str("kCBAdvDataServiceUUIDs"))
+                .and_then(|value| {
+                    value.downcast_ref::<NSArray>().map(|list| {
+                        list.to_vec()
+                            .into_iter()
+                            .filter_map(|element| {
+                                element
+                                    .downcast_ref::<CBUUID>()
+                                    .map(|uuid| unsafe { uuid.UUIDString() }.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .unwrap_or_default();
+                // 配对模式下广播名为「小米蓝牙语音遥控器」；参考固件的广播名
+                // 是 MI RC。两者都不是时再用 ATVV 服务 UUID 兜底。
+                let is_target = name.contains("小米") && name.contains("遥控器")
+                    || name.to_uppercase().contains("MI RC")
+                    || advertised
+                        .iter()
+                        .any(|uuid| uuid.eq_ignore_ascii_case(SERVICE_UUID));
+                if !is_target || !link().scanning.swap(false, Ordering::SeqCst) {
+                    return;
+                }
+                save_cached_identifier(&identifier);
+                link().cached_failed.store(false, Ordering::SeqCst);
+                log::info!(target: TARGET, "扫描到遥控器，发起 ATVV 连接");
+                let central = link()
+                    .central
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(|stored| stored.0.clone()));
+                let Some(central) = central else {
+                    return;
+                };
+                unsafe { central.stopScan() };
+                begin_connect(&central, peripheral);
             }
         }
 
@@ -518,20 +642,21 @@ mod macos {
                 peripheral: &CBPeripheral,
                 _error: *mut NSError,
             ) {
-                let target = NSString::from_str(&SERVICE_UUID.to_uppercase());
                 let services = unsafe { peripheral.services() };
-                let Some(services) = services else {
-                    log::warn!(target: TARGET, "未发现 ATVV 服务，3 秒后重连");
-                    handle_disconnect();
-                    return;
-                };
-                let matched = services
-                    .to_vec()
-                    .into_iter()
-                    .find(|s| unsafe { s.UUID().UUIDString() } == target);
+                let target = SERVICE_UUID.to_uppercase();
+                let matched = services.as_ref().and_then(|list| {
+                    list.to_vec()
+                        .into_iter()
+                        .find(|service| unsafe { service.UUID().UUIDString() }.to_string() == target)
+                });
                 let Some(service) = matched else {
-                    log::warn!(target: TARGET, "未发现 ATVV 服务，3 秒后重连");
-                    handle_disconnect();
+                    // 一代遥控器在 Mac 配对下只暴露电池/设备信息/Wiced Smart，
+                    // 不提供语音通道；停止重连，避免空转。
+                    log::warn!(
+                        target: TARGET,
+                        "该遥控器不提供 ATVV 语音服务（仅支持二代 2 / 2 Pro）"
+                    );
+                    link().unsupported.store(true, Ordering::SeqCst);
                     return;
                 };
                 unsafe { peripheral.discoverCharacteristics_forService(None, &service) };
@@ -550,6 +675,10 @@ mod macos {
                 let characteristics = unsafe { service.characteristics() }
                     .map(|list| list.to_vec())
                     .unwrap_or_default();
+                let service_uuid = unsafe { service.UUID().UUIDString() }.to_string();
+                if service_uuid != SERVICE_UUID.to_uppercase() {
+                    return;
+                }
                 for characteristic in &characteristics {
                     let uuid = unsafe { characteristic.UUID().UUIDString() }.to_string();
                     let raw: *mut CBCharacteristic = unsafe { msg_send![characteristic, retain] };
@@ -562,8 +691,8 @@ mod macos {
                     }
                 }
                 let (Some(transmit), Some(audio), Some(control)) = (transmit, audio, control) else {
-                    log::warn!(target: TARGET, "ATVV 特征不完整，3 秒后重连");
-                    handle_disconnect();
+                    log::warn!(target: TARGET, "ATVV 特征不完整，蓝牙语音不可用");
+                    link().unsupported.store(true, Ordering::SeqCst);
                     return;
                 };
                 *link().transmit.lock().unwrap() = Some(SendRetained(transmit));
@@ -600,7 +729,7 @@ mod macos {
                 }
             }
 
-            #[unsafe(method(peripheral:didUpdateValueForCharacteristic:))]
+            #[unsafe(method(peripheral:didUpdateValueForCharacteristic:error:))]
             fn peripheral_did_update_value(
                 &self,
                 _peripheral: &CBPeripheral,
@@ -632,6 +761,14 @@ mod macos {
         unsafe { msg_send![allocated, init] }
     }
 
+    fn retained_delegate() -> Option<Retained<AtvvDelegate>> {
+        link()
+            .delegate
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|stored| stored.0.clone()))
+    }
+
     // ---- 链路生命周期 ----
 
     /// 主线程调用：创建 CBCentralManager（蓝牙 TCC 提示在此触发）。
@@ -650,6 +787,8 @@ mod macos {
         }
         unsafe {
             let delegate = new_delegate();
+            // delegate 是 weak 属性：存入静态状态，直到进程退出都由我们持有。
+            *link().delegate.lock().unwrap() = Some(SendRetained(delegate.clone()));
             let central = CBCentralManager::initWithDelegate_queue_options(
                 CBCentralManager::alloc(),
                 Some(ProtocolObject::from_ref(&*delegate)),
@@ -698,6 +837,75 @@ mod macos {
                 run_on_main(retrieve_peripherals);
             }
         });
+    }
+
+    /// 发起 ATVV 连接并持有 peripheral 直到回调；超时未连上就取消重试
+    /// （系统只把遥控器当 HID 连着时，首次连接请求可能一直挂起）。
+    fn begin_connect(central: &CBCentralManager, peripheral: &CBPeripheral) {
+        if link().connecting.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let raw: *mut CBPeripheral = unsafe { msg_send![peripheral, retain] };
+        let Some(retained) = (unsafe { Retained::from_raw(raw) }) else {
+            link().connecting.store(false, Ordering::SeqCst);
+            return;
+        };
+        *link().peripheral.lock().unwrap() = Some(SendRetained(retained.clone()));
+        unsafe { central.connectPeripheral_options(&retained, None) };
+        schedule_connect_timeout(Duration::from_secs(8));
+    }
+
+    fn schedule_connect_timeout(delay: Duration) {
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            if is_active() {
+                run_on_main(connect_timed_out);
+            }
+        });
+    }
+
+    fn connect_timed_out() {
+        if !link().connecting.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let peripheral = link()
+            .peripheral
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|stored| stored.0.clone()));
+        let central = link()
+            .central
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|stored| stored.0.clone()));
+        if let (Some(peripheral), Some(central)) = (peripheral, central) {
+            unsafe { central.cancelPeripheralConnection(&peripheral) };
+        }
+        log::warn!(target: TARGET, "ATVV 连接超时，稍后重试");
+        schedule_retrieve(Duration::from_secs(2));
+    }
+
+    fn schedule_stop_scan(delay: Duration) {
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            if is_active() {
+                run_on_main(stop_scan_if_no_match);
+            }
+        });
+    }
+
+    /// 扫描窗口结束仍未匹配：停扫并延迟重试（设备可能切到了别的广播状态）。
+    fn stop_scan_if_no_match() {
+        if !link().scanning.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        if let Ok(guard) = link().central.lock() {
+            if let Some(SendRetained(central)) = guard.as_ref() {
+                unsafe { central.stopScan() };
+            }
+        }
+        log::warn!(target: TARGET, "扫描未发现遥控器，5 秒后重试");
+        schedule_retrieve(Duration::from_secs(5));
     }
 
     fn run_on_main(work: fn()) {
@@ -799,6 +1007,7 @@ mod macos {
 
     fn handle_disconnect() {
         let lk = link();
+        lk.connecting.store(false, Ordering::SeqCst);
         *lk.peripheral.lock().unwrap() = None;
         *lk.transmit.lock().unwrap() = None;
         lk.audio_subscribed.store(false, Ordering::SeqCst);
@@ -826,19 +1035,63 @@ mod macos {
         let Some(central) = central_ref else {
             return;
         };
+        if link().connecting.load(Ordering::SeqCst)
+            || link().unsupported.load(Ordering::SeqCst)
+        {
+            return;
+        }
+        // 已发现的遥控器按缓存标识直连：系统把它当 HID 连着时不再广播，
+        // 扫描永远找不到，只有标识直连能复用同一条 BLE 链路。
+        if !link().cached_failed.load(Ordering::SeqCst) {
+            if let Some(cached) = load_cached_identifier() {
+                unsafe {
+                    if let Some(uuid) = NSUUID::initWithUUIDString(
+                        NSUUID::alloc(),
+                        &NSString::from_str(&cached),
+                    ) {
+                        let identifiers = NSArray::from_retained_slice(&[uuid]);
+                        let known = central.retrievePeripheralsWithIdentifiers(&identifiers);
+                        if let Some(peripheral) = known.to_vec().into_iter().next() {
+                            log::info!(target: TARGET, "按缓存标识连接遥控器（ATVV）");
+                            begin_connect(central, &peripheral);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         unsafe {
-            let uuid = CBUUID::UUIDWithString(&NSString::from_str(SERVICE_UUID));
-            let services = NSArray::from_retained_slice(&[uuid]);
+            // 系统已连外设按「HID + 电池 + ATVV」种子服务查询，再按名称
+            // 过滤：只查 HID 服务时 macOS 不返回 HID 设备，电池服务可用。
+            let seed = [
+                CBUUID::UUIDWithString(&NSString::from_str("1812")),
+                CBUUID::UUIDWithString(&NSString::from_str("180F")),
+                CBUUID::UUIDWithString(&NSString::from_str(SERVICE_UUID)),
+            ];
+            let services = NSArray::from_retained_slice(&seed);
             let peripherals = central.retrieveConnectedPeripheralsWithServices(&services);
-            if peripherals.len() == 0 {
-                log::info!(target: TARGET, "未找到已连接的遥控器（ATVV），5 秒后重试");
-                schedule_retrieve(Duration::from_secs(5));
+            let remote = peripherals.to_vec().into_iter().find(|peripheral| {
+                let name = peripheral
+                    .name()
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                let upper = name.to_uppercase();
+                (name.contains("小米") && name.contains("遥控器"))
+                    || upper.contains("MI RC")
+                    || upper.contains("XIAOMI BLUETOOTH REMOTE")
+            });
+            if let Some(peripheral) = remote {
+                log::info!(target: TARGET, "发现已连接的遥控器，发起 ATVV 连接");
+                begin_connect(central, &peripheral);
                 return;
             }
-            if let Some(peripheral) = peripherals.to_vec().into_iter().next() {
-                log::info!(target: TARGET, "发现遥控器，发起 ATVV 连接");
-                central.connectPeripheral_options(&peripheral, None);
+            // 首轮（或缓存失效）：扫描广播，匹配到后缓存标识再连接。
+            if link().scanning.swap(true, Ordering::SeqCst) {
+                return;
             }
+            log::info!(target: TARGET, "未找到遥控器（ATVV），开始扫描广播");
+            central.scanForPeripheralsWithServices_options(None, None);
+            schedule_stop_scan(Duration::from_secs(8));
         }
     }
 

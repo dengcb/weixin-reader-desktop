@@ -605,10 +605,15 @@ pub fn run() {
             // 语音翻页：注册监听管理状态，并按记忆的开关状态恢复监听。
             app.manage(voice_turner::VoiceTurnerState::new());
             // 遥控器 ATVV 语音链路（macOS 三期）：注入句柄。
-            // 建链由遥控器 HID 连接触发（remote_hid），与语音翻页开关解耦；
-            // 开关开启时 voice_turner::sync_from_settings 也会提前建链。
+            // 建链与语音翻页开关解耦；首次发现后缓存 CoreBluetooth 标识，
+            // 后续启动按标识直连，避免遥控器已作为 HID 连接时不再广播。
             #[cfg(target_os = "macos")]
-            remote_voice::init(app.handle().clone());
+            {
+                remote_voice::init(app.handle().clone());
+                // 曾配对过的遥控器立即建链（可直连）；首次使用等 HID 连接触发，
+                // 进入配对模式后链路不拆，扫描仍可发现广播。
+                remote_voice::ensure_started_if_known();
+            }
             let startup_settings = settings::read_settings(app.handle())
                 .unwrap_or_else(|_| settings::default_settings());
             voice_turner::sync_from_settings(app.handle(), &startup_settings);
