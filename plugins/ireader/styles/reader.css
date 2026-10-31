@@ -74,8 +74,14 @@ body.atreader-ireader-paged .reader-content p {
   margin-top: 0 !important;
   margin-bottom: 1.25em !important;
   line-height: 1.85 !important;
-  orphans: 2;
-  widows: 2;
+  /*
+   * 段落必须在栏间逐行自由断开，并禁用孤行约束：整段被判定“放不下”
+   * 时会整体挪去下一栏，栏底留出成片空白；收敛为 1 后空白最多一行。
+   */
+  break-inside: auto !important;
+  page-break-inside: auto !important;
+  orphans: 1 !important;
+  widows: 1 !important;
   -webkit-font-smoothing: antialiased;
 }
 
