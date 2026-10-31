@@ -7,6 +7,9 @@
   <string>语音翻页需要访问麦克风，在本机识别翻页词。</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>语音翻页使用系统语音识别在本机判断翻页词，语音不会上传。</string>
+  <!-- 遥控器语音翻页（三期）：经蓝牙读取小米遥控器的私有 ATVV 语音通道，缺失会 TCC 崩溃。 -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>连接蓝牙遥控器后，按住语音键即可用遥控器语音翻页；仅在按住时接收语音并在本机识别。</string>
   <!-- 本应用仅提供简体中文；让 AppKit 原生面板也以 zh-Hans 作为应用语言。 -->
   <key>CFBundleDevelopmentRegion</key>
   <string>zh-Hans</string>

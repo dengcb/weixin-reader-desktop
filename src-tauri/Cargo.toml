@@ -1,6 +1,6 @@
 [package]
 name = "weixin-reader"
-version = "1.9.6"
+version = "2.0.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -45,10 +45,11 @@ unicode-normalization = "0.1.26"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSLocale", "NSRunLoop", "NSDate", "NSBundle"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSLocale", "NSRunLoop", "NSDate", "NSBundle", "NSRange", "NSData", "NSArray"] }
 block2 = "0.6"
 objc2-speech = { version = "0.3", features = ["SFSpeechRecognizer", "SFSpeechRecognitionRequest", "SFSpeechRecognitionResult", "SFSpeechRecognitionTask", "SFTranscription", "block2", "objc2-avf-audio"] }
 objc2-avf-audio = "0.3"
+objc2-core-bluetooth = { version = "0.3", features = ["CBCentralManager", "CBPeripheral", "CBCharacteristic", "CBService", "CBUUID", "CBManager"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }

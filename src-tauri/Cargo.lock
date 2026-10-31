@@ -2729,6 +2729,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-bluetooth"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b30b9eacc37434a61377866f68b27acef9fa5496f25cc9ca8b2549032e0394"
+dependencies = [
+ "bitflags 2.10.0",
+ "dispatch2",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-core-data"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5772,7 +5785,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "weixin-reader"
-version = "1.9.6"
+version = "2.0.0"
 dependencies = [
  "base64 0.22.1",
  "block2",
@@ -5781,6 +5794,7 @@ dependencies = [
  "objc",
  "objc2",
  "objc2-avf-audio",
+ "objc2-core-bluetooth",
  "objc2-foundation",
  "objc2-speech",
  "pdf-extract",

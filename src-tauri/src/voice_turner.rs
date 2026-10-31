@@ -10,7 +10,7 @@
 //! - 启停由设置写入路径驱动（`sync_from_settings`），无轮询。
 
 use serde_json::Value;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Runtime};
@@ -95,10 +95,21 @@ struct ActiveListener {
     thread: std::thread::JoinHandle<()>,
 }
 
+/// 监听形态：常开麦克（无遥控器）或遥控器 PTT（ATVV 就绪时自动接管）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ListenMode {
+    Microphone,
+    RemotePush,
+}
+
 /// 语音翻页监听管理状态（lib.rs setup 中 manage）。
 pub struct VoiceTurnerState {
     listener: Mutex<Option<ActiveListener>>,
     phrase: Mutex<String>,
+    mode: Mutex<Option<ListenMode>>,
+    enabled: AtomicBool,
+    /// 遥控器语音键是否被按过：开关关闭时，按过才启动 PTT 监听。
+    ptt_used: AtomicBool,
 }
 
 impl VoiceTurnerState {
@@ -106,6 +117,9 @@ impl VoiceTurnerState {
         Self {
             listener: Mutex::new(None),
             phrase: Mutex::new(DEFAULT_PHRASE.to_string()),
+            mode: Mutex::new(None),
+            enabled: AtomicBool::new(false),
+            ptt_used: AtomicBool::new(false),
         }
     }
 }
@@ -122,65 +136,103 @@ pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
     let (enabled, phrase) = voice_settings_from_document(settings);
     let previous_phrase =
         std::mem::replace(&mut *state.phrase.lock().unwrap(), phrase.clone());
-
-    let mut listener = state.listener.lock().unwrap();
-    if enabled && listener.is_some() && previous_phrase != phrase {
-        let active = listener.take();
-        drop(listener);
-        if let Some(active) = active {
-            active
-                .stop
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = active.thread.join();
-        }
-        listener = state.listener.lock().unwrap();
-    }
-    if !enabled {
-        let active = listener.take();
-        // 释放锁后再 join：监听线程的失败回滚会再次进入本函数等锁。
-        drop(listener);
-        if let Some(active) = active {
-            active
-                .stop
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = active.thread.join();
-        }
-        return;
-    }
-    // 已在监听：无需动作。
-    if listener.is_some() {
-        return;
-    }
-    // 平台实现：macOS / Windows 有监听实现；其余平台防御性回滚。
+    state.enabled.store(enabled, Ordering::Relaxed);
     #[cfg(target_os = "macos")]
-    let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = macos::listen;
-    #[cfg(target_os = "windows")]
-    let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = windows_impl::listen;
+    crate::remote_voice::sync_master_switch(enabled);
+    resync_listener(
+        app,
+        enabled && previous_phrase != phrase && state.listener.lock().is_ok(),
+    );
+}
+
+/// 遥控器 ATVV 链路就绪状态变化时调用（macOS）：重选监听形态。
+pub fn remote_availability_changed<R: Runtime>(app: &AppHandle<R>) {
+    resync_listener(app, false);
+}
+
+/// 遥控器语音键按下（HID）：标记已使用，开关关闭时也启动 PTT 监听。
+/// 每次按下都做一次幂等重选（监听存活时立即返回），权限被拒后
+/// 用户改授权限再按即可恢复。
+pub fn remote_voice_key_pressed<R: Runtime>(app: &AppHandle<R>) {
+    let Some(state) = app.try_state::<VoiceTurnerState>() else {
+        return;
+    };
+    state.ptt_used.store(true, Ordering::Relaxed);
+    resync_listener(app, false);
+}
+
+/// 监听形态决策：遥控器语音键独立于总开关——链路就绪且（开关开启或
+/// 按过语音键）即由遥控器接管；否则开关开启时回落到常开麦克风监听。
+fn desired_mode(enabled: bool, remote_ready: bool, ptt_used: bool) -> Option<ListenMode> {
+    if remote_ready && (enabled || ptt_used) {
+        Some(ListenMode::RemotePush)
+    } else if enabled {
+        Some(ListenMode::Microphone)
+    } else {
+        None
+    }
+}
+
+/// 按当前（设置开关 × 遥控器就绪 × 语音键是否用过）重选监听器；
+/// 形态不变时不动作。force_restart 用于翻页词变更（词表/提示词重建）。
+fn resync_listener<R: Runtime>(app: &AppHandle<R>, force_restart: bool) {
+    let Some(state) = app.try_state::<VoiceTurnerState>() else {
+        return;
+    };
+    let enabled = state.enabled.load(Ordering::Relaxed);
+    let ptt_used = state.ptt_used.load(Ordering::Relaxed);
+    #[cfg(target_os = "macos")]
+    let remote_ready = crate::remote_voice::is_ready();
+    #[cfg(not(target_os = "macos"))]
+    let remote_ready = false;
+    let desired = desired_mode(enabled, remote_ready, ptt_used);
+
+    // 顺序加锁（先 mode 后 listener 均为短暂获取、不嵌套），避免与重启段死锁
+    if !force_restart && *state.mode.lock().unwrap() == desired {
+        let has_listener = state.listener.lock().unwrap().is_some();
+        if desired.is_some() == has_listener {
+            return;
+        }
+    }
+
+    // 停旧监听器（释放锁后再 join：失败回滚路径会再次进入本函数等锁）。
+    let active = state.listener.lock().unwrap().take();
+    if let Some(active) = active {
+        active.stop.store(true, Ordering::Relaxed);
+        let _ = active.thread.join();
+    }
+    *state.mode.lock().unwrap() = desired;
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
+    if let Some(mode) = desired {
+        #[cfg(target_os = "macos")]
+        let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = if mode == ListenMode::RemotePush {
+            macos::listen_remote
+        } else {
+            macos::listen
+        };
+        #[cfg(target_os = "windows")]
+        let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = windows_impl::listen;
+
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let handle = app.clone();
+        let phrase = state.phrase.lock().unwrap().clone();
         let thread = std::thread::Builder::new()
             .name("voice-turner".into())
             .spawn(move || {
                 entry(handle, thread_stop, phrase);
             })
             .expect("spawn voice turner thread");
-        *listener = Some(ActiveListener { stop, thread });
+        *state.listener.lock().unwrap() = Some(ActiveListener { stop, thread });
     }
+    // 其余平台没有监听实现：防御性回滚开关（正常不会进入，开关写入已按平台收敛）。
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        drop(listener);
+    if desired.is_some() {
         let _ = app.get_webview_window("main").map(|win| {
             let _ = win.emit("show-toast", "语音翻页当前仅支持 macOS 与 Windows");
         });
-        let _ = crate::settings::update_setting(
-            app,
-            "global.voicePageTurn",
-            Value::Bool(false),
-        );
+        let _ = crate::settings::update_setting(app, "global.voicePageTurn", Value::Bool(false));
     }
 }
 
@@ -345,6 +397,130 @@ mod macos {
         super::cleanup_after_listen(&app);
     }
 
+    pub(super) fn listen_remote<R: Runtime>(
+        app: AppHandle<R>,
+        stop: Arc<AtomicBool>,
+        _phrase: String,
+    ) {
+        listen_remote_inner(&app, &stop);
+        super::cleanup_after_listen(&app);
+    }
+
+    /// 识别结果回调（麦克风与遥控器 PTT 共用）：
+    /// N-best 喂 TriggerGate，命中即走 fire_page_turn；翻页词热更新。
+    fn make_result_handler<R: Runtime>(
+        app: &AppHandle<R>,
+        stop: &Arc<AtomicBool>,
+        gate: std::rc::Rc<RefCell<TriggerGate>>,
+    ) -> RcBlock<
+        dyn Fn(*mut SFSpeechRecognitionResult, *mut objc2_foundation::NSError) + 'static,
+    > {
+        let handler_app = app.clone();
+        let handler_stop = Arc::clone(stop);
+        RcBlock::new(move |result: *mut SFSpeechRecognitionResult,
+                            _error: *mut objc2_foundation::NSError| {
+            // 停止后忽略迟到回调，不排队补翻（issue 需求 9）。
+            if handler_stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let Some(result) = (unsafe { result.as_ref() }) else {
+                return;
+            };
+            let (best, candidates) = unsafe {
+                let transcriptions = result.transcriptions();
+                let texts: Vec<String> = transcriptions
+                    .iter()
+                    .map(|transcription| transcription.formattedString().to_string())
+                    .collect();
+                (result.bestTranscription().formattedString().to_string(), texts)
+            };
+            log::info!(target: "voice-turner", "asr best={best:?} candidates={candidates:?}");
+            let mut gate = gate.borrow_mut();
+            // 翻页词热更新：回调时读取最新设置词，改词无需重启监听。
+            if let Some(state) = handler_app.try_state::<crate::voice_turner::VoiceTurnerState>()
+            {
+                if let Ok(phrase) = state.phrase.lock() {
+                    gate.update_phrase(&phrase);
+                }
+            }
+            if gate.feed(&candidates) {
+                let realtime_focus = handler_app
+                    .get_webview_window("main")
+                    .and_then(|win| win.is_focused().ok());
+                log::info!(
+                    target: "voice-turner",
+                    "trigger fired; main realtime focus={realtime_focus:?}"
+                );
+                super::fire_page_turn(&handler_app);
+            }
+        })
+    }
+
+    /// 遥控器 PTT 监听：音频来自 remote_voice 的 ATVV 解码通道，
+    /// 解码样本装 AVAudioPCMBuffer 后追加给识别请求。
+    fn listen_remote_inner<R: Runtime>(app: &AppHandle<R>, stop: &Arc<AtomicBool>) {
+        match ensure_authorized(stop) {
+            AuthorizationOutcome::Authorized => {}
+            AuthorizationOutcome::UnsupportedEnvironment => {
+                fail_with_rollback(app, "语音翻页需要打包版应用，开发模式不可用");
+                return;
+            }
+            AuthorizationOutcome::Denied => {
+                if !stop.load(Ordering::Relaxed) {
+                    fail_with_rollback(
+                        app,
+                        "语音翻页需要「语音识别」权限，请在系统设置中允许后重试",
+                    );
+                }
+                return;
+            }
+        }
+        let locale =
+            NSLocale::initWithLocaleIdentifier(NSLocale::alloc(), &NSString::from_str("zh-CN"));
+        let recognizer =
+            unsafe { SFSpeechRecognizer::initWithLocale(SFSpeechRecognizer::alloc(), &locale) };
+        let Some(recognizer) = recognizer else {
+            fail_with_rollback(app, "当前系统不支持中文语音识别，语音翻页未开启");
+            return;
+        };
+        if !unsafe { recognizer.isAvailable() }
+            || !unsafe { recognizer.supportsOnDeviceRecognition() }
+        {
+            fail_with_rollback(app, "当前系统不支持设备端语音识别，语音翻页未开启");
+            return;
+        }
+        let request = {
+            let phrase = app
+                .try_state::<crate::voice_turner::VoiceTurnerState>()
+                .and_then(|state| state.phrase.lock().ok().map(|guard| guard.clone()))
+                .unwrap_or_else(|| crate::voice_turner::DEFAULT_PHRASE.to_string());
+            build_request(&phrase)
+        };
+        let gate = std::rc::Rc::new(RefCell::new(TriggerGate::new("")));
+        let handler = make_result_handler(app, stop, gate);
+        let task =
+            unsafe { recognizer.recognitionTaskWithRequest_resultHandler(&request, &handler) };
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<i16>>();
+        crate::remote_voice::set_audio_tx(Some(tx));
+        log::info!(target: "voice-turner", "remote ptt listening started");
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let until = NSDate::initWithTimeIntervalSinceNow(NSDate::alloc(), 0.05);
+            NSRunLoop::currentRunLoop().runUntilDate(&until);
+            while let Ok(samples) = rx.try_recv() {
+                if let Some(buffer) = crate::remote_voice::pcm_buffer_for(&samples) {
+                    unsafe { request.appendAudioPCMBuffer(&buffer) };
+                }
+            }
+        }
+        crate::remote_voice::set_audio_tx(None);
+        unsafe { task.cancel() };
+        log::info!(target: "voice-turner", "remote ptt listening stopped");
+    }
+
     fn listen_inner<R: Runtime>(app: &AppHandle<R>, stop: &Arc<AtomicBool>) {
         match ensure_authorized(stop) {
             AuthorizationOutcome::Authorized => {}
@@ -395,7 +571,7 @@ mod macos {
         let engine = unsafe { AVAudioEngine::new() };
         let input = unsafe { engine.inputNode() };
         let bus_format = unsafe { input.outputFormatForBus(0) };
-        let gate = RefCell::new(TriggerGate::new(""));
+        let gate = std::rc::Rc::new(RefCell::new(TriggerGate::new("")));
         let request_for_tap = request.clone();
 
         let tap = RcBlock::new(
@@ -422,55 +598,7 @@ mod macos {
             return;
         }
 
-        let handler_app = app.clone();
-        let handler_stop = Arc::clone(stop);
-        let handler = RcBlock::new(
-            move |result: *mut SFSpeechRecognitionResult,
-                  _error: *mut objc2_foundation::NSError| {
-                // 停止后忽略迟到回调，不排队补翻（issue 需求 9）。
-                if handler_stop.load(Ordering::Relaxed) {
-                    return;
-                }
-                let Some(result) = (unsafe { result.as_ref() }) else {
-                    return;
-                };
-                let (best, candidates) = unsafe {
-                    let transcriptions = result.transcriptions();
-                    let texts: Vec<String> = transcriptions
-                        .iter()
-                        .map(|transcription| transcription.formattedString().to_string())
-                        .collect();
-                    (
-                        result.bestTranscription().formattedString().to_string(),
-                        texts,
-                    )
-                };
-                // 取证日志（INFO）：一轮验收后视情况降级。
-                log::info!(
-                    target: "voice-turner",
-                    "asr best={best:?} candidates={candidates:?}"
-                );
-                let mut gate = gate.borrow_mut();
-                // 翻页词热更新：回调时读取最新设置词，改词无需重启监听。
-                if let Some(state) =
-                    handler_app.try_state::<crate::voice_turner::VoiceTurnerState>()
-                {
-                    if let Ok(phrase) = state.phrase.lock() {
-                        gate.update_phrase(&phrase);
-                    }
-                }
-                if gate.feed(&candidates) {
-                    let realtime_focus = handler_app
-                        .get_webview_window("main")
-                        .and_then(|win| win.is_focused().ok());
-                    log::info!(
-                        target: "voice-turner",
-                        "trigger fired; main realtime focus={realtime_focus:?}"
-                    );
-                    super::fire_page_turn(&handler_app);
-                }
-            },
-        );
+        let handler = make_result_handler(&app, stop, gate.clone());
         let task =
             unsafe { recognizer.recognitionTaskWithRequest_resultHandler(&request, &handler) };
 
@@ -675,6 +803,31 @@ mod tests {
 
     fn texts(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    #[test]
+    fn remote_voice_key_works_without_master_switch() {
+        // 开关关闭：未按过语音键不监听，按过即由遥控器 PTT 接管。
+        assert_eq!(desired_mode(false, true, false), None);
+        assert_eq!(
+            desired_mode(false, true, true),
+            Some(ListenMode::RemotePush)
+        );
+    }
+
+    #[test]
+    fn master_switch_prefers_remote_and_falls_back_to_microphone() {
+        // 开关开启：遥控器就绪则 PTT，否则常开麦克风。
+        assert_eq!(
+            desired_mode(true, true, false),
+            Some(ListenMode::RemotePush)
+        );
+        assert_eq!(
+            desired_mode(true, false, false),
+            Some(ListenMode::Microphone)
+        );
+        // 开关关闭且遥控器未就绪：不监听。
+        assert_eq!(desired_mode(false, false, true), None);
     }
 
     #[test]

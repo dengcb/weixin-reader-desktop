@@ -19,14 +19,19 @@
 //! 与 macOS `remote_hid.rs` 共用 `remote-hid-button` 事件契约
 //! `{ button, phase, usage }`，前端 `remote_hid_source.ts` 无需感知平台。
 
+#[cfg_attr(not(target_os = "windows"), allow(unused_imports))]
 use tauri::{AppHandle, Wry};
 
 /// 主窗口消费的事件名，与 macOS remote_hid.rs 对齐。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub const BUTTON_EVENT: &str = "remote-hid-button";
 /// 日志 target 与 macOS 侧一致，便于统一检索。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const TARGET: &str = "remote-hid";
 /// 小米遥控器 USB 标识（设备路径中的形态为 VID_2717&PID_32B8）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const XIAOMI_VENDOR_ID_HEX: &str = "VID_2717";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const XIAOMI_PRODUCT_ID_HEX: &str = "PID_32B8";
 
 // ---- 纯逻辑：VK → 按键与边沿状态（跨平台可单测） ----
@@ -35,6 +40,7 @@ const XIAOMI_PRODUCT_ID_HEX: &str = "PID_32B8";
 ///
 /// 只返回值得增补的键：系统键盘路径已处理的（方向/OK/Home/菜单）与原生
 /// 副作用不可接受的（VK_SLEEP 睡眠、静音无动作）都返回 None。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<&'static str> {
     // RC001 系固件的厂商键族：VK 0xFF 携带真实键义在扫描码里，物理键盘
     // 不会产生 0xFF，零原生副作用。
@@ -60,6 +66,7 @@ pub(crate) fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<&'
 
 /// 按键边沿状态机：自动重复的连续 keyDown 只出一次按下，松开出一次松开。
 /// 返回本次应广播的相位。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn edge_phase(
     active: &mut std::collections::HashMap<&'static str, bool>,
     button: &'static str,
@@ -321,6 +328,7 @@ pub fn start(app: &AppHandle<Wry>) {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn start(_app: &AppHandle<Wry>) {}
 
 #[cfg(test)]

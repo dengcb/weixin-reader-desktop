@@ -319,7 +319,7 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 
 - 完整手势 `{E} → {E,码} → {码} → {}` 做集合级解释，只产出一次按下/松开；尾帧不再伪造 `key_E` 单击（逐 usage 边沿会伪造，已弃用）。
 - 语音键 = id=2 len=65 报文对（byte1 非零=按下、全零=松开），产出 `voice` 按钮。
-- 标注期：`key_E` / `chord_E_Tab` / `chord_E_Y` / `voice` 按下时向主窗口发 `show-toast`（仅注入层页面可见；本地书屋页无注入层，看控制台日志即可）。
+- 标注期（已结束）：按键定案前，`key_E` / `chord_E_Tab` / `chord_E_Y` / `voice` 按下时曾向主窗口发 `show-toast`；真机定案后已移除，只保留控制台日志。
 
 ## 8. 一期：前端接入与按键映射（2026-10-30）
 
@@ -336,7 +336,7 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `back` | 0xF1 | **循环切换到下一个书城**（get_bookstore_list → 当前站+1 → sticky 过场 → switch_bookstore_by_index） | 任意页面 |
 | `tv` | 0x35 | **切换阅读区域宽/窄**（simulate_menu_click('reader_wide')，继承菜单门禁） | 菜单门禁 |
 | `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
-| `voice` | 0x3E | 暂未绑定，记日志（三期 ATVV 语音翻页） | — |
+| `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦） | 仅 macOS |
 
 - 设置页新增「蓝牙遥控」标签页（`src/windows/settings.html`）：SVG 遥控器示意图 + 8 项编号图例（几何审计零越界），含输入监控权限与平台差异说明。
 - 已知副作用（二期解决）：监听模式下按音量键，系统音量仍会真实变化——音量以 NX_SYSDEFINED 进入 session 级 CGEventTap。
@@ -365,4 +365,31 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 - 副作用说明：F5 的页面刷新与未接入时的现状基线一致，接入只增加事件可见性；TV 的 `` ` `` 字符输入在阅读页无感。
 - 边沿状态机去自动重复；`WM_INPUT_DEVICE_CHANGE` 清归因缓存，设备移除时复位边沿状态防粘键。
 - 事件契约与 macOS 相同（`remote-hid-button` `{button, phase, usage}`），前端零改动。
-- 验证状态：VK 映射与边沿纯逻辑已单测（macOS 上运行）；`x86_64`/`aarch64-pc-windows-msvc` cargo xwin check 通过；**运行时行为待 Windows 真机验收**。
+- 验证状态：VK 映射与边沿纯逻辑已单测（macOS 上运行）；`x86_64-pc-windows-msvc` cargo xwin check 通过；aarch64 本地交叉检查被既有工具链问题阻挡（ring 0.17 构建脚本与 cargo-xwin 的 `/imsvc` 参数注入不兼容，与本模块无关），由 CI 原生 Windows ARM64 构建验证；**运行时行为待 Windows 真机验收**。
+
+## 10. 三期：ATVV 语音翻页（2026-10-31 已实现，待真机验收）
+
+小米遥控器的语音走 Android TV 私有 ATVV 服务（GATT），macOS 不认识它——**本项目进程内充当遥控器专属语音客户端**，系统蓝牙栈只搬运字节，语义由 `remote_voice.rs` 与遥控器按协议约定（机制参照 remote-mic/SayAll，GPL-3.0，只学机制不抄代码；ADPCM 按公开 IMA 算法独立实现）。
+
+### 协议规格（真机与参考实现核对，规格注在模块头注释）
+
+- 服务 `AB5E0001-5A21-4F05-BC7D-AF01F617B664`；特征 AB5E0002 下行命令（写，支持 writeWithoutResponse 时优先）、AB5E0003 上行音频（通知）、AB5E0004 上行控制（通知）。
+- 建链：`retrieveConnectedPeripherals`（系统已为 HID 连着，无需扫描）→ connect → 发现特征 → 订阅 audio/control → 写能力查询 `0A 01 00 00 03 03` → 控制通道 0x0B 能力（codec 0x02=16kHz 才可用，frameSize=120 字节=240 样本=15ms）→ 0x07 就绪。
+- **遥控器主动发起**：按住语音键 → 控制通道 0x08 请求开麦 → 宿主写 `0C 00`（version≥0x0100）→ 0x04 流开始（b3=会话 ID）；松开 → 0x00 流结束 → 宿主写 `0D <sid>`。同步包 0x0A 携带 predictor/stepIndex，丢弃半帧后应用于下一整帧。
+- 音频通道是纯 ADPCM 字节流，按 frameSize 累积 → IMA 解码（高半字节优先）→ 三点平滑 → 送识别器；stop 后 0.3s 内到达的音频丢弃；音频先于 0x04 到达视为隐式开始。
+
+### 架构与交互（用户拍板的模型）
+
+- `remote_voice.rs`（macOS，约 1050 行）：CoreBluetooth 客户端（`define_class!` 委托 + 主队列回调）+ ATVV 协议解析 + IMA ADPCM 解码 + 帧累积（纯逻辑 6 项单测：编解码往返、能力/控制解析、帧切分、竞态守卫）。**链路生命周期与「语音翻页」开关解耦**：遥控器经 HID 连接即 `ensure_started()` 建链，开关关闭也不拆链；开关开启时也会提前建链（不依赖输入监控权限）。进程级静态状态不进 tauri State。
+- `voice_turner.rs`：新增 `ListenMode`（Microphone/RemotePush）。语音键是独立输入：ATVV 就绪且（开关开启或语音键按过）→ PTT 监听器；开关开启但遥控器未就绪 → 常开麦克监听；两者皆无 → 不监听。断开自动回落，设置本身不变。
+- 音频出口：解码样本经 mpsc 送 PTT 监听线程，装 `AVAudioPCMBuffer`（16kHz 单声道 Float32）喂 `SFSpeechAudioBufferRecognitionRequest`；识别回调与 TriggerGate/翻页动作完全复用既有链路。ATVV 模式**不需要麦克风权限**（不用系统录音设备），只要语音识别授权 + 新增的蓝牙授权。
+- `Info.plist` 新增 `NSBluetoothAlwaysUsageDescription`；dev 裸二进制缺该键时链路不启动（TCC 守卫）。
+
+### 真机验收清单（需实体遥控器 + 打包版）
+
+- [ ] 遥控器连接后触发蓝牙授权弹窗（或首次开启语音翻页时触发）；允许后日志出现「蓝牙已就绪，检索遥控器（ATVV）」。
+- [ ] 连接遥控器后日志依次出现：遥控器已连接 → 已连接（ATVV）→ 订阅 audio/control → 能力确认 → 监听形态切换为 remote ptt。
+- [ ] 语音翻页开关关闭时：首次按住语音键触发语音识别授权；允许后再按一次，说「翻页」触发翻页（命中率标准：安静环境 20 次中 ≥18）。
+- [ ] 松开：「流结束」；重复按住可持续会话。
+- [ ] 断开遥控器 → 开关开启则回常开麦克监听、关闭则停止监听；重连 → 回 PTT。关闭设置「语音翻页」→ 只停常开麦克风，蓝牙链路与语音键保持可用。
+- [ ] 全程系统麦克风列表无新设备、其他 app 不受影响。

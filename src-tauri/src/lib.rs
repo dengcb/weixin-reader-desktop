@@ -16,6 +16,8 @@ mod reading_progress;
 #[cfg(target_os = "macos")]
 mod remote_hid;
 mod remote_hid_windows;
+#[cfg(target_os = "macos")]
+mod remote_voice;
 mod settings;
 mod sites;
 mod tracker_blocker;
@@ -602,6 +604,11 @@ pub fn run() {
 
             // 语音翻页：注册监听管理状态，并按记忆的开关状态恢复监听。
             app.manage(voice_turner::VoiceTurnerState::new());
+            // 遥控器 ATVV 语音链路（macOS 三期）：注入句柄。
+            // 建链由遥控器 HID 连接触发（remote_hid），与语音翻页开关解耦；
+            // 开关开启时 voice_turner::sync_from_settings 也会提前建链。
+            #[cfg(target_os = "macos")]
+            remote_voice::init(app.handle().clone());
             let startup_settings = settings::read_settings(app.handle())
                 .unwrap_or_else(|_| settings::default_settings());
             voice_turner::sync_from_settings(app.handle(), &startup_settings);

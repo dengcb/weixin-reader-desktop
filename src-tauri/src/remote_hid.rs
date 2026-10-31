@@ -687,6 +687,8 @@ unsafe extern "C" fn on_device_matched(
     if device.is_null() {
         return;
     }
+    // 预先建立 ATVV 语音链路：语音键随时可临时收音，不依赖语音翻页开关。
+    crate::remote_voice::ensure_started();
     // 节点级监听打开：SayAll 的生产路径。键盘页(1)与消费者页(12)是两个节点，
     // 消费者节点的报文（音量/返回）可能只有节点级打开后才投递。
     if let Some(ctx) = context_ref(context) {
@@ -826,15 +828,13 @@ fn emit_button_ref(ctx: &HidContext, button: ButtonRef, phase: &str) {
         },
     };
     log::info!(target: TARGET, "按键 {name} {phase}");
+    if name == "voice" && phase == "press" {
+        // 语音键按下：语音翻页开关关闭时也临时启用 PTT 识别。
+        crate::voice_turner::remote_voice_key_pressed(&ctx.app);
+    }
     let Some(win) = ctx.app.get_webview_window("main") else {
         return;
     };
-    // 映射定案前的标注期：和弦与语音键在屏幕上即时提示编码名，供逐键确认。
-    if phase == "press"
-        && matches!(name.as_str(), "key_E" | "chord_E_Tab" | "chord_E_Y" | "voice")
-    {
-        let _ = win.emit("show-toast", format!("HID {name}"));
-    }
     let _ = win.emit(
         BUTTON_EVENT,
         json!({ "button": name, "phase": phase, "usage": usage }),
