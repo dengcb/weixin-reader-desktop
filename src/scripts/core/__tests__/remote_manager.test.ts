@@ -313,14 +313,14 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('TV 键走菜单动作切换宽屏', () => {
+  it('返回键走菜单动作切换宽屏', () => {
     const { manager } = createManager();
-    emitHid('tv', 'press');
+    emitHid('back', 'press');
     expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'reader_wide' });
     manager.destroy();
   });
 
-  it('返回键循环切换到下一个书城', async () => {
+  it('TV 键循环切换到下一个书城', async () => {
     tauriInvoke.mockImplementation(async (cmd: string) =>
       cmd === 'get_bookstore_list'
         ? [
@@ -330,18 +330,18 @@ describe('RemoteManager HID button contract', () => {
         : undefined,
     );
     const { manager } = createManager();
-    emitHid('back', 'press');
+    emitHid('tv', 'press');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(tauriInvoke).toHaveBeenCalledWith('switch_bookstore_by_index', { index: 2 });
     manager.destroy();
   });
 
-  it('只有一个书城时返回键不切换', async () => {
+  it('只有一个书城时 TV 键不切换', async () => {
     tauriInvoke.mockImplementation(async (cmd: string) =>
       cmd === 'get_bookstore_list' ? [{ index: 1, current: true }] : undefined,
     );
     const { manager } = createManager();
-    emitHid('back', 'press');
+    emitHid('tv', 'press');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(tauriInvoke).not.toHaveBeenCalledWith('switch_bookstore_by_index', expect.anything());
     manager.destroy();

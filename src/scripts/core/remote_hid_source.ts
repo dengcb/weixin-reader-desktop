@@ -26,9 +26,9 @@ export type RemoteHidAction =
   | 'toggle-wide';
 
 /**
- * 按键 → 动作（2026-10-31 真机定案）：音量+ 上一页、音量− 下一页（仅阅读页）；
- * 返回循环切换到下一个书城；TV 切换阅读区域宽窄；电源复用摸鱼键语义。
- * voice 暂未绑定（保留给语音翻页 ATVV 三期）。
+ * 按键 → 动作：音量+ 上一页、音量− 下一页（仅阅读页）；
+ * 返回切换阅读区域宽窄；TV 循环切换到下一个书城；电源复用摸鱼键语义。
+ * voice 由 Rust 侧 ATVV 语音链路消费，这里不绑定。
  */
 export const resolveRemoteHidAction = (
   button: string,
@@ -42,9 +42,9 @@ export const resolveRemoteHidAction = (
     case 'volume_down':
       return isReaderPage ? 'page-forward' : null;
     case 'back':
-      return 'switch-bookstore';
-    case 'tv':
       return 'toggle-wide';
+    case 'tv':
+      return 'switch-bookstore';
     case 'power':
       return 'toggle-stealth';
     default:
