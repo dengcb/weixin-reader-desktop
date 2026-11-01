@@ -14,6 +14,8 @@ mod plugin_installer;
 pub mod plugin_manager;
 mod reading_progress;
 #[cfg(target_os = "macos")]
+mod media_key_suppressor;
+#[cfg(target_os = "macos")]
 mod remote_hid;
 mod remote_hid_windows;
 #[cfg(target_os = "macos")]

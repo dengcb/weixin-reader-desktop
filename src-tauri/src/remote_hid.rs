@@ -140,6 +140,8 @@ extern "C" {
     fn IOHIDRequestAccess(request_type: u32) -> bool;
 }
 
+// media_key_suppressor 以指针签名声明同一个符号（ABI 一致），允许重复声明告警。
+#[allow(clashing_extern_declarations)]
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     static kCFRunLoopCommonModes: CFStringRef;
@@ -689,6 +691,8 @@ unsafe extern "C" fn on_device_matched(
     }
     // 预先建立 ATVV 语音链路：语音键随时可临时收音，不依赖语音翻页开关。
     crate::remote_voice::ensure_started();
+    // 已授权辅助功能时预先建立媒体键抑制 tap，避免首次按键漏吞系统音量。
+    crate::media_key_suppressor::ensure_started_if_trusted();
     // 节点级监听打开：SayAll 的生产路径。键盘页(1)与消费者页(12)是两个节点，
     // 消费者节点的报文（音量/返回）可能只有节点级打开后才投递。
     if let Some(ctx) = context_ref(context) {
@@ -711,6 +715,7 @@ unsafe extern "C" fn on_device_removed(
             state.current_key = LogicalKey::Idle;
             state.voice_active = false;
         }
+        crate::media_key_suppressor::set_volume_keys(false, false);
         if let Ok(mut nodes) = ctx.nodes.lock() {
             if let Some(node) = nodes.remove(&(device as usize)) {
                 if node.opened {
@@ -800,6 +805,8 @@ unsafe extern "C" fn on_input_report(
     }
 
     let next: HashSet<u16> = usages.iter().copied().collect();
+    // 遥控器音量键按住期间吞掉系统音量事件（物理键盘音量键不受影响）。
+    crate::media_key_suppressor::set_volume_keys(next.contains(&0x80), next.contains(&0x81));
     let next_key = classify_usages(&usages);
     let events = logical_transitions(&state.current_key, &next_key, &state.active_usages, &next);
     state.current_key = next_key;

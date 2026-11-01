@@ -5,7 +5,8 @@
 //! 与遥控器按 ATVV 协议约定（机制参照 remote-mic / SayAll，GPL-3.0，
 //! 只学机制不抄代码；ADPCM 为公开 IMA 算法）。
 //!
-//! 型号边界（2026-10-31 真机）：二代普通版与 Pro（2 / 2 Pro）均提供 ATVV；一代
+//! 型号边界：二代普通版与 Pro（2 / 2 Pro）均提供 ATVV；普通版已真机验证，
+//! Pro/RC003 依据参考实现（同为高半字节优先），待真机复验。一代
 //! （RTKBee，PID 0x32B8，固件 18667）在 Mac 配对下 GATT 只有电池/设备信息/
 //! Wiced Smart，语音键仅发 HID F5，没有任何麦克风通道；本模块连接后检测到
 //! ATVV 缺失即停止重连，不再尝试。
@@ -13,10 +14,11 @@
 //! 协议规格（真机与参考实现核对）：
 //! - 服务 `AB5E0001-5A21-4F05-BC7D-AF01F617B664`；特征：AB5E0002 下行命令
 //!   （写）、AB5E0003 上行音频（通知）、AB5E0004 上行控制（通知）。
-//! - 建链：retrieveConnectedPeripherals（系统已为 HID 连着，无需扫描）→
-//!   connect → 发现特征 → 订阅 audio/control → 写能力查询 `0A 01 00 00 03 03`。
+//! - 建链：缓存标识直连 → 系统已连外设（HID/电池/ATVV 种子服务，按名称过滤）
+//!   → 扫描配对广播 → connect → 发现特征 → 订阅 audio/control → 写能力查询
+//!   `0A 01 00 00 03 03`。
 //! - 控制消息（byte0）：0x0B 能力（version=b1b2、codecs、frameSize=b5b6，
-//!   0=120；codec 0x02=16kHz）；0x07 就绪；0x08 遥控器请求开麦（按住语音键
+//!   0=120；codec 0x02=16kHz）；0x07 就绪（二代固件可能不发，0x0B 确认即可视为就绪）；0x08 遥控器请求开麦（按住语音键
 //!   时遥控器主动发起）；0x04 流开始（b1=interaction、b2=codec、b3=会话 ID）；
 //!   0x0A 同步（predictor=i16BE(b4,b5)、stepIndex=b6，丢弃半帧后重置解码器）；
 //!   0x00 流结束（松开）。
@@ -25,14 +27,13 @@
 //!   writeWithoutResponse 时优先用之。
 //! - 音频通道是纯 ADPCM 字节流，按 frameSize 累积成帧（120 字节 = 240 样本
 //!   = 15ms@16kHz）；仅接受 16kHz（codec 0x02）。
-//! - 竞态兜底：stop 后 0.3s 内到达的音频丢弃；音频先于 0x04 到达视为隐式开始。
-//! - 链路生命周期与「语音翻页」开关解耦：遥控器经 HID 连接即建链，
-//!   开关关闭也不拆链，语音键随时可临时收音。
+//! - 流边界：只解码收到 0x04 之后的音频；0x00 流结束后的迟到音频丢弃。
+//! - 链路生命周期与「语音翻页」开关解耦：有标识缓存时启动建链，否则由 HID
+//!   连接触发；开关关闭也不拆链，语音键随时可临时收音。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 /// 日志 target。
 pub(crate) const TARGET: &str = "remote-voice";
@@ -43,8 +44,6 @@ const AUDIO_UUID: &str = "AB5E0003-5A21-4F05-BC7D-AF01F617B664";
 const CONTROL_UUID: &str = "AB5E0004-5A21-4F05-BC7D-AF01F617B664";
 /// 能力查询命令（V1.0）。
 const GET_CAPABILITIES: [u8; 6] = [0x0A, 0x01, 0x00, 0x00, 0x03, 0x03];
-/// stop 后音频的丢弃窗口。
-const STOP_DROP_WINDOW: Duration = Duration::from_millis(300);
 
 // ---- 纯逻辑（跨平台可单测） ----
 
@@ -141,7 +140,7 @@ pub(crate) fn parse_sync(bytes: &[u8]) -> Option<(i16, u8)> {
     Some((predictor, bytes[6]))
 }
 
-/// IMA/DVI ADPCM 解码器（公开 IMA 算法；遥控器固件高半字节优先）。
+/// IMA/DVI ADPCM 解码器（公开 IMA 算法；二代普通版固件高半字节优先）。
 #[derive(Clone, Debug)]
 pub(crate) struct ImaAdpcmDecoder {
     predictor: i32,
@@ -176,6 +175,11 @@ impl ImaAdpcmDecoder {
         step.min(88)
     }
 
+    /// 有符号更新步长索引：0 + (-1) 不能先转 usize 再 clamp（会回绕成巨大值）。
+    fn step_after(current: usize, delta: i32) -> usize {
+        (current as i32 + delta).clamp(0, 88) as usize
+    }
+
     fn decode_nibble(&mut self, nibble: u8) -> i16 {
         let step = STEP_TABLE[self.step_index];
         let mut diff = step >> 3;
@@ -190,12 +194,12 @@ impl ImaAdpcmDecoder {
         }
         self.predictor += if nibble & 8 != 0 { -diff } else { diff };
         self.predictor = self.predictor.clamp(-32_768, 32_767);
-        self.step_index =
-            Self::clamp_step((self.step_index as i32 + INDEX_TABLE[(nibble & 7) as usize]) as usize);
+        self.step_index = Self::step_after(self.step_index, INDEX_TABLE[(nibble & 7) as usize]);
         self.predictor as i16
     }
 
-    /// 解码一帧：高半字节优先。
+    /// 解码一帧：高半字节优先（二代普通版真机验证；2 Pro/RC003 参考实现相同；
+    /// ARN9 固件为低半字节优先，当前未做型号自适应）。
     pub fn decode_frame(&mut self, frame: &[u8]) -> Vec<i16> {
         let mut samples = Vec::with_capacity(frame.len() * 2);
         for byte in frame {
@@ -251,7 +255,6 @@ pub(crate) struct VoiceLink {
     pub session_id: u8,
     pub capabilities: Capabilities,
     pub pending_sync: Option<(i16, u8)>,
-    pub last_stop_at: Option<Instant>,
     pub audio_buffer: Vec<u8>,
     pub decoder: ImaAdpcmDecoder,
 }
@@ -264,7 +267,6 @@ impl VoiceLink {
             session_id: 0,
             capabilities: Capabilities::default(),
             pending_sync: None,
-            last_stop_at: None,
             audio_buffer: Vec::new(),
             decoder: ImaAdpcmDecoder::new(),
         }
@@ -275,18 +277,9 @@ impl VoiceLink {
 /// 返回应送识别器的样本（可能为空）。
 pub(crate) fn consume_audio(link: &mut VoiceLink, data: &[u8]) -> Vec<i16> {
     if !link.streaming {
-        let within_drop_window = link
-            .last_stop_at
-            .is_some_and(|t| t.elapsed() < STOP_DROP_WINDOW);
-        if within_drop_window {
-            return Vec::new();
-        }
-        // 音频先于 0x04 到达：隐式开始
-        link.streaming = true;
-        link.audio_buffer.clear();
-        link.pending_sync = None;
-        link.decoder = ImaAdpcmDecoder::new();
-        log::info!(target: TARGET, "ATVV 流隐式开始（音频先于控制消息）");
+        // 未收到 0x04 流开始（或已结束）的音频一律丢弃：避免上一会话的
+        // 解码器状态污染新会话，帧边界也不会错位。
+        return Vec::new();
     }
     let frames = split_frames(&mut link.audio_buffer, data, link.capabilities.frame_size);
     let mut samples = Vec::new();
@@ -930,16 +923,21 @@ mod macos {
                     return;
                 }
                 lk.capabilities = caps;
+                // 二代固件实测只发 0x0B、不保证发 0x07；能力确认后即可解析流。
+                lk.ready = true;
+                drop(lk);
                 log::info!(
                     target: TARGET,
                     "ATVV 能力确认 version={:#06x} frame={}",
                     caps.version,
                     caps.frame_size
                 );
+                set_ready_and_notify(true);
             }
             0x07 => {
                 lk.ready = true;
                 drop(lk);
+                log::info!(target: TARGET, "ATVV 就绪（0x07）");
                 set_ready_and_notify(true);
             }
             0x08 => {
@@ -983,7 +981,6 @@ mod macos {
             0x00 => {
                 if lk.streaming {
                     lk.streaming = false;
-                    lk.last_stop_at = Some(Instant::now());
                     lk.audio_buffer.clear();
                     lk.pending_sync = None;
                     let cmd = mic_close_command(lk.capabilities.version, lk.session_id);
@@ -1178,26 +1175,22 @@ mod tests {
             if sign {
                 code |= 8;
             }
-            self.step_index = Self::clamp(
-                (self.step_index as i32 + INDEX_TABLE[(code & 7) as usize]) as usize,
-            );
+            self.step_index =
+                ((self.step_index as i32 + INDEX_TABLE[(code & 7) as usize]).clamp(0, 88)) as usize;
             code
-        }
-
-        fn clamp(step: usize) -> usize {
-            step.min(88)
         }
 
         fn encode(&mut self, samples: &[i16]) -> Vec<u8> {
             let mut bytes = Vec::with_capacity(samples.len() / 2 + 1);
             let mut iter = samples.iter().peekable();
             while let Some(&s) = iter.next() {
-                let high = self.encode_sample(s);
-                let low = match iter.next() {
+                let first = self.encode_sample(s);
+                let second = match iter.next() {
                     Some(&s2) => self.encode_sample(s2),
                     None => 0,
                 };
-                bytes.push((high << 4) | (low & 0x0F));
+                // 高半字节优先（与固件/解码器一致）。
+                bytes.push(((first & 0x0F) << 4) | (second & 0x0F));
             }
             bytes
         }
@@ -1294,16 +1287,16 @@ mod tests {
     }
 
     #[test]
-    fn consume_audio_guards_stop_window_and_decodes() {
-        // stop 窗口内丢弃
+    fn consume_audio_requires_stream_start_and_decodes() {
+        // 未收到 0x04 流开始：音频一律丢弃
         let mut link = VoiceLink::new();
-        link.last_stop_at = Some(Instant::now());
-        assert!(consume_audio(&mut link, &[0x00; 10]).is_empty());
-        // 窗口外隐式开始并解码
-        link.last_stop_at = Some(Instant::now() - Duration::from_millis(400));
+        assert!(consume_audio(&mut link, &[0x11; 120]).is_empty());
+        // 流开始后解码
+        link.streaming = true;
+        link.audio_buffer.clear();
+        link.decoder = ImaAdpcmDecoder::new();
         let samples = consume_audio(&mut link, &[0x11; 120]);
         assert_eq!(samples.len(), 240);
-        assert!(link.streaming);
         // 同步包：丢弃半帧，下一帧用同步状态解码
         let (predictor, step) = (500i16, 20u8);
         link.pending_sync = Some((predictor, step));
