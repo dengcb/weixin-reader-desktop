@@ -247,10 +247,12 @@ export class IreaderPlugin implements ReaderPlugin {
       viewportClass: 'atreader-ireader-page-viewport',
       indicatorClass: 'atreader-ireader-page-indicator',
       contentSelector: IREADER_CONTENT_SELECTOR,
-      // 站点是 Nuxt：正文节点由框架异步重建，wrap 式搬移/包裹节点会被框架
-      // 当成脏 DOM 推倒重来（正文被弃→空白）。self = 视口类挂正文自身，
-      // 站点 DOM 零改动，绑定永不因重渲染失效。
-      bindMode: 'self',
+      // wrap 绑定 = v1.0.0 结构：视口包裹层只做裁剪，高度/多栏/位移都在正文
+      // 子元素上（裁剪框不随 transform 平移）。10-25 改成 self 绑定后裁剪与
+      // 位移合并到正文自身，翻页时正文带着自己的裁剪框一起平移——第 1 页
+      // 正常、其余页全空（2026-11 实证）。Nuxt 重渲染导致的正文重绑由分页
+      // 器断连自愈轮询（400ms）兜底。
+      bindMode: 'wrap',
       getChapterKey: () => this.getChapterKey(),
       onChapterChange: chapterKey => this.restoreChapterPosition(chapterKey),
       onAnomaly: detail => {

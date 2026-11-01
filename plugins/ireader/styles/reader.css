@@ -45,8 +45,26 @@ body.atreader-ireader-paged .reader-width {
  * 多栏视口与正文合一（视口类由 JS 挂在 .reader-content 上）：
  * 高度裁切 + 水平双栏 + 整页位移，全部作用于正文元素自身。
  */
-body.atreader-ireader-paged .reader-content.atreader-ireader-page-viewport {
+/*
+ * wrap 结构 = v1.0.0 布局（2026-11 回归）：视口包裹层只做高度裁切；
+ * 高度/多栏/整页位移全部在正文子元素上。裁剪框（包裹层）不随 transform
+ * 平移，翻页才能把后续栏位带进可视区——self 绑定把裁剪与位移合并到
+ * 正文自身后，翻页变成「正文带着自己的裁剪框一起平移」，第 1 页正常、
+ * 其余页全空（2026-11 实证回归）。
+ */
+body.atreader-ireader-paged .atreader-ireader-page-viewport {
   --atreader-column-gap: clamp(24px, 2.5vw, 40px);
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: var(--atreader-page-height) !important;
+  min-height: 320px !important;
+  margin-right: auto !important;
+  margin-left: auto !important;
+  overflow: hidden !important;
+}
+
+body.atreader-ireader-paged .atreader-ireader-page-viewport > .reader-content {
   box-sizing: border-box !important;
   display: block !important;
   width: 100% !important;
@@ -56,8 +74,9 @@ body.atreader-ireader-paged .reader-content.atreader-ireader-page-viewport {
   margin: 0 !important;
   padding: 0 !important;
   column-count: 2 !important;
+  column-gap: var(--atreader-column-gap) !important;
   column-fill: auto !important;
-  overflow: hidden !important;
+  overflow: visible !important;
   transform: translate3d(var(--atreader-page-offset, 0), 0, 0) !important;
   transition: none !important;
 }
@@ -95,7 +114,7 @@ body.atreader-ireader-paged .reader-content blockquote {
 }
 
 @media (max-width: 760px) {
-  body.atreader-ireader-paged .reader-content.atreader-ireader-page-viewport {
+  body.atreader-ireader-paged .atreader-ireader-page-viewport {
     --atreader-column-gap: 24px;
   }
 }
