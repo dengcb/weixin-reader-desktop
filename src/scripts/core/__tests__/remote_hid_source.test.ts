@@ -12,11 +12,11 @@ describe('resolveRemoteHidAction', () => {
     expect(resolveRemoteHidAction('volume_down', 'press', false)).toBeNull();
   });
 
-  it('返回切宽窄、TV 切书城、电源摸鱼，均在任意页面生效', () => {
+  it('返回切宽窄、电源摸鱼在任意页面生效；TV 由书城浮层管理器消费', () => {
     expect(resolveRemoteHidAction('back', 'press', true)).toBe('toggle-wide');
     expect(resolveRemoteHidAction('back', 'press', false)).toBe('toggle-wide');
-    expect(resolveRemoteHidAction('tv', 'press', false)).toBe('switch-bookstore');
-    expect(resolveRemoteHidAction('tv', 'press', true)).toBe('switch-bookstore');
+    expect(resolveRemoteHidAction('tv', 'press', false)).toBeNull();
+    expect(resolveRemoteHidAction('tv', 'press', true)).toBeNull();
     expect(resolveRemoteHidAction('power', 'press', false)).toBe('toggle-stealth');
   });
 

@@ -335,7 +335,7 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `volume_up` | 0x80 | **上一页** | 仅阅读页 |
 | `volume_down` | 0x81 | **下一页** | 仅阅读页 |
 | `back` | 0xF1 | **切换阅读区域宽/窄**（simulate_menu_click('reader_wide')，继承菜单门禁） | 菜单门禁 |
-| `tv` | 0x35 | **循环切换到下一个书城**（get_bookstore_list → 当前站+1 → sticky 过场 → switch_bookstore_by_index） | 任意页面 |
+| `tv` | 0x35 | **短按切下一个书城；长按 0.5 秒呼出 Cmd+Tab 式书城浮层**（0.5 秒/项轮播，松开提交） | 任意页面 |
 | `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
 | `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦） | 仅 macOS |
 

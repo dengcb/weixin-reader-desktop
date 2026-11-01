@@ -6,7 +6,6 @@ import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 import { invoke } from '../core/tauri';
 import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
-import { showSiteSwitchLoading, startupWindowFromGlobal } from '../core/site_switch_loading';
 import {
   RemoteHidButtonEvent,
   resolveRemoteHidAction,
@@ -385,37 +384,11 @@ export class RemoteManager {
       invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {});
       return;
     }
-    if (action === 'switch-bookstore') {
-      void this.switchToNextBookstore();
-      return;
-    }
     // 未绑定动作且系统路径也给不到的键：记日志便于后续映射（voice 留给三期 ATVV）。
     if (event.phase === 'press') {
       if (event.button === 'voice' || event.button.startsWith('usage_')) {
         log.info(`[RemoteHid] 按键 ${event.button}（暂未绑定动作）`);
       }
-    }
-  }
-
-  /** 返回键：循环切换到下一个书城，语义与书城切换浮层的提交路径一致。 */
-  private async switchToNextBookstore(): Promise<void> {
-    try {
-      const list = await invoke<Array<{ index: number; current: boolean }>>('get_bookstore_list');
-      if (!Array.isArray(list) || list.length === 0) return;
-      const currentIdx = list.findIndex((item) => item.current);
-      const nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % list.length;
-      if (currentIdx >= 0 && nextIdx === currentIdx) return;
-      const target = list[nextIdx];
-      if (!target) return;
-      // 与浮层一致：启动窗口期不预铺过场，其余情况先铺 sticky 过场再切换
-      if (!startupWindowFromGlobal()) {
-        showSiteSwitchLoading(document, { sticky: true });
-      }
-      invoke('switch_bookstore_by_index', { index: target.index }).catch((error) =>
-        log.error('[RemoteManager] 切换书城失败', error),
-      );
-    } catch (error) {
-      log.error('[RemoteManager] 获取书城列表失败', error);
     }
   }
 

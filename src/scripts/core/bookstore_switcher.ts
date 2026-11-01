@@ -293,6 +293,11 @@ export class BookstoreSwitcherController {
     }
     this.state = 'pending';
     this.queuedAdvances = 0;
+    this.open();
+  }
+
+  /** 加载列表并显示浮层，高亮「当前站点的下一个」。 */
+  private open(): void {
     const generation = ++this.loadGeneration;
     void this.host.loadEntries().then((model) => {
       // 迟到的结果：销毁、已取消或修饰键已松开（keyup 时把 pending 拨回 idle）一律丢弃
@@ -316,6 +321,42 @@ export class BookstoreSwitcherController {
       this.state = 'visible';
       this.show();
     });
+  }
+
+  /** 遥控器 TV 长按：打开切换浮层（高亮下一个）。重复调用无副作用。 */
+  startRemoteCycle(): void {
+    if (this.destroyed || this.state !== 'idle') return;
+    this.queuedAdvances = 0;
+    this.state = 'pending';
+    this.open();
+  }
+
+  /** 遥控器长按轮播：高亮前进一格。 */
+  advanceRemote(): void {
+    if (this.destroyed || this.state !== 'visible') return;
+    this.advance();
+  }
+
+  /** 遥控器松手：切换到当前高亮；若尚未显示则取消。 */
+  commitRemote(): void {
+    if (this.destroyed) return;
+    if (this.state === 'visible') {
+      this.commitIndex(this.highlightIndex);
+      return;
+    }
+    this.cancel();
+  }
+
+  cancelRemote(): void {
+    this.cancel();
+  }
+
+  get isVisible(): boolean {
+    return this.state === 'visible';
+  }
+
+  get isPending(): boolean {
+    return this.state === 'pending';
   }
 
   private onKeyUp(event: KeyboardEvent): void {

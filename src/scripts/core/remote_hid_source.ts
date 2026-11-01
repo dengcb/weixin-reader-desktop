@@ -22,13 +22,13 @@ export type RemoteHidAction =
   | 'page-backward'
   | 'page-forward'
   | 'toggle-stealth'
-  | 'switch-bookstore'
   | 'toggle-wide';
 
 /**
  * 按键 → 动作：音量+ 上一页、音量− 下一页（仅阅读页）；
- * 返回切换阅读区域宽窄；TV 循环切换到下一个书城；电源复用摸鱼键语义。
- * voice 由 Rust 侧 ATVV 语音链路消费，这里不绑定。
+ * 返回切换阅读区域宽窄；电源复用摸鱼键语义。
+ * TV 由 BookstoreSwitcherManager 消费（短按切下一个书城、长按呼出
+ * 切换浮层），voice 由 Rust 侧 ATVV 语音链路消费，这里都不绑定。
  */
 export const resolveRemoteHidAction = (
   button: string,
@@ -43,8 +43,6 @@ export const resolveRemoteHidAction = (
       return isReaderPage ? 'page-forward' : null;
     case 'back':
       return 'toggle-wide';
-    case 'tv':
-      return 'switch-bookstore';
     case 'power':
       return 'toggle-stealth';
     default:

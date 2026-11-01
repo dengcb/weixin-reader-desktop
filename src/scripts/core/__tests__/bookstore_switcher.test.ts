@@ -307,4 +307,36 @@ describe('BookstoreSwitcherController', () => {
     expect(host.state.loadCalls).toBe(1);
     expect(root()).toBeNull();
   });
+
+  it('遥控器长按：打开浮层高亮下一个，轮播前进，松手提交当前高亮', async () => {
+    const host = boot({
+      entries: [
+        entry('a', '甲', { index: 1 }),
+        entry('b', '乙', { index: 2 }),
+        entry('c', '丙', { index: 3 }),
+      ],
+      currentIndex: 0,
+    });
+    controller?.startRemoteCycle();
+    await flush();
+    expect(host.state.loadCalls).toBe(1);
+    expect(controller?.isVisible).toBe(true);
+    expect(activeIndex()).toBe(1);
+    controller?.advanceRemote();
+    expect(activeIndex()).toBe(2);
+    controller?.commitRemote();
+    expect(host.state.committed.map((item) => item.id)).toEqual(['c']);
+    expect(root()?.classList.contains('wxrd-switcher-shown')).toBe(false);
+  });
+
+  it('遥控器在列表就绪前松手：取消 pending，不提交', async () => {
+    const host = boot({ entries: [entry('a', '甲', { index: 1 })], currentIndex: -1 });
+    controller?.startRemoteCycle();
+    controller?.commitRemote();
+    await flush();
+    expect(controller?.isPending).toBe(false);
+    expect(controller?.isVisible).toBe(false);
+    expect(host.state.committed).toEqual([]);
+    expect(root()).toBeNull();
+  });
 });

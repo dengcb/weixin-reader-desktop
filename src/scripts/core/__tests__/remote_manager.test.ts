@@ -320,29 +320,10 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('TV 键循环切换到下一个书城', async () => {
-    tauriInvoke.mockImplementation(async (cmd: string) =>
-      cmd === 'get_bookstore_list'
-        ? [
-            { index: 1, current: true },
-            { index: 2, current: false },
-          ]
-        : undefined,
-    );
+  it('TV 键不再由 RemoteManager 直接切换书城（交给书城浮层管理器）', () => {
     const { manager } = createManager();
     emitHid('tv', 'press');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(tauriInvoke).toHaveBeenCalledWith('switch_bookstore_by_index', { index: 2 });
-    manager.destroy();
-  });
-
-  it('只有一个书城时 TV 键不切换', async () => {
-    tauriInvoke.mockImplementation(async (cmd: string) =>
-      cmd === 'get_bookstore_list' ? [{ index: 1, current: true }] : undefined,
-    );
-    const { manager } = createManager();
-    emitHid('tv', 'press');
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    emitHid('tv', 'release');
     expect(tauriInvoke).not.toHaveBeenCalledWith('switch_bookstore_by_index', expect.anything());
     manager.destroy();
   });
