@@ -110,6 +110,10 @@ export class AppRuntime {
         return;
       }
       createSiteContext().invalidate();
+      // ThemeManager 监听的是 window 级 plugins-updated（设置/编辑器窗口经
+      // Tauri emit 只能被 Tauri listen 收到），热重载路径需自行补发，否则
+      // 反色滤镜残留到下一次路由变化（2026-11 审计 I-P1-1）。
+      window.dispatchEvent(new Event('plugins-updated'));
       log.info('[AppRuntime] Plugin system hot reloaded');
     }).catch((error) => {
       log.error('[AppRuntime] Plugin hot reload failed', error);

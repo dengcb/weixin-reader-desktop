@@ -300,8 +300,8 @@ bun run release:clear    # 清理本地发布文件
 ### ✅ 测试
 
 ```bash
-bun test                                    # TypeScript 前端
-cargo test --lib --manifest-path src-tauri/Cargo.toml  # Rust 后端（Windows：--lib 必需，dev 全目标有已知 LNK1241，见 test/README.md）
+bun test --isolate                            # TypeScript 前端（--isolate 必带，防跨文件状态泄漏）
+cargo test --manifest-path src-tauri/Cargo.toml  # Rust 后端（Windows：加 --lib，dev 全目标有已知 LNK1241，见 test/README.md）
 ```
 
 CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + build + IPC 检查 + inject.js 一致性校验）。
@@ -405,11 +405,19 @@ CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + buil
 </tr>
 <tr>
 <td><code>TurnerManager</code></td>
-<td>📖 翻页控制器（含子模块：自动翻页、滑动翻页、鼠标隐藏）</td>
+<td>📖 翻页控制器（含子模块：自动翻页、滑动翻页、鼠标隐藏、底部进度条）</td>
 </tr>
 <tr>
 <td><code>RemoteManager</code></td>
 <td>🎮 遥控器与键盘输入，统一发布翻页方向事件</td>
+</tr>
+<tr>
+<td><code>LinkManager</code></td>
+<td>🔗 链接收敛，外部链接统一处理（单窗口全局策略）</td>
+</tr>
+<tr>
+<td><code>BookstoreSwitcherManager</code></td>
+<td>🏪 书城切换浮层（TV 键长按呼出，Cmd+Tab 语义）</td>
 </tr>
 </table>
 
@@ -451,6 +459,18 @@ CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + buil
 <td>🚫 macOS 原生拦截第三方追踪域名（不拦网站自有代码）</td>
 </tr>
 <tr>
+<td><code>remote_hid.rs</code> / <code>remote_hid_windows.rs</code></td>
+<td>🎮 小米遥控器 HID 识别层（macOS IOHIDManager / Windows Raw Input）</td>
+</tr>
+<tr>
+<td><code>remote_voice.rs</code> / <code>voice_turner.rs</code></td>
+<td>🎤 ATVV 蓝牙语音流与语音翻页（Speech.framework，仅 macOS）</td>
+</tr>
+<tr>
+<td><code>media_key_suppressor.rs</code></td>
+<td>🔇 遥控器音量键按住期间吞掉系统音量变化（macOS）</td>
+</tr>
+<tr>
 <td><code>monitor.rs</code></td>
 <td>🖥 多显示器支持，事件驱动检测</td>
 </tr>
@@ -480,6 +500,8 @@ tauri-plugin-dialog        → 插件选择、导出与原生确认对话框
 tauri-plugin-window-state  → 各窗口位置与尺寸持久化
 tauri-plugin-log           → 2 MiB 单文件、最多 3 份日志
 tauri-plugin-updater       → GitHub Release 更新检查、下载与重启安装
+tauri-plugin-global-shortcut → 摸鱼键全局热键（窗口隐藏后仍可响应）
+tauri-plugin-single-instance → 单实例与 .atrd 文件关联分发（Windows/Linux）
 ```
 
 ---

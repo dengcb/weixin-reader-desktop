@@ -155,6 +155,10 @@ where
     F: FnMut(&str) -> Option<String>,
 {
     let mut candidates = vec![selected_startup_site_id(settings).to_string()];
+    // "local" 不是在线站点：其专用分支已在 main_startup_target 顶部处理。
+    // 若留在这里，书被删后会拿 sites.local.lastReaderUrl 里的过期
+    // atreader:// URL 充当在线站点启动（2026-11 审计 R-P1-1）。
+    candidates.retain(|site_id| site_id != "local");
     if !candidates.iter().any(|site_id| site_id == sites::WEREAD.id) {
         candidates.push(sites::WEREAD.id.to_string());
     }
@@ -551,12 +555,20 @@ pub fn run() {
             menu_model::set_focused_window(None);
 
             // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置）
-            // zoom 按站点独立存储，从 sites[lastSiteId].zoom 读取
+            // zoom 按站点独立存储：在线站从 sites[lastSiteId].zoom 读取，
+            // 本地阅读页从 sites.local.zoom 读取（菜单缩放在本地图书时写入该键）；
+            // 书城页不参与缩放，恒为 1.0。
             {
                 let settings = settings::read_settings(app.handle())
                     .unwrap_or_else(|_| settings::default_settings());
-                let zoom = if is_library || is_local_page {
+                let zoom = if is_library {
                     1.0
+                } else if is_local_page {
+                    settings.get("sites")
+                        .and_then(|s| s.get("local"))
+                        .and_then(|s| s.get("zoom"))
+                        .and_then(|z| z.as_f64())
+                        .unwrap_or(1.0)
                 } else {
                     let site_id = selected_startup_site_id(&settings);
                     settings.get("sites")

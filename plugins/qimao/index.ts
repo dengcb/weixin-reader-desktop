@@ -120,6 +120,7 @@ export class QimaoPlugin implements ReaderPlugin {
   private wheelCooldown = false;
   private doubleColumnEnabled = true;
   private diagnosticsTimers: number[] = [];
+  private disarmWatchdog: (() => void) | null = null;
   private layoutToggleButton: HTMLLIElement | null = null;
   private toolbarObserver: MutationObserver | null = null;
   private toolbarSyncFrame: number | null = null;
@@ -168,7 +169,7 @@ export class QimaoPlugin implements ReaderPlugin {
         stylesheetsReady(document)
         && !!document.querySelector(`${QIMAO_CONTENT_SELECTOR} p`);
       setSiteReadinessProbe(presented);
-      armReaderEntryWatchdog({
+      this.disarmWatchdog = armReaderEntryWatchdog({
         pluginId: 'qimao',
         isReady: presented,
         // 七猫是 SSR：正文不在首屏 HTML 里 = 该页已废（服务端内容缺失），
@@ -185,6 +186,8 @@ export class QimaoPlugin implements ReaderPlugin {
   onUnload(): void {
     this.restoreGeneration++;
     this.clearWheelState();
+    this.disarmWatchdog?.();
+    this.disarmWatchdog = null;
     for (const timer of this.diagnosticsTimers) window.clearTimeout(timer);
     this.diagnosticsTimers = [];
     this.stopBootGuard();

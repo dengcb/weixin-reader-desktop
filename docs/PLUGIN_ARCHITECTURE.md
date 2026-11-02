@@ -214,6 +214,7 @@ Rust 在临时目录完成全部校验后才替换已安装版本：
 - `settings`：读取 `sites[id]` 与 `pluginConfigs[id]` 的合并视图。
 - `storage`：当前使用带插件前缀的 `localStorage`。
 - `style.getFile()` / `style.listFiles()`：只读访问当前插件包 `styles/` 下的 CSS；插件仍须显式决定何时注入。
+- `toast`：壳级短暂提示（`api.toast.show()`），宿主统一渲染。
 - `log`、`content`、`menu`：提供统一外观；menu 的动态注册仍是预留能力。
 
 设置字段归属：
@@ -266,9 +267,11 @@ URL 滚动位置不存进 settings：
 | Capability | 窗口 | 能力 |
 |---|---|---|
 | `main-runtime` | 远程主窗口 | 阅读运行时、设置 patch、当前 URL 阅读位置、当前 URL 插件代码 |
+| `local-reader` | 主窗口 `atreader://` 页 | 本地图书读取与进度、菜单同步等受信本地命令 |
 | `settings` | 本地设置窗口 | 设置、插件管理、更新器、创建编辑器/法律窗口 |
 | `plugin-editor` | 本地编辑器 | 已安装插件编辑、导出、安装 |
-| `legal-documents` | 隐私与条款 | 仅 `core:default` |
+| `plugin-installer` | 安装确认窗 | `.atrd` 确认安装 |
+| `legal-documents` | 隐私、条款与许可 | 仅 `core:default` |
 
 远程 `main` 不拥有 FS、Shell、Updater、Dialog、Opener、任意窗口创建或插件管理命令。
 
@@ -283,7 +286,7 @@ bun run check:ipc
 bun run build
 ```
 
-外部插件源码优先放在 `plugins/<id>/`，构建产物位于 `plugins/<id>/release/<id>.atrd`。内置插件构建产物位于 `release/plugins/`。
+外部插件源码优先放在 `plugins/<id>/`，`.atrd` 构建产物直接输出到 `plugins/` 根目录（`plugins/<id>.atrd`，随仓库分发；`release/`、`dist/` 均被 gitignore，产物不落子目录）。内置插件构建产物位于 `release/plugins/`。`plugins/shared/`（分页器、阅读入口看门狗）供外部插件复用。
 
 构建产物 `plugin.js` 保留可读格式，便于在应用内「代码编辑」中直接维护；编辑器按已安装包的真实代码文件和 CSS 文件动态生成标签，避免保存不会生效的影子文件。
 

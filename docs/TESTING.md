@@ -1,13 +1,13 @@
 # 测试与验收指南
 
-本文描述当前测试体系。最后核对日期：2026-10-24。
+本文描述当前测试体系。最后核对日期：2026-11-02。
 
 ## 当前结果
 
 | 层级 | 结果 | 说明 |
 |---|---:|---|
-| Bun DOM/契约测试 | 493 通过 | 53 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
-| Rust 单元测试 | 109 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新、语音翻页触发判定与 Tauri mock |
+| Bun DOM/契约测试 | 544 通过 | 57 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
+| Rust 单元测试 | 141 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新、语音翻页触发判定、遥控器 HID/语音与 Tauri mock |
 | Rust 集成测试 | 6 通过 | `src-tauri/tests/plugin_test.rs` |
 | 真机硬件测试 | 1 忽略 | 需要真实 macOS 显示会话 |
 | 模拟 E2E | 6 通过 | Python Playwright + 临时 Chromium，本地 `test-page.html` |
@@ -22,7 +22,7 @@
 bun install --frozen-lockfile
 bun run check:version
 bun run typecheck
-bun test
+bun test --isolate
 bun run check:ipc
 bun run build
 git diff --exit-code -- src/scripts/inject.js
@@ -33,7 +33,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 
 1. 依赖锁文件和版本声明一致。
 2. TypeScript 严格检查无错误。
-3. 前端架构、生命周期和 DOM 行为回归通过。
+3. 前端架构、生命周期和 DOM 行为回归通过。`--isolate` 必须带：每个测试文件独立全局对象，否则跨文件单例/状态泄漏会让部分用例（如 ChapterManager）在共享环境下假失败。
 4. IPC handler、AppManifest、permission 和 Capability 一致。
 5. `inject.js` 与 TypeScript 源码的生成结果一致，`dist/` 可构建。
 6. Rust 测试通过；平台 job 继续验证实际 macOS 与 Windows 构建。
@@ -74,6 +74,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 | `app_manager.test.ts` | 自动翻页退出复位、独立位置恢复和旧值降级 |
 | `app_runtime.test.ts` | 逆序释放、热重载串行化和 generation 失效 |
 | `remote_manager.test.ts` | 键盘映射、输入区隔离、捕获监听器释放 |
+| `remote_hid_source.test.ts` | 遥控器 HID 事件订阅、注册/销毁竞态与动作映射 |
+| `site_switch_loading.test.ts` | 书城切换时加载层的注入与清理 |
+| `fullscreen_exit_button.test.ts` | 全屏退出按钮的显隐与点击行为 |
+| `iframe_keyboard.test.ts` / `iframe_keyboard_early_injection.test.ts` | 同源 iframe 键盘转发与早注入时序 |
+| `boot_styles.test.ts` / `inject_classic_script.test.ts` | 注入层引导样式与经典脚本注入契约 |
 | `style_manager.test.ts` | manager/plugin 样式所有权、双栏规则和清理 |
 | `turner_manager.test.ts` | 子组件协调、离开阅读页停翻与完整销毁 |
 | `auto_flipper.test.ts` | 单栏恢复门禁、后台暂停、到底翻页和 timer 清理 |
@@ -84,6 +89,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 | `manager_behavior.test.ts` | 滚动参数、翻页阈值、自动翻页推进、光标/主题清理 |
 | `weread_style_panel.test.ts` | 阅读宽度默认状态、设置持久化、响应式限制和重置 |
 | `test/tauri_contract.test.ts` | 更新端点、窗口状态、窗口标签和 Capability 最小权限 |
+| `test/release_contract.test.ts` / `test/release_signature.test.ts` / `test/clear_release_safety.test.ts` | 发布产物契约、签名流程与清理脚本安全 |
 
 ### 运行方式
 
@@ -117,7 +123,7 @@ bun test src/scripts/core/__tests__/manager_behavior.test.ts
 - `noUnusedParameters`
 - `noFallthroughCasesInSwitch`
 
-3 个既有 TS6133 使用“文件 + 符号 + 可选行号”的精确白名单。脚本会同时拒绝：
+TS6133 使用「文件 + 符号 + 可选行号」的精确白名单（当前 0 条）。脚本会同时拒绝：
 
 - 新增的任何 TypeScript 错误。
 - 新增的未使用符号。
@@ -158,6 +164,10 @@ Rust 核心测试与被测实现放在同一模块的 `#[cfg(test)]` 中，便�
 | `lib.rs` | 启动站点、启动 URL、rememberSite/lastPage 和站点缩放归属 |
 | `menu.rs` | schema v2 菜单初值、缩放邻级与 mock App 菜单 |
 | `voice_turner.rs` | 翻页词 N-best 命中、同音词候选救援、冷却窗口、词归一化与设置读取 |
+| `remote_hid.rs` / `remote_hid_windows.rs` | HID 报文解析、和弦状态机、Windows VK/扫描码映射与边沿去重 |
+| `remote_voice.rs` | ATVV 能力/控制解析、ADPCM 编解码往返、帧切分与扫描退避 |
+| `local_books.rs` / `plugin_installer.rs` | 本地图书记录与导入校验、.atrd 安装边界 |
+| `font_cache.rs` / `menu_model.rs` | 字体磁盘缓存、菜单状态模型 |
 | `monitor.rs` | 纯位置计算与显式真机测试 |
 | `sites.rs` | 内置站点与已安装插件首页解析 |
 | `update.rs` | schema v2 自动更新开关、定时策略、序列化与 managed state |
@@ -191,7 +201,7 @@ cargo test --manifest-path src-tauri/Cargo.toml \
 `bun run check:ipc` 自动检查：
 
 - `build.rs` AppManifest 与 `generate_handler![]` 完全一致。
-- 40 个命令都有生成 permission。
+- 42 个命令都有生成 permission（数字以 `check:ipc` 输出为准）。
 - Capability permission 没有缺失或残留命令。
 - `tauri.conf.json` 启用的 Capability 文件集合正确。
 - `main-runtime` 的命令集合精确匹配阅读运行时白名单。

@@ -39,6 +39,8 @@ export type TitleChangedEvent = {
 export class IPCManager extends BaseManager {
   private siteContext: SiteContext;
   private currentIsReader = false;
+  private lastPageEnabled = true;
+  private unsubscribeSettings: (() => void) | null = null;
   private lastSavedScrollY = 0;
 
   // Timers
@@ -77,6 +79,11 @@ export class IPCManager extends BaseManager {
         ScrollState.markRestorationComplete();
       }
     }, 10000);
+
+    // lastPage 开关用于滚动保存热路径守卫，缓存避免每个滚动事件展开设置文档
+    this.unsubscribeSettings = settingsStore.subscribe((settings) => {
+      this.lastPageEnabled = settings.lastPage !== false;
+    });
 
     // Start monitoring
     this.monitorRoute();
@@ -256,17 +263,14 @@ export class IPCManager extends BaseManager {
 
   private monitorScroll() {
     this.scrollHandler = () => {
-      // 只在阅读页且启用了 lastPage 时保存
+      // 热路径守卫按成本升序：纯 window 读 → 内存缓存 → 最后才展开设置
+      // 文档（滚动事件每个都 get() 三层展开是无谓开销，2026-11 审计 I-P2）
       if (!this.currentIsReader) return;
-
-      const settings = settingsStore.get();
-      if (!settings.lastPage) return;
+      if (!ScrollState.isRestorationComplete()) return;
+      if (!this.lastPageEnabled) return;
 
       // 分页阅读器自行保存结构化位置，只有滚动模式保存 window.scrollY。
       if (this.siteContext.isPaginated) return;
-
-      // 恢复期间不保存
-      if (!ScrollState.isRestorationComplete()) return;
 
       const scrollY = window.scrollY;
 
@@ -324,7 +328,9 @@ export class IPCManager extends BaseManager {
   // =====================================================
 
   destroy(): void {
-    // 清理定时器
+    // 清理定时器与设置订阅
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
     if (this.scrollSaveTimer) {
       clearTimeout(this.scrollSaveTimer);
       this.scrollSaveTimer = null;

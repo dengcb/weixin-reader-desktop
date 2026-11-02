@@ -212,7 +212,10 @@ const createTxtBook = (chapters: TxtChapter[], title: string): FoliateBook => {
   const sections: BookSection[] = chapters.map((chapter, index) => ({
     id: chapter.id,
     cfi: CFI.fake.fromIndex(index),
-    size: new TextEncoder().encode(chapter.text).length,
+    // size 只用于分页器跨章进度权重，字符数近似即可——逐章 TextEncoder
+    // 全量编码是开书时的一次性 CPU/内存峰值（百万字书多一轮全量转码，
+    // 2026-11 审计 L-P2-4）。
+    size: chapter.text.length,
     load: () => {
       const old = urls.get(index);
       if (old) URL.revokeObjectURL(old);
@@ -333,6 +336,10 @@ class LocalReader implements LocalReaderController {
     localReaderLog('renderer_created', { bookId: this.bookId, fixedLayout: this.fixedLayout });
     this.bindUI();
     this.applyTypography();
+    // 键盘监听必须在 restorePosition 之前就绪：恢复位置会触发首个 section
+    // 加载，onSectionLoad 按 keyHandler 是否存在决定是否给章节 iframe 挂
+    // keydown；拖选进行中按方向键才不会失灵（2026-11 审计 L-P2-7）。
+    this.setupKeyboard();
     await this.restorePosition();
     localReaderLog('position_restored', { bookId: this.bookId });
     this.ready = true;
@@ -345,7 +352,6 @@ class LocalReader implements LocalReaderController {
     });
     this.updateTitles();
     this.hideLoading();
-    this.setupKeyboard();
     window.__ATREADER_RUNTIME__ = this;
   }
 
@@ -559,6 +565,13 @@ class LocalReader implements LocalReaderController {
     });
     book.transformTarget?.addEventListener('data', (event) => {
       const detail = (event as CustomEvent<{ data: unknown; type: string; readonly name: string }>).detail;
+      // 纵深防御：spine 文档类型不在白名单时强制按 text/html 走消毒。正常
+      // EPUB 到不了这里（壳层预检只放行 xhtml/html/svg/image），但消毒是
+      // 本地阅读器的安全边界，不能依赖上游类型白名单（application/xml 类
+      // 文档在渲染 iframe 同源沙箱内是经典脚本执行载体）。
+      if (spineDocuments.has(detail.name) && !EPUB_DOCUMENT_TYPES.has(detail.type)) {
+        detail.type = 'text/html';
+      }
       if (!EPUB_DOCUMENT_TYPES.has(detail.type)) return;
       const mediaType = detail.type;
       const wrapSpineSvg = mediaType === 'image/svg+xml' && spineDocuments.has(detail.name);

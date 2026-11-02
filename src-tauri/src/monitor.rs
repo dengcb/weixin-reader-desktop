@@ -345,14 +345,10 @@ where
                 if let Some(new_idx) = get_current_monitor_index(&handle_clone) {
                     let prev_idx = last_idx.load(Ordering::Relaxed);
                     if prev_idx != new_idx {
-                        eprintln!(
-                            "DEBUG MONITOR: Window moved from monitor {} to {}, rebuilding menu",
-                            prev_idx, new_idx
-                        );
                         last_idx.store(new_idx, Ordering::Relaxed);
 
                         if let Err(e) = callback_clone(&handle_clone) {
-                            eprintln!("DEBUG MONITOR: Failed to rebuild menu: {:?}", e);
+                            log::warn!(target: "monitor", "Failed to rebuild menu: {:?}", e);
                         }
                     }
                 }

@@ -29,13 +29,13 @@ export class MenuManager {
 
   // Store references for cleanup
   private routeChangedHandler: ((e: Event) => void) | null = null;
-  private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
   private titleChangedHandler: ((e: Event) => void) | null = null;
   private capabilitiesChangedHandler: ((e: Event) => void) | null = null;
   private unlistenMenuAction: (() => void) | null = null;
   private unlistenShowToast: (() => void) | null = null;
   private unlistenMenuRebuilt: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private lastMenuSyncSnapshot = '';
   private unsubscribeDoubleColumn: (() => void) | null = null;
   private destroyed = false;
   private readonly initAbortController = new AbortController();
@@ -70,10 +70,6 @@ export class MenuManager {
       this.updateMenuEnabledStatus('route-changed');
     }) as EventListener;
 
-    this.legacyRouteChangedHandler = (() => {
-      this.updateMenuEnabledStatus('route-changed-legacy');
-    }) as EventListener;
-
     this.titleChangedHandler = ((e: CustomEvent<TitleChangedEvent>) => {
       this.updateWindowTitle(e.detail.title);
     }) as EventListener;
@@ -82,7 +78,6 @@ export class MenuManager {
     }) as EventListener;
 
     window.addEventListener('ipc:route-changed', this.routeChangedHandler);
-    window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
     window.addEventListener('ipc:title-changed', this.titleChangedHandler);
     window.addEventListener('atreader:capabilities-changed', this.capabilitiesChangedHandler);
 
@@ -120,6 +115,13 @@ export class MenuManager {
     this.unsubscribeSettings = settingsStore.subscribe(async (settings) => {
       // zoom 由 Rust 端菜单直接控制（按站点存储），前端不再 invoke set_zoom
       // 避免站点切换时前端用旧 siteId 的 zoom 覆盖新站点的缩放
+      // 一次 patch 会触发乐观/回显/终态多次 notify，内容相同则无需重复
+      // 同步（回滚时内容不同仍会传播）。按内容快照去重，避免每次开关
+      // ~48 次 set_menu_item_enabled/update_menu_state IPC 放大
+      //（2026-11 审计 I-P1-3）。
+      const snapshot = JSON.stringify(settings);
+      if (snapshot === this.lastMenuSyncSnapshot) return;
+      this.lastMenuSyncSnapshot = snapshot;
       await this.syncMenuState(settings);
     });
 
@@ -292,10 +294,10 @@ export class MenuManager {
           }
           
           if (siteId !== 'unknown') {
-            settingsStore.updateSite(siteId, updates);
+            settingsStore.updateSite(siteId, updates).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           } else {
             // Fallback for unknown sites (shouldn't happen on reader page)
-            settingsStore.update(updates);
+            settingsStore.update(updates).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           }
         }
         break;
@@ -303,9 +305,9 @@ export class MenuManager {
       case 'hide_toolbar':
         {
           if (siteId !== 'unknown') {
-            settingsStore.updateSite(siteId, { hideToolbar: !settings.hideToolbar });
+            settingsStore.updateSite(siteId, { hideToolbar: !settings.hideToolbar }).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           } else {
-            settingsStore.update({ hideToolbar: !settings.hideToolbar });
+            settingsStore.update({ hideToolbar: !settings.hideToolbar }).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           }
         }
         break;
@@ -313,9 +315,9 @@ export class MenuManager {
       case 'hide_navbar':
         {
           if (siteId !== 'unknown') {
-            settingsStore.updateSite(siteId, { hideNavbar: !settings.hideNavbar });
+            settingsStore.updateSite(siteId, { hideNavbar: !settings.hideNavbar }).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           } else {
-            settingsStore.update({ hideNavbar: !settings.hideNavbar });
+            settingsStore.update({ hideNavbar: !settings.hideNavbar }).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
           }
         }
         break;
@@ -327,7 +329,7 @@ export class MenuManager {
           // autoFlip 现在是全局配置
           settingsStore.updateGlobal({
             autoFlip: { ...currentAutoFlip, active: newActive }
-          });
+          }).catch((error) => log.error('[MenuManager] Failed to persist settings patch', error));
         }
         break;
 
@@ -353,10 +355,6 @@ export class MenuManager {
     if (this.routeChangedHandler) {
       window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
       this.routeChangedHandler = null;
-    }
-    if (this.legacyRouteChangedHandler) {
-      window.removeEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
-      this.legacyRouteChangedHandler = null;
     }
     if (this.titleChangedHandler) {
       window.removeEventListener('ipc:title-changed', this.titleChangedHandler);

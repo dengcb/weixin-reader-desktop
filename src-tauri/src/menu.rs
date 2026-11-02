@@ -446,7 +446,7 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
                 Ok(u) => {
                     let _ = win.navigate(u);
                 }
-                Err(e) => eprintln!("[Bookstore] Invalid URL '{}': {:?}", url, e),
+                Err(e) => log::warn!(target: "bookstore", "Invalid URL '{}': {:?}", url, e),
             }
         }
     }
@@ -481,7 +481,6 @@ fn build_monitor_menu_items<R: Runtime>(
     // Get the index of the screen that the main window is on
     let current_screen_index = get_current_screen_index(handle);
 
-    eprintln!("DEBUG: current_screen_index: {:?}", current_screen_index);
 
     // Get display names based on platform
     #[cfg(target_os = "macos")]
@@ -490,18 +489,12 @@ fn build_monitor_menu_items<R: Runtime>(
     #[cfg(not(target_os = "macos"))]
     let display_names = get_display_names(handle);
 
-    eprintln!("DEBUG: display_names: {:?}", display_names);
 
     // Use Tauri's available_monitors to get all monitors
     if let Ok(monitors) = handle.available_monitors() {
         for (index, _monitor) in monitors.iter().enumerate() {
             // Skip if this is the monitor where the main window is currently located
             let should_skip = current_screen_index == Some(index);
-
-            eprintln!(
-                "DEBUG: Display[{}] should_skip={} (current_screen_index={:?})",
-                index, should_skip, current_screen_index
-            );
 
             if should_skip {
                 continue; // Skip current monitor
@@ -520,7 +513,6 @@ fn build_monitor_menu_items<R: Runtime>(
             let right_quote = "\u{201D}"; // "
             let item_text = format!("移到 {}{}{}", left_quote, name_str, right_quote);
 
-            eprintln!("DEBUG: Creating menu item: {} (ID: {})", item_text, item_id);
 
             if let Ok(item) = MenuItem::with_id(handle, &item_id, &item_text, true, None::<&str>) {
                 monitor_items.push(item);
@@ -1248,6 +1240,31 @@ pub fn rebuild_full_menu<R: Runtime>(handle: &tauri::AppHandle<R>) -> tauri::Res
     if let Some(main_window) = handle.get_webview_window("main") {
         let _ = main_window.emit("menu-rebuilt", ());
     }
+    // 重建出的菜单不含编辑子菜单（build_app_menu 从不构建 EDIT）。若此刻
+    // 聚焦的正是 settings/plugin-editor，按聚焦状态补回，否则设置页里操作
+    // 插件/跨屏移动会让 Cmd+C/V 静默失效直至下一次焦点变化（2026-11 审计
+    // R-P1-5）。
+    let edit_visible = menu_model::focused_window()
+        .is_some_and(|label| label == "plugin-editor" || label == "settings");
+    let _ = set_edit_menu_visible(handle, edit_visible);
+    // build_app_menu 固定创建「检查更新…」文案；下载完成后点击行为按
+    // UpdateState.downloaded 分流为重启安装——重建若不恢复文案，用户在
+    // 「检查更新…」上的一次点击会直接触发应用重启（文本与行为脱节，
+    // 2026-11 审计 R-P2-5）。
+    if crate::update::is_update_downloaded(handle.clone()) {
+        let downloaded_item = handle
+            .try_state::<crate::update::MenuState<R>>()
+            .and_then(|state| {
+                state
+                    .check_update_item
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().cloned())
+            });
+        if let Some(item) = downloaded_item {
+            let _ = item.set_text("重启并安装");
+        }
+    }
     Ok(())
 }
 
@@ -1270,8 +1287,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     // 启动时远程页面可能仍在首页，先保持所有阅读功能禁用。
     disable_reader_menu_items(handle);
 
-    // Event Handling - use handle for move closure
-    let handle_for_events = handle.clone();
+    // Event Handling
     app.on_menu_event(move |app, event| {
         let id = event.id.as_ref();
         match id {
@@ -1312,29 +1328,6 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             "toggle_menu" => {
                 crate::commands::toggle_menu_bar(app.clone());
             }
-            "quit" => {
-                // Clear autoFlip.active before quitting
-                let settings = crate::settings::read_settings(&handle_for_events)
-                    .unwrap_or_else(|_| crate::settings::default_settings());
-                if let Some(auto_flip) = settings
-                    .get("global")
-                    .and_then(|g| g.get("autoFlip"))
-                    .and_then(|v| v.as_object())
-                {
-                    if auto_flip
-                        .get("active")
-                        .and_then(|a| a.as_bool())
-                        .unwrap_or(false)
-                    {
-                        let _ = crate::settings::update_setting(
-                            &handle_for_events,
-                            "global.autoFlip.active",
-                            serde_json::json!(false),
-                        );
-                    }
-                }
-                std::process::exit(0);
-            }
             _ => {
                 if id == "open_local_book" {
                     crate::local_books::open_dialog(app);
@@ -1364,19 +1357,13 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                         if let Ok(index) = index_str.parse::<usize>() {
                             // First, check if window is already on the target monitor
                             let current_screen_index = get_current_screen_index(app);
-                            eprintln!(
-                                "DEBUG: Move request: current={:?}, target={}",
-                                current_screen_index, index
-                            );
-
                             // If already on target monitor, do nothing
                             if current_screen_index == Some(index) {
-                                eprintln!("DEBUG: Window is already on target monitor, skipping");
                                 return;
                             }
 
                             if let Err(error) = move_main_window_to_monitor(app, index) {
-                                eprintln!("[Monitor] Failed to move main window: {error}");
+                                log::warn!(target: "monitor", "Failed to move main window: {error}");
                             }
                         }
                     }

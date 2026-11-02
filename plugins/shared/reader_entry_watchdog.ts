@@ -100,7 +100,7 @@ const showRetryPrompt = (
   const cap = window.setTimeout(removePrompt, 300_000);
 };
 
-export const armReaderEntryWatchdog = (options: ReaderWatchdogOptions): void => {
+export const armReaderEntryWatchdog = (options: ReaderWatchdogOptions): (() => void) => {
   const { pluginId, isReady, timeoutMs = 10_000, log } = options;
   const guardKey = `atreader-watchdog-${pluginId}`;
   const start = Date.now();
@@ -110,10 +110,10 @@ export const armReaderEntryWatchdog = (options: ReaderWatchdogOptions): void => 
       // 60 秒内已自动重载过：不再自动重载（节流窗口内重载无效且加剧），
       // 挂出用户可见的重试提示；守卫键按 TTL 自然过期恢复武装资格。
       showRetryPrompt(pluginId, isReady, log);
-      return;
+      return () => undefined;
     }
   } catch {
-    return; // sessionStorage 不可用：放弃看门狗（无从防循环）
+    return () => undefined; // sessionStorage 不可用：放弃看门狗（无从防循环）
   }
   const timer = window.setInterval(() => {
     if (isReady()) {
@@ -131,4 +131,7 @@ export const armReaderEntryWatchdog = (options: ReaderWatchdogOptions): void => 
     // 日志 IPC 是异步的，立即 reload 会把未发出的日志连同上下文一起销毁
     window.setTimeout(() => window.location.reload(), 300);
   }, POLL_MS);
+  // 离开阅读页/插件卸载时拆除：轮询与「超时整页 reload」都不该在站点
+  // 上下文已经更换后触发（2026-11 审计 L-P2-5）。
+  return () => window.clearInterval(timer);
 };

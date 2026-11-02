@@ -22,8 +22,6 @@ export class SwipeHandler {
     this.siteContext = siteContext;
     this.onScrollLock = onScrollLock;
     this.handler = (e: WheelEvent) => {
-        // Set lock to prevent synthetic mousemove from waking up cursor
-        this.onScrollLock();
         this.handleWheel(e);
     };
     this.init();
@@ -42,6 +40,9 @@ export class SwipeHandler {
     const runtime = this.siteContext.currentRuntime;
     if (!runtime) return;
 
+    // Set lock to prevent synthetic mousemove from waking up cursor
+    // （守卫之后才触发：非阅读页的任意滚轮不应反复重置光标定时器）
+    this.onScrollLock();
     const deltaX = e.deltaX;
     const deltaY = e.deltaY;
     const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY);

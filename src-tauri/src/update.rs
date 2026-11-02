@@ -9,7 +9,9 @@ use tauri_plugin_updater::UpdaterExt;
 const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(10);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const SILENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
-const SILENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+// 静默下载放 10 分钟：安装包早已不是 3MB 量级，30 秒在慢网络下每 24h 必超时
+// 中止（2026-11 审计 R-P2-5）；检查超时仍保持 10 秒。
+const SILENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MANUAL_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn auto_update_enabled(settings: &serde_json::Value) -> bool {
@@ -75,7 +77,7 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
 
         match check_result {
             Ok(Ok(Some(update))) => {
-                println!("Found silent update: v{}", update.version);
+                log::info!(target: "update", "Found silent update: v{}", update.version);
                 // Disable menu item during download
                 if let Some(menu_state) = app.try_state::<MenuState<R>>() {
                     if let Ok(guard) = menu_state.check_update_item.lock() {
@@ -87,14 +89,14 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
                 }
                 // Found update, download it with timeout
                 let download_result = tokio::time::timeout(
-                    SILENT_DOWNLOAD_TIMEOUT, // 30 seconds for 3MB file
+                    SILENT_DOWNLOAD_TIMEOUT,
                     update.download_and_install(|_, _| {}, || {}),
                 )
                 .await;
 
                 match download_result {
                     Ok(Ok(())) => {
-                        println!("Auto-update downloaded and installed (pending restart)");
+                        log::info!(target: "update", "Auto-update downloaded and installed (pending restart)");
                         // Mark as downloaded
                         if let Some(state) = app.try_state::<UpdateState>() {
                             *state.downloaded.lock().unwrap() = true;
@@ -105,13 +107,13 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
                                 if let Some(item) = guard.as_ref() {
                                     let _ = item.set_text("重启并安装");
                                     let _ = item.set_enabled(true);
-                                    println!("Menu updated to '重启并安装' and enabled");
+                                    log::info!(target: "update", "Menu updated to '重启并安装' and enabled");
                                 }
                             }
                         }
                     }
                     Ok(Err(e)) => {
-                        println!("Auto-update failed: {}", e);
+                        log::warn!(target: "update", "Auto-update failed: {}", e);
                         // Re-enable menu on error
                         if let Some(menu_state) = app.try_state::<MenuState<R>>() {
                             if let Ok(guard) = menu_state.check_update_item.lock() {
@@ -123,7 +125,7 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
                         }
                     }
                     Err(_) => {
-                        println!("Auto-update download timed out after 30 seconds");
+                        log::warn!(target: "update", "Auto-update download timed out");
                         // Re-enable menu on timeout
                         if let Some(menu_state) = app.try_state::<MenuState<R>>() {
                             if let Ok(guard) = menu_state.check_update_item.lock() {
@@ -137,8 +139,8 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
                 }
             }
             Ok(Ok(None)) => {}
-            Ok(Err(e)) => println!("Failed to check update: {}", e),
-            Err(_) => println!("Update check timed out after 10 seconds (network issue)"),
+            Ok(Err(e)) => log::warn!(target: "update", "Failed to check update: {}", e),
+            Err(_) => log::warn!(target: "update", "Update check timed out (network issue)"),
         }
     }
 }
@@ -300,7 +302,7 @@ mod tests {
         assert_eq!(INITIAL_CHECK_DELAY, Duration::from_secs(10));
         assert_eq!(UPDATE_CHECK_INTERVAL, Duration::from_secs(24 * 60 * 60));
         assert_eq!(SILENT_CHECK_TIMEOUT, Duration::from_secs(10));
-        assert_eq!(SILENT_DOWNLOAD_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(SILENT_DOWNLOAD_TIMEOUT, Duration::from_secs(10 * 60));
         assert_eq!(MANUAL_CHECK_TIMEOUT, Duration::from_secs(15));
         assert!(SILENT_DOWNLOAD_TIMEOUT > SILENT_CHECK_TIMEOUT);
     }

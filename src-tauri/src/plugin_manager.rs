@@ -666,27 +666,6 @@ pub fn get_installed_plugins<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Plugi
     Ok(plugins)
 }
 
-pub fn get_plugin_manifest<R: Runtime>(
-    app: &AppHandle<R>,
-    plugin_id: &str,
-) -> Result<PluginInfo, String> {
-    let manifest_path = installed_plugin_dir(app, plugin_id)?.join("manifest.json");
-    let metadata = fs::symlink_metadata(&manifest_path)
-        .map_err(|error| format!("Failed to inspect manifest: {error}"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("Plugin manifest must be a regular file".to_string());
-    }
-    let content = fs::read_to_string(&manifest_path)
-        .map_err(|error| format!("Failed to read manifest: {error}"))?;
-    let manifest: PluginInfo =
-        serde_json::from_str(&content).map_err(|error| format!("Invalid manifest: {error}"))?;
-    if manifest.id != plugin_id {
-        return Err("Installed manifest ID does not match its directory".to_string());
-    }
-    validate_plugin_manifest(&manifest)?;
-    Ok(manifest)
-}
-
 pub fn get_plugin_code<R: Runtime>(app: &AppHandle<R>, plugin_id: &str) -> Result<String, String> {
     let code_path = installed_plugin_dir(app, plugin_id)?.join("plugin.js");
     let metadata = fs::symlink_metadata(&code_path)

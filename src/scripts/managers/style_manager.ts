@@ -33,7 +33,6 @@ export class StyleManager {
 
   // Store references for cleanup
   private routeChangedHandler: ((e: Event) => void) | null = null;
-  private legacyRouteChangedHandler: ((e: Event) => void) | null = null;
   private darkModeQuery: MediaQueryList | null = null;
   private darkModeHandler: ((e: MediaQueryListEvent | MediaQueryList) => void) | null = null;
   private pageThemeObserver: MutationObserver | null = null;
@@ -95,26 +94,10 @@ export class StyleManager {
       this.syncWindowTheme();
     }) as EventListener;
 
-    this.legacyRouteChangedHandler = ((e: CustomEvent<{ isReader: boolean }>) => {
-      const wasReader = this.isReader;
-      this.isReader = e.detail.isReader;
-
-      // Clear reader-only styles when leaving reader page
-      if (wasReader && !this.isReader) {
-        log.debug('[StyleManager] Leaving reader page, clearing reader styles');
-        this.clearReaderStyles();
-      }
-
-      // 阅读页与主页的背景兜底策略不同，路由切换时同步
-      this.handleBaseBg();
-      // v1.8.4 预审（BugHunter 高危项）：路由切换必须主动下发 set_theme——
-      // 离页回 null / 入页按 cookie 接管原本押在 body 类变更副作用上，
-      // 时机不可靠（主页永久钉死暗窗风险）。lastWindowTheme 去重兜底。
-      this.syncWindowTheme();
-    }) as EventListener;
-
+    // wxrd:route-changed 双订阅已移除：ipc:route-changed 携带超集信息且
+    // 必然同时派发，双订阅让每次路由变化处理两遍（2026-11 审计 I-P1-4）。
+    // wxrd:* 派发保留，供已分发的外部插件兼容。
     window.addEventListener('ipc:route-changed', this.routeChangedHandler);
-    window.addEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
 
     // 6. 监听双栏模式变化（集中管理）
     this.unsubscribeDoubleColumn = this.siteContext.onDoubleColumnChange((isDoubleColumn) => {
@@ -278,10 +261,6 @@ export class StyleManager {
     if (this.routeChangedHandler) {
       window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
       this.routeChangedHandler = null;
-    }
-    if (this.legacyRouteChangedHandler) {
-      window.removeEventListener('wxrd:route-changed', this.legacyRouteChangedHandler);
-      this.legacyRouteChangedHandler = null;
     }
 
     // Remove media query listener

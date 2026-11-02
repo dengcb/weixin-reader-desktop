@@ -1,3 +1,8 @@
+import { BaseManager, Events } from '../core/base_manager';
+import { chapterManager, ChapterData } from '../core/chapter_manager';
+import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
+import { getChapterUrl } from '../utils/chapter';
+
 /**
  * 进度跟踪器 (新算法)
  *
@@ -11,10 +16,6 @@
  * - 每次进入书籍都调用 getProgress API 获取已登录用户的初始位置
  * - 后续所有操作均为本地内存计算
  */
-
-import { BaseManager, Events } from '../core/base_manager';
-import { chapterManager, ChapterData } from '../core/chapter_manager';
-import { getChapterUrl } from '../utils/chapter';
 
 /**
  * 进度更新事件优先级
@@ -75,6 +76,7 @@ export class ProgressTracker extends BaseManager {
   // DOM 事件处理器（用于清理）
   private domReadyHandler: (() => void) | null = null;
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private detachIframeKeydown: (() => void) | null = null;
 
   constructor() {
     super();
@@ -493,11 +495,9 @@ export class ProgressTracker extends BaseManager {
       return;
     }
 
-    console.log(`[ProgressTracker] 修正算法检查 (${isForward ? '正读' : '倒读'}): turningPages=${this.turningPages}, maxPages=${oldChapterInfo.maxPages}`);
 
     // 条件 1: 章节页数必须 >= 6 页（页数太少误差大，不适合作为校准依据）
     if (oldChapterInfo.maxPages < 6) {
-      console.log('[ProgressTracker] 章节页数 < 6，跳过修正');
       return;
     }
 
@@ -522,10 +522,7 @@ export class ProgressTracker extends BaseManager {
       const scale = actualMaxPages / oldChapterInfo.maxPages;
 
       // 使用 ChapterManager 批量修正
-      const modifiedCount = chapterManager.scaleAllMaxPages(scale);
-
-      const percentage = ((modifiedCount / chapterInfos.length) * 100).toFixed(1);
-      console.log(`[ProgressTracker] 修正完成: ${percentage}% 章节已修正 (${modifiedCount}/${chapterInfos.length}), 比例=${scale.toFixed(3)}`);
+      chapterManager.scaleAllMaxPages(scale);
     }
   }
 
@@ -562,6 +559,10 @@ export class ProgressTracker extends BaseManager {
       }
     };
     window.addEventListener('keydown', this.keydownHandler);
+    // 正文 iframe 聚焦时 keydown 不冒泡出 frame——方向监听必须同样挂进
+    // 同源 iframe，否则翻页方向不更新、章切换误判为目录跳转（2026-11 审计
+    // I-P1-2）。
+    this.detachIframeKeydown = attachKeyboardToSameOriginIframes(this.keydownHandler);
   }
 
   /**
@@ -615,8 +616,6 @@ export class ProgressTracker extends BaseManager {
     // 计算新进度
     this.updateProgressFromTurningPages();
 
-    console.log(`[ProgressTracker] 翻页: direction=${this.lastPageDirection === PageDirection.FORWARD ? '向前' : '向回'}, ` +
-                `turningPages=${this.turningPages}, progress=${this.currentProgress}%`);
 
     // 不再清除 lastPageDirection，保留给章节切换使用
   }
@@ -660,7 +659,6 @@ export class ProgressTracker extends BaseManager {
     const now = Date.now();
     if (now - this.lastEventTime < this.EVENT_DEBOUNCE_MS) {
       if (priority < this.lastEventPriority) {
-        console.log(`[ProgressTracker] 事件被抑制：优先级=${priority}, 上次优先级=${this.lastEventPriority}`);
         return false;
       }
     }
@@ -728,7 +726,6 @@ export class ProgressTracker extends BaseManager {
   }
 
   private updateProgressBar(progress: number): void {
-    console.log(`[ProgressTracker] 发送进度更新事件: ${progress}%`);
     this.emit(Events.PROGRESS_UPDATED, { progress });
   }
 
@@ -767,6 +764,8 @@ export class ProgressTracker extends BaseManager {
       window.removeEventListener('keydown', this.keydownHandler);
       this.keydownHandler = null;
     }
+    this.detachIframeKeydown?.();
+    this.detachIframeKeydown = null;
 
     // 调用基类清理
     super.destroy();

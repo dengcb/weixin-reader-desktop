@@ -34,6 +34,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// 日志 target。
 pub(crate) const TARGET: &str = "remote-voice";
@@ -138,6 +139,19 @@ pub(crate) fn parse_sync(bytes: &[u8]) -> Option<(i16, u8)> {
     }
     let predictor = i16::from_be_bytes([bytes[4], bytes[5]]);
     Some((predictor, bytes[6]))
+}
+
+/// 遥控器失联后的重试退避：连续失败逐步拉长间隔，超过上限后暂停扫描，
+/// 等 HID 重新连接事件唤醒。返回 None 表示应暂停。
+pub(crate) fn retry_delay(attempt: u32) -> Option<Duration> {
+    match attempt {
+        0 | 1 => Some(Duration::from_secs(5)),
+        2 => Some(Duration::from_secs(10)),
+        3 => Some(Duration::from_secs(20)),
+        4 => Some(Duration::from_secs(40)),
+        5 | 6 => Some(Duration::from_secs(60)),
+        _ => None,
+    }
 }
 
 /// IMA/DVI ADPCM 解码器（公开 IMA 算法；二代普通版固件高半字节优先）。
@@ -353,6 +367,13 @@ pub fn ensure_started_if_known() {
     }
 }
 
+/// HID 层在遥控器连接时调用：确保链路已启动，并解除失联退避。
+#[cfg(target_os = "macos")]
+pub fn on_remote_connected() {
+    ensure_started();
+    macos::wake();
+}
+
 /// ATVV 链路是否就绪。
 pub fn is_ready() -> bool {
     VOICE.lock().unwrap().ready.load(Ordering::SeqCst)
@@ -419,7 +440,7 @@ mod macos {
         CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService, CBUUID,
     };
     use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSNumber, NSString, NSUUID};
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicU32};
     use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
     use tauri::Manager;
@@ -439,6 +460,10 @@ mod macos {
         connecting: AtomicBool,
         /// 已确认遥控器固件不提供语音服务：本次运行内不再重试。
         unsupported: AtomicBool,
+        /// 连续查找/连接失败次数（成功连接或发现后清零）。
+        retry_attempts: AtomicU32,
+        /// 退避到上限后暂停扫描，等 HID 重连唤醒。
+        suspended: AtomicBool,
         peripheral: Mutex<Option<SendRetained<CBPeripheral>>>,
         transmit: Mutex<Option<SendRetained<CBCharacteristic>>>,
         audio_subscribed: AtomicBool,
@@ -463,6 +488,8 @@ mod macos {
             cached_failed: AtomicBool::new(false),
             connecting: AtomicBool::new(false),
             unsupported: AtomicBool::new(false),
+            retry_attempts: AtomicU32::new(0),
+            suspended: AtomicBool::new(false),
             peripheral: Mutex::new(None),
             transmit: Mutex::new(None),
             audio_subscribed: AtomicBool::new(false),
@@ -534,6 +561,8 @@ mod macos {
             fn central_did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
                 log::info!(target: TARGET, "遥控器已连接（ATVV）");
                 link().connecting.store(false, Ordering::SeqCst);
+                link().retry_attempts.store(0, Ordering::SeqCst);
+                link().suspended.store(false, Ordering::SeqCst);
                 let raw: *mut CBPeripheral = unsafe { msg_send![peripheral, retain] };
                 let Some(retained) = (unsafe { Retained::from_raw(raw) }) else {
                     return;
@@ -614,6 +643,8 @@ mod macos {
                 }
                 save_cached_identifier(&identifier);
                 link().cached_failed.store(false, Ordering::SeqCst);
+                link().retry_attempts.store(0, Ordering::SeqCst);
+                link().suspended.store(false, Ordering::SeqCst);
                 log::info!(target: TARGET, "扫描到遥控器，发起 ATVV 连接");
                 let central = link()
                     .central
@@ -823,6 +854,28 @@ mod macos {
         peripheral.writeValue_forCharacteristic_type(&data, transmit, write_type);
     }
 
+    fn note_retry_failure() {
+        let attempt = link().retry_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        match retry_delay(attempt) {
+            Some(delay) => schedule_retrieve(delay),
+            None => {
+                if !link().suspended.swap(true, Ordering::SeqCst) {
+                    log::warn!(
+                        target: TARGET,
+                        "遥控器长时间未找到，暂停扫描；重新连接遥控器后恢复"
+                    );
+                }
+            }
+        }
+    }
+
+    /// HID 重新连接时调用：清除退避并立即再试一次。
+    pub fn wake() {
+        link().retry_attempts.store(0, Ordering::SeqCst);
+        link().suspended.store(false, Ordering::SeqCst);
+        run_on_main(retrieve_peripherals);
+    }
+
     fn schedule_retrieve(delay: Duration) {
         std::thread::spawn(move || {
             std::thread::sleep(delay);
@@ -874,8 +927,7 @@ mod macos {
         if let (Some(peripheral), Some(central)) = (peripheral, central) {
             unsafe { central.cancelPeripheralConnection(&peripheral) };
         }
-        log::warn!(target: TARGET, "ATVV 连接超时，稍后重试");
-        schedule_retrieve(Duration::from_secs(2));
+        note_retry_failure();
     }
 
     fn schedule_stop_scan(delay: Duration) {
@@ -897,8 +949,7 @@ mod macos {
                 unsafe { central.stopScan() };
             }
         }
-        log::warn!(target: TARGET, "扫描未发现遥控器，5 秒后重试");
-        schedule_retrieve(Duration::from_secs(5));
+        note_retry_failure();
     }
 
     fn run_on_main(work: fn()) {
@@ -1016,7 +1067,7 @@ mod macos {
             lk.audio_buffer.clear();
         }
         set_ready_and_notify(false);
-        schedule_retrieve(Duration::from_secs(3));
+        note_retry_failure();
     }
 
     /// 主线程调用：检索系统已连接的遥控器并发起 ATVV 连接。
@@ -1034,6 +1085,7 @@ mod macos {
         };
         if link().connecting.load(Ordering::SeqCst)
             || link().unsupported.load(Ordering::SeqCst)
+            || link().suspended.load(Ordering::SeqCst)
         {
             return;
         }
@@ -1194,6 +1246,15 @@ mod tests {
             }
             bytes
         }
+    }
+
+    #[test]
+    fn retry_delay_backs_off_then_suspends() {
+        assert_eq!(retry_delay(1), Some(Duration::from_secs(5)));
+        assert_eq!(retry_delay(2), Some(Duration::from_secs(10)));
+        assert_eq!(retry_delay(4), Some(Duration::from_secs(40)));
+        assert_eq!(retry_delay(6), Some(Duration::from_secs(60)));
+        assert_eq!(retry_delay(7), None);
     }
 
     #[test]

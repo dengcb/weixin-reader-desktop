@@ -21,9 +21,11 @@
 | 文件 | 窗口 | 用途 |
 |---|---|---|
 | `main-runtime.json` | `main` | 远程阅读运行时最小权限 |
+| `local-reader.json` | `main` | `atreader://` 本地阅读页（TXT/EPUB/MOBI/PDF）的受信本地命令 |
 | `settings.json` | `settings` | 本地设置、插件管理、更新器、创建子窗口 |
 | `plugin-editor.json` | `plugin-editor` | 插件编辑、导出和安装 |
-| `legal-documents.json` | `privacy`、`terms` | 静态法律文档，仅 core 默认能力 |
+| `plugin-installer.json` | `plugin-installer` | `.atrd` 安装确认窗 |
+| `legal-documents.json` | `privacy`、`terms`、`licenses` | 静态法律文档，仅 core 默认能力 |
 
 `main-runtime` 的远程 URL 范围允许 HTTP(S)，因为可安装插件的站点域名不是构建期固定值；真正的代码与数据范围由 Rust 命令再次验证：
 
@@ -164,6 +166,7 @@ Rust 原生菜单等内部写入可以调用 `settings::update_setting(app, path
 - `plugin-installer`
 - `privacy`
 - `terms`
+- `licenses`
 
 `tauri-plugin-window-state` 不再设置 denylist，因此所有窗口都按 label 分别保存和恢复位置、尺寸和窗口状态。新窗口第一次使用创建时的默认尺寸/居中位置，关闭后下次恢复。
 

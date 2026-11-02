@@ -1124,6 +1124,13 @@ pub fn resolve_saved_local_url<R: Runtime>(
     match find_record(app, &book_id) {
         Ok(_) => Some(local_reader_url(&book_id)),
         Err(error) => {
+            // 与 navigate_away_after_local_history_clear 同步清理：书已丢时
+            // 残留的 lastReaderUrl 会让后续回退链把过期地址当在线站点。
+            let _ = crate::settings::update_setting(
+                app,
+                "sites.local.lastReaderUrl",
+                serde_json::Value::Null,
+            );
             if let Some(message) = missing_notice(&error) {
                 if let Ok(mut notice) = STARTUP_NOTICE.lock() {
                     *notice = Some(message);
@@ -1160,31 +1167,36 @@ fn ensure_default_settings<R: Runtime>(app: &AppHandle<R>) {
         crate::settings::read_settings(app).unwrap_or_else(|_| crate::settings::default_settings());
     let site = settings.get("sites").and_then(|sites| sites.get("local"));
     if site.is_none() {
-        let _ = crate::settings::update_setting(app, "sites.local.zoom", json!(1.0));
-        let _ = crate::settings::update_setting(app, "sites.local.readerWide", json!(false));
-        let _ = crate::settings::update_setting(app, "sites.local.hideToolbar", json!(false));
-        let _ = crate::settings::update_setting(app, "sites.local.hideNavbar", json!(false));
+        // 整子树一次写入：逐键写会触发 11 轮「读文件→写文件→fsync→广播」，
+        // 是首次打开本地图书的可感卡顿点（2026-11 审计 R-P2-4）。
+        let _ = crate::settings::update_setting(
+            app,
+            "sites.local",
+            json!({
+                "zoom": 1.0,
+                "readerWide": false,
+                "hideToolbar": false,
+                "hideNavbar": false,
+            }),
+        );
     }
     let config = settings
         .get("pluginConfigs")
         .and_then(|configs| configs.get("local"));
     if config.is_none() {
-        let defaults = [
-            ("columnMode", json!("double")),
-            ("theme", json!("light")),
-            (
-                "fontFamily",
-                json!("system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif"),
-            ),
-            ("fontSize", json!(28)),
-            ("lineHeight", json!(1.8)),
-            ("paragraphSpacing", json!(1)),
-            ("pagePaddingX", json!(20)),
-        ];
-        for (key, value) in defaults {
-            let _ =
-                crate::settings::update_setting(app, &format!("pluginConfigs.local.{key}"), value);
-        }
+        let _ = crate::settings::update_setting(
+            app,
+            "pluginConfigs.local",
+            json!({
+                "columnMode": "double",
+                "theme": "light",
+                "fontFamily": "system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif",
+                "fontSize": 28,
+                "lineHeight": 1.8,
+                "paragraphSpacing": 1,
+                "pagePaddingX": 20,
+            }),
+        );
     }
 }
 
@@ -1203,7 +1215,8 @@ fn navigate_record<R: Runtime>(app: &AppHandle<R>, record: &LocalBookRecord) -> 
     window
         .navigate(url)
         .map_err(|error| format!("无法打开本地图书：{error}"))?;
-    let _ = window.set_zoom(1.0);
+    // 应用持久化的本地缩放（菜单 Cmd+=/-/0 在本地图书时写入 sites.local.zoom）
+    crate::commands::apply_site_zoom(app.clone(), "local".to_string());
     Ok(())
 }
 

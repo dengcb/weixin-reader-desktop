@@ -20,6 +20,15 @@ describe('本地 EPUB 内容安全', () => {
     expect(sanitized).toContain('正文');
   });
 
+  it('javascript: scheme 中剥离制表符/换行后再判定（控制字符绕过）', () => {
+    const sanitized = sanitizeEpubMarkup(
+      '<a href="java\nscript:alert(1)">跳转</a><a href="java\tscript:alert(2)">跳转2</a>',
+      'text/html',
+    );
+    expect(sanitized.toLowerCase()).not.toContain('javascript:');
+    expect(sanitized).toContain('跳转');
+  });
+
   it('为缺少 head 的 XHTML 补上严格 CSP', () => {
     const sanitized = sanitizeEpubMarkup(
       '<html xmlns="http://www.w3.org/1999/xhtml"><body>正文</body></html>',

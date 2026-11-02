@@ -110,7 +110,7 @@ export class DuokanPlugin implements ReaderPlugin {
         && document.body?.id === 'horizontal_reader'
         && !!document.querySelector('.book_page, .j-pattern, .j-toc');
       setSiteReadinessProbe(presented);
-      armReaderEntryWatchdog({
+      this.disarmWatchdog = armReaderEntryWatchdog({
         pluginId: 'duokan',
         isReady: presented,
         log: message => logToFile(`[Duokan] ${message}`),
@@ -119,6 +119,8 @@ export class DuokanPlugin implements ReaderPlugin {
   }
 
   onUnload(): void {
+    this.disarmWatchdog?.();
+    this.disarmWatchdog = null;
     this.patternObserver?.disconnect();
     this.patternObserver = null;
     this.bodyWaitObserver?.disconnect();
@@ -156,11 +158,11 @@ export class DuokanPlugin implements ReaderPlugin {
   }
 
   nextPage(): void {
-    this.dispatchFlip('ArrowRight', 39);
+    this.dispatchFlip('ArrowRight');
   }
 
   prevPage(): void {
-    this.dispatchFlip('ArrowLeft', 37);
+    this.dispatchFlip('ArrowLeft');
   }
 
   /*!
@@ -169,6 +171,8 @@ export class DuokanPlugin implements ReaderPlugin {
    * 重试前清除标记，若站点再次弹回则放弃（此时用户的「返回书城」操作
    * 也不受影响——标记已在重试前清除）。
    */
+  private disarmWatchdog: (() => void) | null = null;
+
   private guardDeepLinkBounce(): void {
     if (this.isReaderPage()) {
       try {
@@ -193,6 +197,10 @@ export class DuokanPlugin implements ReaderPlugin {
     sessionStorage.removeItem(READER_ENTRY_KEY);
     if (Date.now() - at > READER_ENTRY_TTL_MS) return;
     if (entry.href === window.location.href) return;
+    // 只把「落点=首页」判为站点弹回（实证的弹回特征）。10 秒内用户主动
+    // 离开阅读页去其它任何页面（书城、个人页……）不再被劫持回正文
+    //（2026-11 审计 L-P2-6）。
+    if (!this.isHomePage()) return;
     logToFile(`[Duokan] deep-link bounce detected, restoring ${entry.href}`);
     window.location.href = entry.href;
   }
@@ -398,14 +406,14 @@ export class DuokanPlugin implements ReaderPlugin {
     return false;
   }
 
-  private dispatchFlip(key: 'ArrowLeft' | 'ArrowRight', keyCode: number): void {
+  private dispatchFlip(key: 'ArrowLeft' | 'ArrowRight'): void {
     if (!this.isReaderPage()) return;
     this.lastFlipAt = Date.now();
-    const init: KeyboardEventInit & { keyCode: number; which: number } = {
+    // KeyboardEventInit 不含 keyCode/which（构造器静默忽略，实际 keyCode===0），
+    // 需要 keyCode 时应用 defineProperty 显式注入（2026-11 审计 L-P1-3）。
+    const init: KeyboardEventInit = {
       key,
       code: key,
-      keyCode,
-      which: keyCode,
       bubbles: true,
       cancelable: true,
     };

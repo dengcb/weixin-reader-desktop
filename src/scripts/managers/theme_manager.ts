@@ -95,8 +95,9 @@ export class ThemeManager {
       // SPA 路由变化与插件启用/安装都可能改变「当前站点是否声明
       // nativeTheme」，订阅这两类信号随时自愈，避免一次性决策遗留滤镜。
       this.reevaluateHandler = () => this.applyTheme(this.shouldEnableDarkMode());
+      // wxrd:route-changed 双订阅已移除（与 ipc:route-changed 同发，见
+      // I-P1-4）；本管理器只订阅 ipc 版本。
       window.addEventListener('ipc:route-changed', this.reevaluateHandler);
-      window.addEventListener('wxrd:route-changed', this.reevaluateHandler);
       window.addEventListener('plugins-updated', this.reevaluateHandler);
   }
 
@@ -110,7 +111,6 @@ export class ThemeManager {
 
     if (this.reevaluateHandler) {
       window.removeEventListener('ipc:route-changed', this.reevaluateHandler);
-      window.removeEventListener('wxrd:route-changed', this.reevaluateHandler);
       window.removeEventListener('plugins-updated', this.reevaluateHandler);
       this.reevaluateHandler = null;
     }

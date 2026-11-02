@@ -198,6 +198,7 @@ export class IreaderPlugin implements ReaderPlugin {
   private api: PluginAPI | null = null;
   private paginator: ColumnPaginator | null = null;
   private diagnosticsTimers: number[] = [];
+  private disarmWatchdog: (() => void) | null = null;
   private cleanupFunctions: Array<() => void> = [];
   private restoreGeneration = 0;
   private positionReady = false;
@@ -284,7 +285,7 @@ export class IreaderPlugin implements ReaderPlugin {
         stylesheetsReady(document)
         && !!document.querySelector(`${IREADER_CONTENT_SELECTOR} p`);
       setSiteReadinessProbe(presented);
-      armReaderEntryWatchdog({
+      this.disarmWatchdog = armReaderEntryWatchdog({
         pluginId: 'ireader',
         isReady: presented,
         log: message => logToFile(`[Ireader] ${message}`),
@@ -302,6 +303,8 @@ export class IreaderPlugin implements ReaderPlugin {
   onUnload(): void {
     this.restoreGeneration++;
     this.clearWheelState();
+    this.disarmWatchdog?.();
+    this.disarmWatchdog = null;
     for (const timer of this.diagnosticsTimers) window.clearTimeout(timer);
     this.diagnosticsTimers = [];
     if (this.pinTimer !== null) {
@@ -642,20 +645,21 @@ export class IreaderPlugin implements ReaderPlugin {
    * 派发带标记的合成方向键——本插件捕获器见到标记即放行，不会自循环。
    */
   prevChapter(): boolean {
-    return this.dispatchChapterArrow('ArrowLeft', 37);
+    return this.dispatchChapterArrow('ArrowLeft');
   }
 
   nextChapter(): boolean {
-    return this.dispatchChapterArrow('ArrowRight', 39);
+    return this.dispatchChapterArrow('ArrowRight');
   }
 
-  private dispatchChapterArrow(key: 'ArrowLeft' | 'ArrowRight', keyCode: number): boolean {
+  private dispatchChapterArrow(key: 'ArrowLeft' | 'ArrowRight'): boolean {
     if (!this.isReaderPage()) return false;
+    // KeyboardEventInit 不含 keyCode/which，塞进去会被构造器静默忽略
+    // （事件实际 keyCode===0）；当前站点读 e.key，需要 keyCode 时应用
+    // defineProperty 显式注入（2026-11 审计 L-P1-3）。
     const event = new KeyboardEvent('keydown', {
       key,
       code: key,
-      keyCode,
-      which: keyCode,
       bubbles: true,
       cancelable: true,
     });
@@ -1152,6 +1156,8 @@ export class IreaderPlugin implements ReaderPlugin {
     if (!this.api) return;
     if (!this.isReaderPage()) {
       this.paginator?.disable();
+      this.disarmWatchdog?.();
+      this.disarmWatchdog = null;
       for (const id of ['reader', 'wide', 'dark', 'font', 'toolbar', 'progress']) {
         this.api.style.remove(id);
       }

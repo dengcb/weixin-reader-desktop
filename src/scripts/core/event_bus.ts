@@ -87,7 +87,6 @@ class EventBusImpl {
 
     // 🔧 修复漏洞 3：检查 signal 是否已经 aborted
     if (signal?.aborted) {
-      console.debug(`[EventBus] Signal already aborted, skip subscription: ${event}`);
       return () => {}; // 返回空函数，避免后续调用出错
     }
 
@@ -109,7 +108,6 @@ class EventBusImpl {
     // 同一个回调函数只能注册一次，无论 moduleId 是什么
     for (const existing of eventListeners) {
       if (existing.callback === callback) {
-        console.debug(`[EventBus] 监听器已存在，跳过: ${event}`);
         return () => this.off(event, callback);
       }
     }
@@ -146,7 +144,6 @@ class EventBusImpl {
 
     if (history && history.length > 0) {
       const latest = history[history.length - 1];
-      console.debug(`[EventBus] 回放历史事件: ${event}`, latest.data);
 
       historyReplayed = true;
       try {
@@ -158,7 +155,6 @@ class EventBusImpl {
 
     // 🔧 修复漏洞 2：如果是 once 且已经回放了历史，不再订阅未来事件
     if (once && historyReplayed) {
-      console.debug(`[EventBus] once + onWithHistory 且历史已回放，跳过订阅: ${event}`);
       return () => {}; // 返回空的取消函数
     }
 
@@ -199,7 +195,6 @@ class EventBusImpl {
    * 触发事件
    */
   emit<T = any>(event: string, data?: T): void {
-    console.debug(`[EventBus] 触发事件: ${event}`, data);
 
     // 🔧 修复漏洞 5：先记录历史，再触发监听器
     // 这样监听器里同步调用 onWithHistory 也能拿到当前事件
@@ -207,7 +202,6 @@ class EventBusImpl {
 
     const eventListeners = this.listeners.get(event);
     if (!eventListeners || eventListeners.size === 0) {
-      console.debug(`[EventBus] 事件 ${event} 没有监听器`);
       return;
     }
 
@@ -290,7 +284,6 @@ class EventBusImpl {
     }
 
     if (cleaned > 0) {
-      console.debug(`[EventBus] 清理模块 ${moduleId} 的 ${cleaned} 个监听器`);
     }
   }
 

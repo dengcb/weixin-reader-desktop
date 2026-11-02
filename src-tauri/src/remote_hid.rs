@@ -165,6 +165,7 @@ extern "C" {
     /// 属性值类型校验：非 CFNumber 的值直接放弃，防止把 CFString 等当数字读。
     fn CFGetTypeID(cf: *const c_void) -> usize;
     fn CFNumberGetTypeID() -> usize;
+    fn CFRelease(cf: *const c_void);
     fn CFDictionaryCreate(
         allocator: CFAllocatorRef,
         keys: *const *const c_void,
@@ -552,23 +553,25 @@ unsafe fn read_device_property_i32(device: IOHIDDeviceRef, key: &str) -> Option<
     if key_ref.is_null() {
         return None;
     }
-    let value = IOHIDDeviceGetProperty(device, key_ref);
-    if value.is_null() {
-        return None;
-    }
-    if CFGetTypeID(value) != CFNumberGetTypeID() {
-        return None;
-    }
-    let mut out: i32 = 0;
-    if CFNumberGetValue(
-        value as CFNumberRef,
-        K_CF_NUMBER_INT_TYPE,
-        &mut out as *mut i32 as *mut c_void,
-    ) {
-        Some(out)
-    } else {
-        None
-    }
+    let result = {
+        let value = IOHIDDeviceGetProperty(device, key_ref);
+        if value.is_null() || CFGetTypeID(value) != CFNumberGetTypeID() {
+            None
+        } else {
+            let mut out: i32 = 0;
+            if CFNumberGetValue(
+                value as CFNumberRef,
+                K_CF_NUMBER_INT_TYPE,
+                &mut out as *mut i32 as *mut c_void,
+            ) {
+                Some(out)
+            } else {
+                None
+            }
+        }
+    };
+    CFRelease(key_ref);
+    result
 }
 
 fn mark_node(context: *mut c_void, device: IOHIDDeviceRef, opened: bool) {
@@ -689,8 +692,8 @@ unsafe extern "C" fn on_device_matched(
     if device.is_null() {
         return;
     }
-    // 预先建立 ATVV 语音链路：语音键随时可临时收音，不依赖语音翻页开关。
-    crate::remote_voice::ensure_started();
+    // 预先建立 ATVV 语音链路，并解除失联退避：语音键随时可临时收音。
+    crate::remote_voice::on_remote_connected();
     // 已授权辅助功能时预先建立媒体键抑制 tap，避免首次按键漏吞系统音量。
     crate::media_key_suppressor::ensure_started_if_trusted();
     // 节点级监听打开：SayAll 的生产路径。键盘页(1)与消费者页(12)是两个节点，
@@ -837,7 +840,9 @@ fn emit_button_ref(ctx: &HidContext, button: ButtonRef, phase: &str) {
     log::info!(target: TARGET, "按键 {name} {phase}");
     if name == "voice" && phase == "press" {
         // 语音键按下：语音翻页开关关闭时也临时启用 PTT 识别。
-        crate::voice_turner::remote_voice_key_pressed(&ctx.app);
+        // 监听形态切换可能 join 旧识别线程（最长约 1 秒），不能堵主 RunLoop。
+        let app = ctx.app.clone();
+        std::thread::spawn(move || crate::voice_turner::remote_voice_key_pressed(&app));
     }
     let Some(win) = ctx.app.get_webview_window("main") else {
         return;

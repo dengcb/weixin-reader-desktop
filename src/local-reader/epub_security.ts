@@ -18,8 +18,10 @@ const removeExecutableContent = (doc: Document): void => {
       const localName = attribute.localName.toLowerCase();
       const value = attribute.value.trim().toLowerCase();
       if (name.startsWith('on') || name === 'srcdoc') node.removeAttribute(attribute.name);
+      // URL 解析会剥离 scheme 中的制表符/换行（java\nscript: 仍是 javascript:
+      // URL），startsWith 前必须先剥控制字符（2026-11 审计 L-P1-2）。
       if (['href', 'src', 'action', 'formaction', 'poster', 'data'].includes(localName)
-        && value.startsWith('javascript:')) {
+        && value.replace(/[\t\n\r]/g, '').startsWith('javascript:')) {
         node.removeAttribute(attribute.name);
       }
       if (name === 'style' && /(?:javascript:|expression\s*\()/i.test(attribute.value)) {

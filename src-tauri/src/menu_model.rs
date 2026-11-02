@@ -128,6 +128,11 @@ pub fn set_focused_window(label: Option<&str>) {
     }
 }
 
+/// 当前聚焦窗口 label（菜单重建后据此恢复编辑菜单可见性）。
+pub fn focused_window() -> Option<String> {
+    FOCUSED_WINDOW.lock().ok().and_then(|focused| focused.clone())
+}
+
 pub fn clear_focused_window_if(label: &str) {
     if let Ok(mut focused) = FOCUSED_WINDOW.lock() {
         if focused.as_deref() == Some(label) {

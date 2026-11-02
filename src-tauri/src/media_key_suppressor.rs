@@ -93,6 +93,9 @@ static HELD: AtomicU8 = AtomicU8::new(0);
 static SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);
 static WARNED: AtomicBool = AtomicBool::new(false);
+/// 授权提示只在首次请求；之后静默检测，避免未授权时每按一次音量键
+/// 都把系统设置面板拉起来。
+static PROMPTED: AtomicBool = AtomicBool::new(false);
 static STARTED_AT: OnceLock<std::time::Instant> = OnceLock::new();
 
 fn now_ms() -> u64 {
@@ -128,24 +131,28 @@ pub fn ensure_started() {
         return;
     }
     let trusted = unsafe {
-        // 已未授权时弹出系统授权窗；用户点允许后按下一次音量键即生效。
-        let keys = [kAXTrustedCheckOptionPrompt];
-        let values = [kCFBooleanTrue];
-        let options = cf_dictionary_create(
-            std::ptr::null(),
-            keys.as_ptr(),
-            values.as_ptr(),
-            1,
-            &kCFTypeDictionaryKeyCallBacks,
-            &kCFTypeDictionaryValueCallBacks,
-        );
-        AXIsProcessTrustedWithOptions(options)
+        if PROMPTED.swap(true, Ordering::SeqCst) {
+            // 之后只做静默检测：用户授权后下一次按键即可启动 tap。
+            AXIsProcessTrusted()
+        } else {
+            let keys = [kAXTrustedCheckOptionPrompt];
+            let values = [kCFBooleanTrue];
+            let options = cf_dictionary_create(
+                std::ptr::null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            AXIsProcessTrustedWithOptions(options)
+        }
     };
     if trusted {
         spawn_tap_thread();
         return;
     }
-    // 未授权：只提示一次；下次按键会重试（用户可能在系统设置里刚授权）。
+    // 未授权：日志只提示一次；下次按键静默重试（用户可能在系统设置里刚授权）。
     if !WARNED.swap(true, Ordering::SeqCst) {
         log::warn!(
             target: "remote-hid",

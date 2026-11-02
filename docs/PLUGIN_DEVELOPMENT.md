@@ -45,13 +45,14 @@ plugins/example-reader/
 ├─ manifest.json
 ├─ index.ts
 ├─ index.test.ts                 可选，但推荐
-├─ styles/
-│  ├─ reader.css
-│  ├─ wide.css
-│  ├─ toolbar.css
-│  └─ navbar.css
-└─ release/                      构建输出，不在这里手工改代码
+└─ styles/
+   ├─ reader.css
+   ├─ wide.css
+   ├─ toolbar.css
+   └─ navbar.css
 ```
+
+`.atrd` 产物输出到 `plugins/` 根目录（见 §11），不在插件目录内维护构建产物。`plugins/shared/` 提供跨插件复用模块（CSS Columns 分页器 `column_paginator`、阅读入口看门狗 `reader_entry_watchdog`），新插件的双栏分页优先复用而不是重写。
 
 构建后的 `.atrd` 是 ZIP 容器，运行时核心结构为：
 
@@ -477,23 +478,23 @@ git diff --exit-code -- src/scripts/inject.js
 bun run build:plugin example-reader
 ```
 
-输出位置：
+输出位置（`.atrd` 直接输出到 `plugins/` 根目录，`release/`、`dist/` 均被 gitignore，产物不落子目录）：
 
 ```text
-plugins/example-reader/release/example-reader.atrd
+plugins/example-reader.atrd
 ```
 
 检查压缩包：
 
 ```bash
-unzip -t plugins/example-reader/release/example-reader.atrd
-unzip -l plugins/example-reader/release/example-reader.atrd
+unzip -t plugins/example-reader.atrd
+unzip -l plugins/example-reader.atrd
 ```
 
 应用内安装路径：
 
 ```text
-设置 → 插件管理 → 安装插件
+设置 → 内容与扩展 → 从文件安装扩展…
 ```
 
 安装后的桌面版也可以直接双击 `.atrd`。应用会先展示网站图标、插件 ID、版本、作者、接管域名、来源文件和冲突信息，用户确认后才会安装；成功后安装窗口会自动关闭。`weread` 与 `weread.qq.com` 属于内置微信读书，不能被外部插件占用；不同插件也不能声明相同或父子重叠的域名。相同外部插件 ID 只允许在明确确认后整体覆盖。

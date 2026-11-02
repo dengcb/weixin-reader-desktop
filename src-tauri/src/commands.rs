@@ -127,10 +127,7 @@ pub fn set_menu_item_enabled(
     }
 
     if !found && id != "hide_cursor" {
-        eprintln!(
-            "[Menu] set_menu_item_enabled: NOT FOUND - id={}, enabled={}",
-            id, enabled
-        );
+        log::debug!(target: "menu", "set_menu_item_enabled: NOT FOUND - id={}, enabled={}", id, enabled);
     }
     Ok(())
 }
@@ -543,7 +540,7 @@ use crate::plugin_manager;
 /// 插件、来源或最近图书变化后重建统一应用菜单。
 pub(crate) fn refresh_app_menu<R: Runtime>(app: &AppHandle<R>) {
     if let Err(e) = crate::menu::rebuild_full_menu(app) {
-        eprintln!("[Menu] Failed to rebuild menu after plugin change: {:?}", e);
+        log::warn!(target: "menu", "Failed to rebuild menu after plugin change: {:?}", e);
     }
 }
 

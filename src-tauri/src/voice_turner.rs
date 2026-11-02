@@ -139,10 +139,8 @@ pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
     state.enabled.store(enabled, Ordering::Relaxed);
     #[cfg(target_os = "macos")]
     crate::remote_voice::sync_master_switch(enabled);
-    resync_listener(
-        app,
-        enabled && previous_phrase != phrase && state.listener.lock().is_ok(),
-    );
+    // 监听不存在时 resync 会按 desired 直接启动，无需额外条件。
+    resync_listener(app, enabled && previous_phrase != phrase);
 }
 
 /// 遥控器 ATVV 链路就绪状态变化时调用（macOS）：重选监听形态。
@@ -594,6 +592,7 @@ mod macos {
             engine.prepare();
         }
         if unsafe { engine.startAndReturnError() }.is_err() {
+            unsafe { input.removeTapOnBus(0) };
             fail_with_rollback(app, "麦克风不可用，语音翻页未开启");
             return;
         }
@@ -612,6 +611,9 @@ mod macos {
             NSRunLoop::currentRunLoop().runUntilDate(&until);
         }
         unsafe { task.cancel() };
+        // inputNode 是进程共享单例：不卸载 tap 会让下一次 installTap 依赖
+        // 系统容错，并让旧识别请求继续持有回调。
+        unsafe { input.removeTapOnBus(0) };
         unsafe { engine.stop() };
         log::info!(target: "voice-turner", "listening stopped");
     }

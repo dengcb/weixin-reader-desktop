@@ -368,7 +368,6 @@ export class FanqiePlugin implements ReaderPlugin {
     const event = new KeyboardEvent('keydown', {
       key,
       code: key,
-      keyCode: key === 'ArrowRight' ? 39 : 37,
       bubbles: true,
       cancelable: true,
     }) as ChapterNavigationEvent;
