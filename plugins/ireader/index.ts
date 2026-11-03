@@ -645,18 +645,18 @@ export class IreaderPlugin implements ReaderPlugin {
    * 派发带标记的合成方向键——本插件捕获器见到标记即放行，不会自循环。
    */
   prevChapter(): boolean {
-    return this.dispatchChapterArrow('ArrowLeft');
+    return this.dispatchChapterArrow('ArrowLeft', 37);
   }
 
   nextChapter(): boolean {
-    return this.dispatchChapterArrow('ArrowRight');
+    return this.dispatchChapterArrow('ArrowRight', 39);
   }
 
-  private dispatchChapterArrow(key: 'ArrowLeft' | 'ArrowRight'): boolean {
+  private dispatchChapterArrow(key: 'ArrowLeft' | 'ArrowRight', keyCode: number): boolean {
     if (!this.isReaderPage()) return false;
-    // KeyboardEventInit 不含 keyCode/which，塞进去会被构造器静默忽略
-    // （事件实际 keyCode===0）；当前站点读 e.key，需要 keyCode 时应用
-    // defineProperty 显式注入（2026-11 审计 L-P1-3）。
+    // KeyboardEventInit 的 keyCode 引擎行为不一（WebKit 支持、Blink 忽略），
+    // 实例上 defineProperty 显式注入，保证读 e.keyCode 的站点也能收到
+    //（2026-11 审计 L-P1-3 处置修正：此前删除曾致多看音量键翻页失效）。
     const event = new KeyboardEvent('keydown', {
       key,
       code: key,
@@ -664,6 +664,8 @@ export class IreaderPlugin implements ReaderPlugin {
       cancelable: true,
     });
     Object.defineProperty(event, CHAPTER_NAV_FLAG, { value: true });
+    Object.defineProperty(event, 'keyCode', { value: keyCode });
+    Object.defineProperty(event, 'which', { value: keyCode });
     document.dispatchEvent(event);
     return true;
   }

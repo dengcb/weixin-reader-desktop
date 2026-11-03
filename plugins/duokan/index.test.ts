@@ -172,7 +172,7 @@ describe('DuokanPlugin', () => {
     history.replaceState({}, '', '/reader/www/app.html?id=ed873c9e');
     const seen: Array<Record<string, unknown>> = [];
     const listener = (event: KeyboardEvent) => {
-      seen.push({ type: event.type, key: event.key, defaultPrevented: event.defaultPrevented });
+      seen.push({ type: event.type, key: event.key, keyCode: event.keyCode, defaultPrevented: event.defaultPrevented });
     };
     document.addEventListener('keydown', listener);
     document.addEventListener('keyup', listener);
@@ -182,13 +182,14 @@ describe('DuokanPlugin', () => {
     plugin.prevPage();
     document.removeEventListener('keydown', listener);
     document.removeEventListener('keyup', listener);
-    // 注意：KeyboardEventInit 不含 keyCode/which（真实浏览器忽略，事件
-    // keyCode===0）——桥接契约只承诺 key/type，站点读 e.key（L-P1-3）。
+    // 桥接契约：合成事件必须携带真实 keyCode/which（defineProperty 注入），
+    // 站点翻页处理读 e.keyCode（L-P1-3 处置修正：WebRunner 引擎支持 init
+    // keyCode，删除曾致多看音量键翻页失效）。
     expect(seen).toEqual([
-      { type: 'keydown', key: 'ArrowRight', defaultPrevented: false },
-      { type: 'keyup', key: 'ArrowRight', defaultPrevented: false },
-      { type: 'keydown', key: 'ArrowLeft', defaultPrevented: false },
-      { type: 'keyup', key: 'ArrowLeft', defaultPrevented: false },
+      { type: 'keydown', key: 'ArrowRight', keyCode: 39, defaultPrevented: false },
+      { type: 'keyup', key: 'ArrowRight', keyCode: 39, defaultPrevented: false },
+      { type: 'keydown', key: 'ArrowLeft', keyCode: 37, defaultPrevented: false },
+      { type: 'keyup', key: 'ArrowLeft', keyCode: 37, defaultPrevented: false },
     ]);
 
     history.replaceState({}, '', '/pc/');

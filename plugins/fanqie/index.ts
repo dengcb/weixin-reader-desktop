@@ -365,12 +365,17 @@ export class FanqiePlugin implements ReaderPlugin {
   }
 
   private triggerChapterNavigation(key: 'ArrowLeft' | 'ArrowRight'): void {
+    // KeyboardEventInit 的 keyCode 引擎行为不一（WebKit 支持、Blink 忽略），
+    // 实例上 defineProperty 显式注入，保证读 e.keyCode 的站点也能收到
+    //（2026-11 审计 L-P1-3 处置修正：此前删除曾致多看音量键翻页失效）。
     const event = new KeyboardEvent('keydown', {
       key,
       code: key,
       bubbles: true,
       cancelable: true,
     }) as ChapterNavigationEvent;
+    Object.defineProperty(event, 'keyCode', { value: key === 'ArrowRight' ? 39 : 37 });
+    Object.defineProperty(event, 'which', { value: key === 'ArrowRight' ? 39 : 37 });
     Object.defineProperty(event, '__atreaderChapterNavigation', { value: true });
     document.dispatchEvent(event);
   }

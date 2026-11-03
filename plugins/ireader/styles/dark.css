@@ -10,9 +10,16 @@ body.atreader-ireader-dark .reader-width {
 }
 
 body.atreader-ireader-dark .reader-content p,
-body.atreader-ireader-dark .reader-content,
-body.atreader-ireader-dark .reader-header-title span {
+body.atreader-ireader-dark .reader-content {
   color: rgba(255, 255, 255, 0.87) !important;
+}
+
+/* 顶部导航（返回书城 + 书名）是站点 chrome 而非正文：调暗一档，不与
+ * 正文抢视觉焦点（2026-11 用户反馈：导航文字太亮太扎眼） */
+body.atreader-ireader-dark .reader-header-title,
+body.atreader-ireader-dark .reader-header-title span,
+body.atreader-ireader-dark .reader-header a {
+  color: rgba(255, 255, 255, 0.42) !important;
 }
 
 body.atreader-ireader-dark .reader-header {

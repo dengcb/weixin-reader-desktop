@@ -158,11 +158,11 @@ export class DuokanPlugin implements ReaderPlugin {
   }
 
   nextPage(): void {
-    this.dispatchFlip('ArrowRight');
+    this.dispatchFlip('ArrowRight', 39);
   }
 
   prevPage(): void {
-    this.dispatchFlip('ArrowLeft');
+    this.dispatchFlip('ArrowLeft', 37);
   }
 
   /*!
@@ -406,19 +406,29 @@ export class DuokanPlugin implements ReaderPlugin {
     return false;
   }
 
-  private dispatchFlip(key: 'ArrowLeft' | 'ArrowRight'): void {
+  private dispatchFlip(key: 'ArrowLeft' | 'ArrowRight', keyCode: number): void {
     if (!this.isReaderPage()) return;
     this.lastFlipAt = Date.now();
-    // KeyboardEventInit 不含 keyCode/which（构造器静默忽略，实际 keyCode===0），
-    // 需要 keyCode 时应用 defineProperty 显式注入（2026-11 审计 L-P1-3）。
-    const init: KeyboardEventInit = {
-      key,
-      code: key,
-      bubbles: true,
-      cancelable: true,
+    /*
+     * 合成方向键必须携带真实 keyCode：多看站点的翻页处理读 e.keyCode，
+     * 而 KeyboardEventInit 的 keyCode/which 是否生效因引擎而异（WebKit
+     * 支持、Blink 忽略）——2026-11-03 真机实证：删除后音量键翻页失效。
+     * 用 defineProperty 在实例上显式注入，任何引擎都确定生效
+     *（2026-11 审计 L-P1-3 的处置修正）。
+     */
+    const make = (type: 'keydown' | 'keyup'): KeyboardEvent => {
+      const event = new KeyboardEvent(type, {
+        key,
+        code: key,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'keyCode', { value: keyCode });
+      Object.defineProperty(event, 'which', { value: keyCode });
+      return event;
     };
-    document.dispatchEvent(new KeyboardEvent('keydown', init));
-    document.dispatchEvent(new KeyboardEvent('keyup', init));
+    document.dispatchEvent(make('keydown'));
+    document.dispatchEvent(make('keyup'));
   }
 
   /*!
