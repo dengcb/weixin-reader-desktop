@@ -144,6 +144,7 @@ pub fn sync_from_settings<R: Runtime>(app: &AppHandle<R>, settings: &Value) {
 }
 
 /// 遥控器 ATVV 链路就绪状态变化时调用（macOS）：重选监听形态。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn remote_availability_changed<R: Runtime>(app: &AppHandle<R>) {
     resync_listener(app, false);
 }
@@ -151,6 +152,7 @@ pub fn remote_availability_changed<R: Runtime>(app: &AppHandle<R>) {
 /// 遥控器语音键按下（HID）：标记已使用，开关关闭时也启动 PTT 监听。
 /// 每次按下都做一次幂等重选（监听存活时立即返回），权限被拒后
 /// 用户改授权限再按即可恢复。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn remote_voice_key_pressed<R: Runtime>(app: &AppHandle<R>) {
     let Some(state) = app.try_state::<VoiceTurnerState>() else {
         return;
@@ -197,12 +199,17 @@ fn resync_listener<R: Runtime>(app: &AppHandle<R>, force_restart: bool) {
     let active = state.listener.lock().unwrap().take();
     if let Some(active) = active {
         active.stop.store(true, Ordering::Relaxed);
-        let _ = active.thread.join();
+        // 监听线程启动失败会回滚设置并再次进入本函数：不能 join 自己。
+        if active.thread.thread().id() != std::thread::current().id() {
+            let _ = active.thread.join();
+        }
     }
     *state.mode.lock().unwrap() = desired;
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     if let Some(mode) = desired {
+        #[cfg(target_os = "windows")]
+        let _ = mode;
         #[cfg(target_os = "macos")]
         let entry: fn(AppHandle<R>, Arc<AtomicBool>, String) = if mode == ListenMode::RemotePush {
             macos::listen_remote
@@ -342,8 +349,13 @@ mod macos {
 
     /// 检查 main bundle 是否携带麦克风/语音识别权限说明。
     /// 这些键由 tauri build 从 Info.plist 注入 .app；dev 裸二进制没有。
+    /// 注意：tauri dev 可能把 Info.plist 内嵌进裸二进制，NSBundle 能读到键，
+    /// 但 TCC 只认 .app bundle，直接调用授权 API 会 abort——必须先确认路径。
     fn has_usage_descriptions() -> bool {
         let bundle = NSBundle::mainBundle();
+        if !bundle.bundlePath().to_string().ends_with(".app") {
+            return false;
+        }
         let has = |key: &str| {
             bundle
                 .objectForInfoDictionaryKey(&NSString::from_str(key))

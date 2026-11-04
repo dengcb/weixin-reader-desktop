@@ -53,7 +53,9 @@ objc2-core-bluetooth = { version = "0.3", features = ["CBCentralManager", "CBPer
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
-windows = { version = "0.62", features = ["Media_SpeechRecognition", "Foundation", "Foundation_Collections", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+windows = { version = "0.62", features = ["Media_SpeechRecognition", "Devices_Bluetooth", "Devices_Bluetooth_GenericAttributeProfile", "Devices_Enumeration", "Foundation", "Foundation_Collections", "Storage_Streams", "Security_Cryptography", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_WinRT", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+wasapi = "0.24"
+windows-future = "0.3"
 windows-collections = "0.3"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]

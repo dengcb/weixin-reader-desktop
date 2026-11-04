@@ -27,17 +27,25 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// 主窗口消费的事件名：`listen("remote-hid-button")`。
 pub const BUTTON_EVENT: &str = "remote-hid-button";
 /// 日志 target，日志检索键。
 const TARGET: &str = "remote-hid";
+/// 语音键短按阈值：低于该时长视为单击（切换语音翻页开关），
+/// 达到该时长才启动 PTT。前 300ms 同时是按键爆破音，不送识别器。
+const VOICE_TAP_THRESHOLD_MS: u64 = 300;
+
+/// 语音键按下的代际：松开/新按下都会使旧计时器失效。
+static VOICE_PRESS_GENERATION: AtomicU64 = AtomicU64::new(0);
+static VOICE_PRESS_PENDING: AtomicBool = AtomicBool::new(false);
+static VOICE_PTT_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// 小米蓝牙语音遥控器（小米蓝牙遥控器 2 系列）USB Vendor ID。
 const XIAOMI_VENDOR_ID: i32 = 0x2717;
@@ -719,6 +727,7 @@ unsafe extern "C" fn on_device_removed(
             state.voice_active = false;
         }
         crate::media_key_suppressor::set_volume_keys(false, false);
+        cancel_pending_voice_press();
         if let Ok(mut nodes) = ctx.nodes.lock() {
             if let Some(node) = nodes.remove(&(device as usize)) {
                 if node.opened {
@@ -821,6 +830,67 @@ unsafe extern "C" fn on_input_report(
     }
 }
 
+/// 语音键单击/长按分流：短按翻转「语音翻页」开关，长按启动 PTT。
+fn handle_voice_button(app: &AppHandle<Wry>, phase: &str) {
+    if phase == "press" {
+        let generation = VOICE_PRESS_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        VOICE_PRESS_PENDING.store(true, Ordering::SeqCst);
+        VOICE_PTT_STARTED.store(false, Ordering::SeqCst);
+        let app = app.clone();
+        std::thread::spawn(move || {
+            // 前 300ms 是按键爆破音；短按在这里被松开事件取消，不会启动识别。
+            std::thread::sleep(Duration::from_millis(VOICE_TAP_THRESHOLD_MS));
+            if VOICE_PRESS_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            VOICE_PTT_STARTED.store(true, Ordering::SeqCst);
+            crate::voice_turner::remote_voice_key_pressed(&app);
+        });
+        return;
+    }
+    if phase != "release" || !VOICE_PRESS_PENDING.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    // 松开使仍在等待的计时器失效。
+    VOICE_PRESS_GENERATION.fetch_add(1, Ordering::SeqCst);
+    if VOICE_PTT_STARTED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    // 短按：后台翻转设置，避免在主 RunLoop 上做设置读写。
+    let app = app.clone();
+    std::thread::spawn(move || toggle_voice_page_turn(&app));
+}
+
+fn cancel_pending_voice_press() {
+    VOICE_PRESS_GENERATION.fetch_add(1, Ordering::SeqCst);
+    VOICE_PRESS_PENDING.store(false, Ordering::SeqCst);
+    VOICE_PTT_STARTED.store(false, Ordering::SeqCst);
+}
+
+fn toggle_voice_page_turn(app: &AppHandle<Wry>) {
+    let Ok(settings) = crate::settings::read_settings(app) else {
+        return;
+    };
+    let current = settings
+        .pointer("/global/voicePageTurn")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let next = !current;
+    if crate::settings::update_setting(app, "global.voicePageTurn", Value::Bool(next)).is_err() {
+        return;
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.emit(
+            "show-toast",
+            if next {
+                "🗣️ 语音打开"
+            } else {
+                "🙊 语音关闭"
+            },
+        );
+    }
+}
+
 fn context_ref<'a>(context: *mut c_void) -> Option<&'a HidContext> {
     if context.is_null() {
         None
@@ -838,11 +908,8 @@ fn emit_button_ref(ctx: &HidContext, button: ButtonRef, phase: &str) {
         },
     };
     log::info!(target: TARGET, "按键 {name} {phase}");
-    if name == "voice" && phase == "press" {
-        // 语音键按下：语音翻页开关关闭时也临时启用 PTT 识别。
-        // 监听形态切换可能 join 旧识别线程（最长约 1 秒），不能堵主 RunLoop。
-        let app = ctx.app.clone();
-        std::thread::spawn(move || crate::voice_turner::remote_voice_key_pressed(&app));
+    if name == "voice" {
+        handle_voice_button(&ctx.app, phase);
     }
     let Some(win) = ctx.app.get_webview_window("main") else {
         return;

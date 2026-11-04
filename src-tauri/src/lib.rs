@@ -4,6 +4,7 @@ use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
+mod atvv_core;
 mod commands;
 mod font_cache;
 mod local_books;
@@ -20,6 +21,8 @@ mod remote_hid;
 mod remote_hid_windows;
 #[cfg(target_os = "macos")]
 mod remote_voice;
+#[cfg(target_os = "windows")]
+mod remote_voice_windows;
 mod settings;
 mod sites;
 mod tracker_blocker;

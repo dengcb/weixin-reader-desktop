@@ -196,8 +196,8 @@ CPU 占用低
 ```
 
 - macOS 首次使用需在「系统设置 → 隐私与安全性 → 输入监控」中允许艾特阅读；若想让遥控器音量键只翻页、不调整系统音量，还需允许「辅助功能」；键位图示见「设置 → 蓝牙遥控」
-- 方向、确认、主页、菜单按键在各平台均可用；TV 键 Windows 同样支持；音量、返回、电源与遥控器语音翻页目前仅 macOS（Windows 键码映射限制）
-- 按住语音键对遥控器说话即可语音翻页（macOS，仅支持二代（小米蓝牙遥控器 2 / 2 Pro）；不依赖「语音翻页」开关；首次使用会请求语音识别权限，仅按键时收音，本机识别不上传）
+- 方向、确认、主页、菜单按键在各平台均可用；TV 键 Windows 同样支持；音量、返回、电源目前仅 macOS（Windows 键码在 kbdhid 翻译层被丢弃）；遥控器语音翻页当前仅 macOS 实现；Windows 可经 WinRT GATT 接入（代码骨架已备，等待有真机的开发者 PR 完成接线与验收）
+- 按住语音键对遥控器说话即可语音翻页（macOS，仅支持二代（小米蓝牙遥控器 2 / 2 Pro）；不依赖「语音翻页」开关；首次使用会请求语音识别权限，仅按键时收音，本机识别不上传）；短按语音键可快速切换「语音翻页」开关
 - 一代小米蓝牙语音遥控器在 Mac 配对下不暴露麦克风通道，语音翻页不可用
 
 ### 🔄 智能更新
@@ -464,7 +464,7 @@ CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + buil
 </tr>
 <tr>
 <td><code>remote_voice.rs</code> / <code>voice_turner.rs</code></td>
-<td>🎤 ATVV 蓝牙语音流与语音翻页（Speech.framework，仅 macOS）</td>
+<td>🎤 ATVV 蓝牙语音流与语音翻页（当前 macOS；Windows 走 WinRT GATT，代码骨架已备，等待真机 PR）</td>
 </tr>
 <tr>
 <td><code>media_key_suppressor.rs</code></td>

@@ -10,6 +10,7 @@
     "core:webview:allow-create-webview-window",
     "core:window:default",
     "core:window:allow-create",
+    "core:window:allow-close",
     "dialog:default",
     "opener:default",
     "allow-get-app-name",

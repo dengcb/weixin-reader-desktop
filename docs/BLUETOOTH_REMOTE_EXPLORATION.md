@@ -337,7 +337,7 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `back` | 0xF1 | **切换阅读区域宽/窄**（simulate_menu_click('reader_wide')，继承菜单门禁） | 菜单门禁 |
 | `tv` | 0x35 | **短按切下一个书城；长按 0.5 秒呼出 Cmd+Tab 式书城浮层**（0.5 秒/项轮播，松开提交） | 任意页面 |
 | `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
-| `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦） | 仅 macOS |
+| `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦）；**短按切换「语音翻页」开关** | 当前仅 macOS（Windows 可经 WinRT GATT，尚未接入） |
 
 - 设置页新增「蓝牙遥控」标签页（`src/windows/settings.html`）：SVG 遥控器示意图 + 8 项编号图例（几何审计零越界），含输入监控权限与平台差异说明。
 - 已知副作用（2026-10-31 已解决）：监听模式下按音量键，系统音量仍会真实变化——音量以 NX_SYSDEFINED 进入会话级事件流。现在 `media_key_suppressor.rs` 在遥控器音量键按住期间用会话级 CGEventTap 吞掉**全部 NX_SYSDEFINED**（系统事件里的键码与到达顺序不可靠，整类吞掉最稳），松开即恢复；30 秒兜底有效期防止 release 丢失。物理键盘音量键只在遥控器音量键按住的那一瞬间被一并吞掉。
@@ -367,6 +367,53 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 - 边沿状态机去自动重复；`WM_INPUT_DEVICE_CHANGE` 清归因缓存，设备移除时复位边沿状态防粘键。
 - 事件契约与 macOS 相同（`remote-hid-button` `{button, phase, usage}`），前端零改动。
 - 验证状态：VK 映射与边沿纯逻辑已单测（macOS 上运行）；`x86_64-pc-windows-msvc` cargo xwin check 通过；aarch64 本地交叉检查被既有工具链问题阻挡（ring 0.17 构建脚本与 cargo-xwin 的 `/imsvc` 参数注入不兼容，与本模块无关），由 CI 原生 Windows ARM64 构建验证；**运行时行为待 Windows 真机验收**。
+
+### Windows 语音可行性更正（2026-11-02）
+
+- 早期「Windows 语音不可得」只适用于音量 ± / 返回等 **HID 键码**（kbdhid 翻译层丢弃）；语音走 ATVV GATT，不经过 HID 栈。
+- 平行目录参考实现 `remote-mic-app-windows/crates/sayall-windows/src/ble.rs`（GPL-3.0，只读学机制）已用 WinRT `BluetoothLEDevice` + `GattCharacteristic` 直连同一组 ATVV GUID（`AB5E0001…`），证明 Windows 语音可行。
+- 真机坑位：MIC_EXTEND（0x0E）每 **2.5s** 续期（固件免费音频窗口约 5–6s）；静默 **8s** 强制收尾，防「按住说话」粘死；WinRT 异步 GATT 调用必须设界（半死链路可能永不返回）。
+- 本项目**尚未接入** Windows 语音；文档不再声称不可行。
+
+### Windows 语音实现骨架（接线层未接，等待有真机的开发者 PR）
+
+**代码位置与状态**
+
+- `src-tauri/src/atvv_core.rs`：跨平台 ATVV 协议/ADPCM/流状态（从 macOS 抽出，单测共用）。
+- `src-tauri/src/remote_voice_windows.rs`：WinRT GATT 客户端 + WASAPI 渲染到 VB-CABLE 的实验性骨架，文件级 `allow(dead_code)`。
+- 当前**不启动任何会话**、不改变用户行为：唯一入口 `start_ptt()` 固定返回 `WiringPending`；Windows 语音仍按现状走默认麦克风。
+- 编译状态：`cargo xwin check --target x86_64-pc-windows-msvc` 通过；aarch64 仅受既有 ring/cargo-xwin `/imsvc` 工具链问题阻挡，需 CI/真机验证。
+
+**已实现（机制参考 remote-mic，独立实现）**
+
+- 已配对 BLE 设备按名称找遥控器 → `BluetoothLEDevice` 连接 → ATVV 服务/特征发现 → 订阅 audio/control → 写能力查询。
+- 控制状态机：0x0B 能力即就绪、0x08 开麦、0x04 流开始、0x0A 同步、0x00 结束；流中每 2.5s 写 MIC_EXTEND(0x0E)，静默 8s 强制收尾。
+- ADPCM 解码经 `atvv_core`，PCM 由 WASAPI 以 16kHz 单声道 s16 渲染到 `CABLE Input`（共享模式 + autoconvert，冷端点先读混音格式预热）。
+- GATT 查询/写入使用 `wait_bounded`（超时 Cancel），避免半死链路永不返回。
+
+**故意未接的最后一层（PR 入口）**
+
+1. `switch_default_recording_device()`：用 `IPolicyConfig::SetDefaultEndpoint` 在 PTT 期间把默认录音设备切到 `CABLE Output`，结束时恢复 console/communications 两套默认；失败/退出兜底。
+2. Windows 语音键接线：按住 ≥300ms 调用 `start_ptt`，松开停止并恢复默认设备；短按仍切「语音翻页」开关（与 macOS 对齐）。
+3. VB-CABLE 检测与引导：不能随包分发；未安装时提示并提供官方下载指引；设置页可加「恢复默认麦克风」按钮。
+4. 关闭 `remote_voice_windows.rs` 的 `allow(dead_code)` 并在 `lib.rs`/`voice_turner` 中正式持有状态。
+
+**PR 验收清单（Windows 真机）**
+
+- [ ] Win10/Win11 + 二代 2 / 2 Pro：日志出现 ATVV 能力 0x0B、流开始、MIC_EXTEND、流结束。
+- [ ] PTT 期间 `CABLE Output` 成为默认录音设备，现有 WinRT 识别器能识别「翻页」并翻页；松开后默认设备恢复。
+- [ ] 连续长按 >8s：静默收尾不粘死；2.5s 续期不断流。
+- [ ] 未安装 VB-CABLE / 改名端点：给出明确错误，不改默认设备、不影响其他应用。
+- [ ] 应用退出/异常路径恢复默认设备；提供手动恢复入口。
+- [ ] 其他会议/录音软件在 PTT 结束后恢复正常。
+- [ ] `cargo xwin check` 双架构 + Windows 真机运行通过。
+
+**已知坑位**
+
+- VB-CABLE 端点名存在 `CABLE Input` / `CABLE In 16 Ch` 等变体，需按名称模糊匹配并处理同设备端点兜底。
+- 冷端点首次 Initialize 可能返回 0x8889000A；先 `get_mixformat()` 预热。
+- WinRT 异步调用必须有界；GATT 通知在 MTA 线程，需 `RoInitialize(RO_INIT_MULTITHREADED)`。
+- 参考实现是 GPL-3.0，只学机制；本项目代码为独立实现。
 
 ## 10. 三期：ATVV 语音翻页（2026-10-31 已实现，仅二代 2 / 2 Pro）
 
