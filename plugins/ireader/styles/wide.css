@@ -1,8 +1,9 @@
 /*
  * @capability wideMode
- * 宽屏模式：书页占窗口 90%（默认 80%），仅覆盖比例变量。
+ * 宽屏模式：仅覆盖书页占窗口的比例变量，正文视口与顶栏的内缩量不变。
  */
 
 body.atreader-ireader-paged {
-  --atreader-page-ratio: 96%;
+  /* 番茄宽屏为 80%→90%（+10pp）；掌阅基线 90%，宽屏给到 97% 保持可感知 */
+  --atreader-page-ratio: 97%;
 }

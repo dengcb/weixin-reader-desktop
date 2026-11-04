@@ -107,10 +107,13 @@ export const armReaderEntryWatchdog = (options: ReaderWatchdogOptions): (() => v
   try {
     const last = Number(sessionStorage.getItem(guardKey));
     if (Number.isFinite(last) && start - last < GUARD_TTL_MS) {
-      // 60 秒内已自动重载过：不再自动重载（节流窗口内重载无效且加剧），
-      // 挂出用户可见的重试提示；守卫键按 TTL 自然过期恢复武装资格。
-      showRetryPrompt(pluginId, isReady, log);
-      return () => undefined;
+      // 60 秒内已自动重载过：不再自动重载（节流窗口内重载无效且加剧）。
+      // 重载后的新页同样要走初始化和站点数据请求，立刻挂提示会在页面尚
+      // 正常加载时闪一次「失速」；给 3 秒宽限，仍未就绪才提示。
+      const promptTimer = window.setTimeout(() => {
+        if (!isReady()) showRetryPrompt(pluginId, isReady, log);
+      }, 3000);
+      return () => window.clearTimeout(promptTimer);
     }
   } catch {
     return () => undefined; // sessionStorage 不可用：放弃看门狗（无从防循环）

@@ -32,7 +32,7 @@ import type {
   ReaderPlugin,
 } from '../../src/scripts/core/plugin_types';
 // api.log 是 console-only 实现（core/logger.ts），落文件诊断必须走 logToFile
-import { logToFile, ensureFontCache } from '../../src/scripts/core/tauri';
+import { invoke, logToFile, ensureFontCache } from '../../src/scripts/core/tauri';
 import { setSiteReadinessProbe } from '../../src/scripts/core/site_switch_loading';
 import {
   armReaderEntryWatchdog,
@@ -198,6 +198,20 @@ export class IreaderPlugin implements ReaderPlugin {
   private api: PluginAPI | null = null;
   private paginator: ColumnPaginator | null = null;
   private diagnosticsTimers: number[] = [];
+  /**
+   * 首次分页绑定推迟到 window.load 之后：掌阅阅读页会 SSR 出正文，Nuxt
+   * hydration 会重建 .reader-content。若分页器在 hydration 之前把正文包进
+   * 自建视口，SSR 正文会被整体丢弃并触发二次章节请求，首屏一直空到客户端
+   * 重新渲染（2026-11 探针：t=1.5s 已有 15 段，t=5.5s content-disconnected
+   * + 重新请求；推迟绑定后同一入口 16s 内正文稳定，看门狗不再重载）。
+   */
+  private bindArmed = false;
+  private bindScheduled = false;
+  private initialBindTimer: number | null = null;
+  /** applySettings 最近一次计算出的双栏期望值，供延迟绑定读取 */
+  private desiredDoubleColumn = false;
+  /** 偏好恢复完成前不触发字体加载（避免默认字重白载 5.85MB） */
+  private preferencesReady = false;
   private disarmWatchdog: (() => void) | null = null;
   private cleanupFunctions: Array<() => void> = [];
   private restoreGeneration = 0;
@@ -207,6 +221,7 @@ export class IreaderPlugin implements ReaderPlugin {
   private wheelCooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private wheelCooldown = false;
   private doubleColumnEnabled = true;
+  private wideEnabled = false;
   private darkEnabled = false;
   private fontStep = FONT_DEFAULT_INDEX;
   private weightIndex = FONT_WEIGHT_DEFAULT_INDEX;
@@ -307,6 +322,10 @@ export class IreaderPlugin implements ReaderPlugin {
     this.disarmWatchdog = null;
     for (const timer of this.diagnosticsTimers) window.clearTimeout(timer);
     this.diagnosticsTimers = [];
+    if (this.initialBindTimer !== null) {
+      window.clearTimeout(this.initialBindTimer);
+      this.initialBindTimer = null;
+    }
     if (this.pinTimer !== null) {
       window.clearInterval(this.pinTimer);
       this.pinTimer = null;
@@ -776,6 +795,12 @@ export class IreaderPlugin implements ReaderPlugin {
   private async ensureFontSource(): Promise<void> {
     const weight = FONT_WEIGHTS[this.weightIndex];
     if (!weight?.url) return;
+    // 偏好未恢复前 weightIndex 还是默认值：此时加载字体会白搬 5.85MB。
+    // 无 Tauri 环境（测试/旧壳）走远程 @font-face，无下载成本，保持同步回退。
+    if (!this.preferencesReady) {
+      if (!window.__TAURI__) this.applyFontSource(weight.url, 'remote');
+      return;
+    }
     // 本会话已注册：FontFace 持久存在于 document.fonts，零成本短路
     if (this.fontSourceState === 'face' && this.registeredFontUrls.has(weight.url)) return;
     // 无 Tauri 环境（happy-dom 测试/旧版壳）：远程 URL 回退，不发真实网络请求
@@ -842,6 +867,43 @@ export class IreaderPlugin implements ReaderPlugin {
     const api = this.api;
     if (!api) return;
     this.applySettings(api.settings.getAll());
+  }
+
+  /**
+   * 首次分页启用时机：掌阅阅读页 SSR 出正文并在 Nuxt hydration 时重建
+   * .reader-content；在 hydration 前包裹会丢失正文（见 bindArmed 注释）。
+   * 因此首轮等到 window.load + 400ms 再启用；load 迟迟不来（长尾资源）时
+   * 9 秒兜底启用，避免永久停留在单栏。站点内 SPA 路由/后续切换不再等待。
+   */
+  private enablePaginatorAfterLoad(): void {
+    const paginator = this.paginator;
+    if (!paginator) return;
+    if (this.bindArmed) {
+      if (this.desiredDoubleColumn) paginator.enable();
+      else paginator.disable();
+      return;
+    }
+    if (this.bindScheduled) return;
+    this.bindScheduled = true;
+    const arm = (): void => {
+      this.bindScheduled = false;
+      if (this.initialBindTimer !== null) {
+        window.clearTimeout(this.initialBindTimer);
+        this.initialBindTimer = null;
+      }
+      this.bindArmed = true;
+      if (this.desiredDoubleColumn) this.paginator?.enable();
+    };
+    const schedule = (): void => {
+      if (this.initialBindTimer !== null) window.clearTimeout(this.initialBindTimer);
+      this.initialBindTimer = window.setTimeout(arm, 400);
+    };
+    if (document.readyState === 'complete') {
+      schedule();
+      return;
+    }
+    window.addEventListener('load', schedule, { once: true });
+    this.initialBindTimer = window.setTimeout(arm, 9_000);
   }
 
   /*!
@@ -1009,6 +1071,13 @@ export class IreaderPlugin implements ReaderPlugin {
     this.removeFontPanel();
   };
 
+  private readonly toggleWideMode = (): void => {
+    // 宽屏开关复用全局「阅读 → 阅读变宽」菜单动作：Rust 端切换
+    // global.readerWide，settings 订阅链回灌 applySettings 应用宽屏样式。
+    if (!this.api || this.manifest.capabilities.wideMode !== true) return;
+    invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {});
+  };
+
   private readonly toggleLayoutMode = (): void => {
     const api = this.api;
     if (!api || this.manifest.capabilities.doubleColumn !== true) return;
@@ -1026,6 +1095,7 @@ export class IreaderPlugin implements ReaderPlugin {
       api.storage.get<number>(FONT_PREFS_VERSION_KEY),
     ]);
     if (this.api !== api) return;
+    this.preferencesReady = true;
     const legacyLayout = api.settings.get<boolean>('doubleColumn', true);
     this.doubleColumnEnabled = typeof layout === 'boolean' ? layout : legacyLayout !== false;
     this.darkEnabled = dark === true;
@@ -1099,6 +1169,7 @@ export class IreaderPlugin implements ReaderPlugin {
     toolbar.setAttribute('aria-label', '掌阅阅读工具栏');
     const buttons: Array<{ id: string; label: string; onClick: () => void }> = [
       { id: 'layout', label: '双栏', onClick: this.toggleLayoutMode },
+      { id: 'wide', label: '宽屏', onClick: this.toggleWideMode },
       { id: 'catalog', label: '目录', onClick: this.toggleCatalogDrawer },
       { id: 'dark', label: '夜间', onClick: this.toggleDark },
       { id: 'font', label: '字体', onClick: this.toggleFontPanel },
@@ -1127,6 +1198,15 @@ export class IreaderPlugin implements ReaderPlugin {
         layoutButton.innerHTML = (this.doubleColumnEnabled ? SINGLE_COLUMN_ICON : DOUBLE_COLUMN_ICON)
           + `<span>${label}</span>`;
         layoutButton.setAttribute('aria-label', `切换为${label}阅读`);
+      }
+    }
+    const wideButton = this.toolbarButtons.wide;
+    if (wideButton) {
+      const label = this.wideEnabled ? '标准' : '宽屏';
+      if (wideButton.dataset.targetMode !== label) {
+        wideButton.dataset.targetMode = label;
+        wideButton.innerHTML = `<span>${label}</span>`;
+        wideButton.setAttribute('aria-label', this.wideEnabled ? '恢复标准书宽' : '切换为宽屏阅读');
       }
     }
     const darkButton = this.toolbarButtons.dark;
@@ -1179,6 +1259,7 @@ export class IreaderPlugin implements ReaderPlugin {
       && readerCss.trim().length > 0;
     /*! @capability wideMode 菜单状态决定是否注入 wide.css。 */
     const wide = settings.readerWide === true;
+    this.wideEnabled = wide;
     /*! @capability hideToolbar 菜单状态决定是否隐藏插件工具栏。 */
     const hideToolbar = settings.hideToolbar === true
       && this.manifest.capabilities.hideToolbar === true;
@@ -1195,7 +1276,8 @@ export class IreaderPlugin implements ReaderPlugin {
     this.applyStyleFile('toolbar', styles.custom?.toolbar ?? '', true);
     this.applyStyleFile('progress', styles.custom?.progress ?? '', doubleColumn && showProgress);
 
-    if (doubleColumn) this.paginator?.enable();
+    this.desiredDoubleColumn = doubleColumn;
+    if (doubleColumn) this.enablePaginatorAfterLoad();
     else this.paginator?.disable();
 
     if (this.darkEnabled) document.body?.classList.add(IREADER_DARK_CLASS);

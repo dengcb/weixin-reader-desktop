@@ -5,10 +5,8 @@
  * 可直接在「设置 → 插件管理 → 掌阅 → 编辑 → 样式文件」中调整。
  * JS 只负责更新 --atreader-page-height 和 --atreader-page-offset。
  *
- * self 绑定（2026-10-25）：视口类直接挂在 .reader-content 自身，不插包裹
- * 节点、不搬正文——站点框架（Nuxt）重渲染时会把被搬移/包裹的正文当脏
- * DOM 推倒重建（正文整篇被弃的根因）。宽度/高度/裁切/多栏全部作用于
- * 正文元素自身；.reader-width 只做 90% 书宽与配色（纯 CSS，站点零感知）。
+ * 站点结构：.reader > .reader-width > (.reader-header + .reader-content)。
+ * 顶栏在页盒内，宽度天然随 .reader-width 收放。
  */
 
 html:has(body.atreader-ireader-paged),
@@ -28,40 +26,99 @@ body.atreader-ireader-paged .reader {
   background-color: rgb(246, 245, 243) !important;
 }
 
-/* 站点把正文固定在 800px 的 .reader-width 里，分页时铺满 90% 书页宽度。 */
+/* 站点把正文固定在 800px 的 .reader-width 里（顶栏也在同一盒内，宽度
+ * 天然随页盒收放），分页时按书页比例铺满（默认 90%，宽屏由 wide.css
+ * 提升比例）。 */
+body.atreader-ireader-paged {
+  --atreader-page-ratio: 90%;
+  /* 书页左右留白：正文视口与顶栏共用同一内缩量，「‹ 书名」才能和
+   * 左栏文字左缘齐平。 */
+  --atreader-page-inset: 56px;
+}
+
 body.atreader-ireader-paged .reader-width {
   box-sizing: border-box !important;
-  width: 90% !important;
+  width: var(--atreader-page-ratio, 90%) !important;
   max-width: none !important;
   margin-right: auto !important;
   margin-left: auto !important;
   background-color: rgb(246, 245, 243) !important;
 }
 
+/* 顶栏盒宽 = .reader-width（站点未给它单独限宽），站点自带的 64px 水平
+ * 内边距换成与正文一致的内缩量，导航内容才和左栏文字对齐；下划线同理，
+ * 让分隔线两端落在文字边缘。 */
+body.atreader-ireader-paged .reader-header {
+  box-sizing: border-box !important;
+  padding-right: var(--atreader-page-inset) !important;
+  padding-left: var(--atreader-page-inset) !important;
+}
+
+body.atreader-ireader-paged .reader-header::after {
+  left: var(--atreader-page-inset) !important;
+  right: var(--atreader-page-inset) !important;
+}
+
 /*
  * 站点顶部导航（sticky，占文档流 60px）保持可见：分页器的页高按
  * 视口实际 top 计算，会自动让出导航条高度，无需在此预留。
  *
- * 多栏视口与正文合一（视口类由 JS 挂在 .reader-content 上）：
- * 高度裁切 + 水平双栏 + 整页位移，全部作用于正文元素自身。
- */
-/*
  * wrap 结构 = v1.0.0 布局（2026-11 回归）：视口包裹层只做高度裁切；
  * 高度/多栏/整页位移全部在正文子元素上。裁剪框（包裹层）不随 transform
  * 平移，翻页才能把后续栏位带进可视区——self 绑定把裁剪与位移合并到
  * 正文自身后，翻页变成「正文带着自己的裁剪框一起平移」，第 1 页正常、
  * 其余页全空（2026-11 实证回归）。
+ *
+ * 左右留白用 margin，不用 padding、也不用 width:calc()：margin 在分栏
+ * 容器之外，不参与列宽；padding 会被 WebKit 多栏按碎片逐份扣减，列宽
+ * 与分页位移随之失真。
  */
 body.atreader-ireader-paged .atreader-ireader-page-viewport {
-  --atreader-column-gap: clamp(24px, 2.5vw, 40px);
+  --atreader-column-gap: clamp(56px, 7vw, 96px);
   box-sizing: border-box !important;
-  width: 100% !important;
+  width: auto !important;
   max-width: none !important;
+  margin-right: var(--atreader-page-inset) !important;
+  margin-left: var(--atreader-page-inset) !important;
   height: var(--atreader-page-height) !important;
   min-height: 320px !important;
-  margin-right: auto !important;
-  margin-left: auto !important;
   overflow: hidden !important;
+}
+
+/* 站点整页壳 .bookstore-reader 带左右各 64px 内边距。多栏碎片化下这份
+ * padding 会被逐栏扣减（内容区 685−128=557，每栏右侧空 64px 全堆向
+ * 中央，制造出 ~224px 的假栏隙）。分页时归零；页面外边距已由
+ * .reader-width 的 90% 比例提供，不需要壳内再垫一层。 */
+body.atreader-ireader-paged .reader-content .bookstore-reader {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* 站点正文链自带水平尺寸约束（实测 .book-content 整链被卡在 557px，
+ * 而分栏列盒 685px——每栏右侧空 128px 全堆向中央栏隙，视觉间隙
+ * 224px vs 番茄 101px）。分页时宽度归 auto 填满栏宽；文本容器的
+ * 水平 margin/padding 一并清零。媒体元素（img/svg/video）不在此列，
+ * 沿用下方 max-width:100% 规则。页脚（上一章/下一章）在 .book-content
+ * 之外，不受影响。 */
+body.atreader-ireader-paged .reader-content .book-content {
+  width: auto !important;
+  max-width: none !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+}
+
+body.atreader-ireader-paged .reader-content .book-content
+  :where(div, p, h1, h2, h3, h4, h5, h6, blockquote, pre, ul, ol, li, table) {
+  width: auto !important;
+  max-width: none !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+  padding-right: 0 !important;
+  padding-left: 0 !important;
 }
 
 body.atreader-ireader-paged .atreader-ireader-page-viewport > .reader-content {

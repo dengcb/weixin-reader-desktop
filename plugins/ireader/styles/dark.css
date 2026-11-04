@@ -9,6 +9,15 @@ body.atreader-ireader-dark .reader-width {
   background-color: #1b1d1f !important;
 }
 
+/* reader.css 在切换布局/设置重算时会被重新注入到 dark.css 之后，其
+ * background-color: rgb(246,245,243) !important 与上条同权重、后注入者胜，
+ * 会反压深色底（白底白字）。用双类抬高优先级，保证深色背景只由主题决定。 */
+body.atreader-ireader-paged.atreader-ireader-dark,
+body.atreader-ireader-paged.atreader-ireader-dark .reader,
+body.atreader-ireader-paged.atreader-ireader-dark .reader-width {
+  background-color: #1b1d1f !important;
+}
+
 body.atreader-ireader-dark .reader-content p,
 body.atreader-ireader-dark .reader-content {
   color: rgba(255, 255, 255, 0.87) !important;
@@ -88,6 +97,49 @@ body.atreader-ireader-dark .atreader-ireader-font-panel {
 body.atreader-ireader-dark .atreader-ireader-font-panel .label,
 body.atreader-ireader-dark .atreader-ireader-font-panel .ticks {
   color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/*
+ * 书籍首页（.bookstore-reader 内的 .book-info 简介卡）：站点用
+ * var(--text-black-2/3/4)（一组黑色透明度阶梯）给标签、作者、评分、
+ * 简介正文等着色，浅色底正常，插件深色底下全部不可见。逐元素反色。
+ */
+body.atreader-ireader-dark .reader-content .book-info {
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+body.atreader-ireader-dark .reader-content .book-info .cover-container .author {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+body.atreader-ireader-dark .reader-content .book-info .like-desc {
+  color: rgba(255, 255, 255, 0.45) !important;
+}
+
+body.atreader-ireader-dark .reader-content .book-info .info-container .tags .tag-item {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.65) !important;
+}
+
+body.atreader-ireader-dark .reader-content .book-info .desc {
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* 「更多」的渐变压在简介文字上，浅色版渐变落到 #f6f5f3，深色下是一块
+ * 亮斑；换成深色底渐变，链接蓝在深色上可读，不动。 */
+body.atreader-ireader-dark .reader-content .book-info .info-container .more {
+  background: linear-gradient(90deg, hsla(0, 0%, 100%, 0), #1b1d1f 20%) !important;
+}
+
+/* 章尾上一章/下一章：.zy-btn.fill 站点形态是 rgba(0,0,0,.55) 字 +
+ * rgba(0,0,0,.04) 底，深色下文字消失。反色为深色胶囊。 */
+body.atreader-ireader-dark .reader-content .reader-footer .zy-btn.fill {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+body.atreader-ireader-dark .reader-content .reader-footer .zy-btn.fill:not(.disabled):hover {
+  background-color: rgba(255, 255, 255, 0.14) !important;
 }
 
 /* 页码指示器深色形态（rgba 回退；新 WebKit 上 progress.css 的 color-mix
