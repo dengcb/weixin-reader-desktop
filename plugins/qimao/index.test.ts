@@ -31,6 +31,24 @@ const readerMarkup = () => {
       <li class="clearfix active ref-catalog-li-2">第2章</li>
       <li class="clearfix ref-catalog-li-3">第3章</li>
     </ul>
+    <div class="qm-mod reader-setting">
+      <div class="qm-mod-th"><a class="qm-btn important">恢复默认</a></div>
+      <div class="qm-mod-tb">
+        <ul class="reader-setting-list">
+          <li class="reader-setting-list-item">
+            <dt>字体大小：</dt>
+            <dd><div class="fonst-size-set">30</div></dd>
+          </li>
+          <li class="reader-setting-list-item">
+            <dt>正文字体：</dt>
+            <dd class="font-family-set">
+              <span class="font-family-set-item active">系统</span>
+              <span class="font-family-set-item">宋体</span>
+            </dd>
+          </li>
+        </ul>
+      </div>
+    </div>
     <a class="qm-btn" href="/shuku/222767-16480917400001/">上一章</a>
     <a class="qm-btn" href="/shuku/222767-16480917400003/">下一章</a>`;
 };
@@ -46,6 +64,7 @@ const createApi = (settings: Record<string, unknown> = {}) => {
     'navbar.css': '.reader-header { display: none; }',
     'layout-toggle.css': '.atreader-qimao-layout-toggle { cursor: pointer; }',
     'theme-text.css': '.reader-layout-theme[data-theme=dark] .chapter-detail-article { color: #ccc; }',
+    'theme-night.css': '.reader-layout-theme[data-theme=dark] .chapter-detail-wrap { background-color: #141517; }',
   };
   const api = {
     style: {
@@ -184,6 +203,83 @@ describe('Qimao native toolbar layout toggle', () => {
 
     plugin.onUnload();
     expect(document.querySelector('.atreader-qimao-layout-toggle')).toBeNull();
+    expect(document.querySelector('.atreader-qimao-font-adjustable')).toBeNull();
+  });
+
+  it('injects 可调 + 字重大小 into the native reading settings panel', async () => {
+    history.replaceState({}, '', READER_URL);
+    readerMarkup();
+    const { api, stored } = createApi();
+    const plugin = new QimaoPlugin();
+
+    plugin.onLoad(api);
+    await settlePagination();
+
+    const set = document.querySelector('.font-family-set')!;
+    const adjustable = set.querySelector<HTMLElement>('.atreader-qimao-font-adjustable')!;
+    const weightRow = document.querySelector<HTMLElement>('.atreader-qimao-weight-row')!;
+    expect(adjustable).not.toBeNull();
+    expect(adjustable.textContent).toBe('可调');
+    expect(set.lastElementChild).toBe(adjustable);
+    // 默认未开启可调：不覆盖站点字体，字重行隐藏、不注入样式
+    expect(weightRow.style.display).toBe('none');
+    expect(document.getElementById('test-font-adjustable')).toBeNull();
+
+    adjustable.click();
+    expect(adjustable.classList.contains('active')).toBe(true);
+    expect(set.querySelector('.font-family-set-item.active')).toBe(adjustable);
+    expect(weightRow.style.display).toBe('');
+    expect(stored.get('adjustable-font')).toBe(true);
+    const css = document.getElementById('test-font-adjustable')?.textContent ?? '';
+    expect(css).toContain('font-weight: 400');
+    expect(css).toContain('PingFang SC');
+
+    const options = weightRow.querySelectorAll<HTMLElement>('.atreader-qimao-weight-option');
+    expect(options.length).toBe(3);
+    expect(Array.from(options).map(o => o.textContent)).toEqual(['粗', '中', '细']);
+    expect(options[1].classList.contains('active')).toBe(true);
+
+    options[0].click();
+    expect(stored.get('font-weight-index')).toBe(0);
+    expect(document.getElementById('test-font-adjustable')?.textContent)
+      .toContain('font-weight: 600');
+    expect(options[0].classList.contains('active')).toBe(true);
+
+    options[2].click();
+    const lightCss = document.getElementById('test-font-adjustable')?.textContent ?? '';
+    expect(lightCss).toContain('font-weight: 300');
+    // 不得顺带改字号（em/% 会按父级基字号解析，把文字压小）
+    expect(lightCss).not.toContain('font-size');
+
+    // 站点面板高度是定值，追加字重行后必须放开高度，否则溢出背景
+    const panel = document.querySelector<HTMLElement>('.qm-mod.reader-setting')!;
+    expect(panel.style.height).toBe('auto');
+
+    // 点站点自带的「宋体」退出可调：移除覆盖样式、隐藏字重行
+    const songti = Array.from(set.querySelectorAll<HTMLElement>('.font-family-set-item'))
+      .find(item => item.textContent === '宋体')!;
+    songti.click();
+    expect(stored.get('adjustable-font')).toBe(false);
+    expect(document.getElementById('test-font-adjustable')).toBeNull();
+    expect(weightRow.style.display).toBe('none');
+    expect(adjustable.classList.contains('active')).toBe(false);
+    expect(panel.style.height).toBe('');
+
+    // 可调 → 系统：站点内部状态认为系统已选中、不会重写选中态，
+    // 插件要手动把选中态补到被点的项上
+    adjustable.click();
+    expect(adjustable.classList.contains('active')).toBe(true);
+    const system = Array.from(set.querySelectorAll<HTMLElement>('.font-family-set-item'))
+      .find(item => item.textContent === '系统')!;
+    system.click();
+    expect(stored.get('adjustable-font')).toBe(false);
+    expect(system.classList.contains('active')).toBe(true);
+    expect(adjustable.classList.contains('active')).toBe(false);
+    expect(songti.classList.contains('active')).toBe(false);
+
+    plugin.onUnload();
+    expect(document.querySelector('.atreader-qimao-font-adjustable')).toBeNull();
+    expect(document.querySelector('.atreader-qimao-weight-row')).toBeNull();
   });
 
   it('does not inject the button or pagination when the editor capability is off', async () => {
@@ -395,6 +491,7 @@ describe('Qimao plugin shell styles', () => {
     const progressCss = await read('progress.css');
     const layoutToggleCss = await read('layout-toggle.css');
     const themeTextCss = await read('theme-text.css');
+    const nightCss = await read('theme-night.css');
 
     expect(readerCss).toContain('body.atreader-qimao-paged .reader-wrapper > .book-info');
     expect(readerCss).toContain('body.atreader-qimao-paged .chapter-detail-wrap.reader-box');
@@ -423,6 +520,8 @@ describe('Qimao plugin shell styles', () => {
     expect(layoutToggleCss).toContain('#cc6d29');
     expect(themeTextCss).toContain('.reader-layout-theme[data-theme=dark] .chapter-detail-article');
     expect(themeTextCss).toContain('color: #ccc');
+    expect(nightCss).toContain('.reader-layout-theme[data-theme=dark] .chapter-detail-wrap');
+    expect(nightCss).toContain('background-color: #141517');
   });
 });
 

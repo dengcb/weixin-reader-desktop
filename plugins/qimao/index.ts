@@ -49,6 +49,19 @@ const WHEEL_RESET_MS = 220;
 const WHEEL_COOLDOWN_MS = 520;
 const SCROLLABLE_OVERFLOW_Y = new Set(['auto', 'scroll', 'overlay']);
 const LAYOUT_PREFERENCE_KEY = 'double-column-enabled';
+/// 正文字重三档（阅读设置 → 正文字体 → 可调 → 字重大小）。站点自身只有
+/// 400 一档且字族是固定字面：可调档换成可权重选择的系统字族，见
+/// buildAdjustableFontCss；站点自己的「系统 / 宋体」不受影响。
+const FONT_WEIGHTS = [
+  { label: '粗', value: 600 },
+  { label: '中', value: 400 },
+  { label: '细', value: 300 },
+] as const;
+const FONT_WEIGHT_DEFAULT_INDEX = 1;
+const FONT_WEIGHT_KEY = 'font-weight-index';
+/// 「正文字体 → 可调」开关：选中时用可权重选择的系统字族覆盖站点字族，
+/// 并显示下方「字重大小」行（粗/中/细）。
+const ADJUSTABLE_FONT_KEY = 'adjustable-font';
 const READER_INDEX_PATTERN = /\/reader\/index\/\d+/;
 const CHAPTER_PATH_PATTERN = /^\/shuku\/\d+-\d+/;
 /// 七猫站点自己的阅读偏好存储键（主题/字号/字体，站点 JS 启动时应用到
@@ -127,9 +140,13 @@ export class QimaoPlugin implements ReaderPlugin {
   private wheelCooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private wheelCooldown = false;
   private doubleColumnEnabled = true;
+  private weightIndex = FONT_WEIGHT_DEFAULT_INDEX;
+  private adjustableFont = false;
   private diagnosticsTimers: number[] = [];
   private disarmWatchdog: (() => void) | null = null;
   private layoutToggleButton: HTMLLIElement | null = null;
+  private adjustableOption: HTMLElement | null = null;
+  private adjustableRow: HTMLElement | null = null;
   private toolbarObserver: MutationObserver | null = null;
   private toolbarSyncFrame: number | null = null;
   private toolbarBootstrapTimer: ReturnType<typeof setInterval> | null = null;
@@ -217,7 +234,7 @@ export class QimaoPlugin implements ReaderPlugin {
     this.cleanupFunctions = [];
 
     if (this.api) {
-      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text']) {
+      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text', 'theme-night', 'font-adjustable']) {
         this.api.style.remove(id);
       }
       this.api.log.info('Qimao plugin unloaded');
@@ -279,6 +296,7 @@ export class QimaoPlugin implements ReaderPlugin {
         progress: file('progress.css'),
         layoutToggle: file('layout-toggle.css'),
         themeText: file('theme-text.css'),
+        nightTone: file('theme-night.css'),
       },
     };
   }
@@ -454,7 +472,7 @@ export class QimaoPlugin implements ReaderPlugin {
     if (!this.api) return;
     if (!this.isReaderPage()) {
       this.paginator?.disable();
-      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text']) {
+      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text', 'theme-night', 'font-adjustable']) {
         this.api.style.remove(id);
       }
       this.removeLayoutToggle();
@@ -499,6 +517,10 @@ export class QimaoPlugin implements ReaderPlugin {
     );
     // 主题文字色兜底不受能力开关影响：站点丢作用域属性时任何布局都要可读。
     this.applyStyleFile('theme-text', styles.custom?.themeText ?? '', true);
+    // 深色主题底色加深（只覆盖站点 deep 主题，其他主题不受影响）。
+    this.applyStyleFile('theme-night', styles.custom?.nightTone ?? '', true);
+    // 「正文字体 → 可调」的字体/字重覆盖（未选可调时为空样式）。
+    this.applyStyleFile('font-adjustable', this.buildAdjustableFontCss(), true);
 
     this.desiredDoubleColumn = doubleColumn;
     if (doubleColumn) this.enablePaginatorAfterHydration();
@@ -542,14 +564,39 @@ export class QimaoPlugin implements ReaderPlugin {
   }
 
   private async restoreLayoutPreference(api: PluginAPI): Promise<void> {
-    const stored = await api.storage.get<boolean>(LAYOUT_PREFERENCE_KEY);
+    const [stored, storedWeight, storedAdjustable] = await Promise.all([
+      api.storage.get<boolean>(LAYOUT_PREFERENCE_KEY),
+      api.storage.get<number>(FONT_WEIGHT_KEY),
+      api.storage.get<boolean>(ADJUSTABLE_FONT_KEY),
+    ]);
     if (this.api !== api) return;
     const legacyValue = api.settings.get<boolean>('doubleColumn', true);
     this.doubleColumnEnabled = typeof stored === 'boolean' ? stored : legacyValue !== false;
     if (stored === null) {
       void api.storage.set(LAYOUT_PREFERENCE_KEY, this.doubleColumnEnabled);
     }
+    if (typeof storedWeight === 'number'
+      && storedWeight >= 0
+      && storedWeight < FONT_WEIGHTS.length) {
+      this.weightIndex = storedWeight;
+    }
+    this.adjustableFont = storedAdjustable === true;
     this.applySettings(api.settings.getAll());
+  }
+
+  /// 「可调」正文字体样式：站点字族 PingFangSC-Regular 是固定字面，取不到
+  /// 细体；选中可调时换成可权重选择的系统字族（macOS: PingFang SC；
+  /// Windows: 等线/微软雅黑栈，等线缺失时细档回落到常规字重）。
+  /// 注意不要顺带改 font-size：站点把字号写在 p 自己的声明上，父级仍是
+  /// 基字号，用 em/% 做补偿会按父级解析、把文字压小（2026-11 实证）。
+  private buildAdjustableFontCss(): string {
+    if (!this.adjustableFont) return '';
+    const option = FONT_WEIGHTS[this.weightIndex] ?? FONT_WEIGHTS[FONT_WEIGHT_DEFAULT_INDEX];
+    const stack = navigator.userAgent.includes('Windows')
+      ? '"DengXian", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif'
+      : '-apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif';
+    return `.chapter-detail-article p { font-family: ${stack} !important;`
+      + ` font-weight: ${option.value} !important; }`;
   }
 
   /*!
@@ -730,6 +777,7 @@ export class QimaoPlugin implements ReaderPlugin {
     // 插件可能在 <body> 与七猫工具栏创建前加载，因此从文档根节点开始监听。
     this.toolbarObserver.observe(root, { childList: true, subtree: true });
     this.syncLayoutToggle();
+    this.syncAdjustableFontPanel();
   }
 
   private stopToolbarEnhancement(): void {
@@ -761,6 +809,7 @@ export class QimaoPlugin implements ReaderPlugin {
     this.toolbarSyncFrame = window.requestAnimationFrame(() => {
       this.toolbarSyncFrame = null;
       this.syncLayoutToggle();
+      this.syncAdjustableFontPanel();
     });
   }
 
@@ -828,6 +877,139 @@ export class QimaoPlugin implements ReaderPlugin {
     this.applySettings(api.settings.getAll());
   };
 
+  /*!
+   * 「阅读设置 → 正文字体」注入「可调」选项，并在其下方注入「字重大小」
+   * 行（粗/中/细）。站点条目是 Vue 渲染的 scoped 节点：克隆现有条目，
+   * 拿到同样的 class/作用域属性与主题配色，只挂我们自己的事件；面板每次
+   * 重新渲染后由文档观察器补回（与右侧工具栏同一机制）。
+   */
+  private syncAdjustableFontPanel(): void {
+    if (!this.isReaderPage()) return;
+    const set = document.querySelector<HTMLElement>('.font-family-set');
+    if (!set) {
+      this.adjustableOption = null;
+      this.adjustableRow = null;
+      return;
+    }
+    const template = set.querySelector<HTMLElement>('.font-family-set-item');
+    if (!template) return;
+
+    if (!this.adjustableOption?.isConnected) {
+      const option = template.cloneNode(true) as HTMLElement;
+      option.classList.remove('active');
+      option.classList.add('atreader-qimao-font-adjustable');
+      option.textContent = '可调';
+      option.addEventListener('click', this.enableAdjustableFont);
+      set.append(option);
+      this.adjustableOption = option;
+      // 点站点自带的两项时退出「可调」；站点内部状态可能仍认为该项已选中
+      // 而不再重写选中态，这里手动把选中态补到被点的项上。
+      set.querySelectorAll<HTMLElement>('.font-family-set-item').forEach(item => {
+        if (item === option || item.dataset.atreaderExitGuard === '1') return;
+        item.dataset.atreaderExitGuard = '1';
+        item.addEventListener('click', () => {
+          this.disableAdjustableFont();
+          this.markSiteFontItemActive(item);
+        });
+      });
+    }
+
+    // 面板「恢复默认」会重写全部阅读偏好：一起退出可调，避免覆盖样式把
+    // 恢复结果又压回去。
+    const panel = set.closest('.qm-mod.reader-setting') ?? set.closest('.qm-mod');
+    const resetButton = panel?.querySelector<HTMLElement>('.qm-mod-th .qm-btn');
+    if (resetButton && resetButton.dataset.atreaderExitGuard !== '1') {
+      resetButton.dataset.atreaderExitGuard = '1';
+      resetButton.addEventListener('click', this.disableAdjustableFont);
+    }
+
+    if (!this.adjustableRow?.isConnected) {
+      const fontItem = set.closest('li');
+      if (!fontItem) return;
+      const row = fontItem.cloneNode(true) as HTMLElement;
+      row.classList.add('atreader-qimao-weight-row');
+      const dt = row.querySelector('dt');
+      const dd = row.querySelector('dd');
+      if (!dt || !dd) return;
+      dt.textContent = '字重大小：';
+      dd.className = 'font-family-set atreader-qimao-weight-set';
+      dd.replaceChildren();
+      FONT_WEIGHTS.forEach((weight, index) => {
+        const item = template.cloneNode(true) as HTMLElement;
+        item.classList.remove('active');
+        item.classList.add('atreader-qimao-weight-option');
+        item.textContent = weight.label;
+        item.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.selectFontWeight(index);
+        });
+        dd.append(item);
+      });
+      fontItem.after(row);
+      this.adjustableRow = row;
+    }
+
+    this.updateAdjustableFontPanel();
+  }
+
+  private updateAdjustableFontPanel(): void {
+    if (this.adjustableOption) {
+      this.adjustableOption.classList.toggle('active', this.adjustableFont);
+      if (this.adjustableFont) {
+        this.adjustableOption.parentElement
+          ?.querySelectorAll('.font-family-set-item')
+          .forEach(item => {
+            if (item !== this.adjustableOption) item.classList.remove('active');
+          });
+      }
+    }
+    if (this.adjustableRow) {
+      this.adjustableRow.style.display = this.adjustableFont ? '' : 'none';
+      this.adjustableRow
+        .querySelectorAll('.atreader-qimao-weight-option')
+        .forEach((item, index) => item.classList.toggle('active', index === this.weightIndex));
+      // 站点面板高度是定值（.qm-mod.reader-setting 设了固定 height），
+      // 追加一行后会溢出背景；显示字重行时放开高度，退出可调后还原站点值。
+      const panel = this.adjustableRow.closest<HTMLElement>('.qm-mod.reader-setting');
+      if (panel) panel.style.height = this.adjustableFont ? 'auto' : '';
+    }
+  }
+
+  private readonly enableAdjustableFont = (event: Event): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const api = this.api;
+    if (!api || this.adjustableFont) return;
+    this.adjustableFont = true;
+    void api.storage.set(ADJUSTABLE_FONT_KEY, true);
+    this.applySettings(api.settings.getAll());
+    this.updateAdjustableFontPanel();
+  };
+
+  private readonly disableAdjustableFont = (): void => {
+    const api = this.api;
+    if (!api || !this.adjustableFont) return;
+    this.adjustableFont = false;
+    void api.storage.set(ADJUSTABLE_FONT_KEY, false);
+    this.applySettings(api.settings.getAll());
+    this.updateAdjustableFontPanel();
+  };
+
+  private markSiteFontItemActive(target: HTMLElement): void {
+    target.parentElement?.querySelectorAll<HTMLElement>('.font-family-set-item')
+      .forEach(item => item.classList.toggle('active', item === target));
+  }
+
+  private selectFontWeight(index: number): void {
+    const api = this.api;
+    if (!api) return;
+    this.weightIndex = index;
+    void api.storage.set(FONT_WEIGHT_KEY, index);
+    if (this.adjustableFont) this.applySettings(api.settings.getAll());
+    this.updateAdjustableFontPanel();
+  }
+
   private readonly handleLayoutToggleKeydown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -837,6 +1019,10 @@ export class QimaoPlugin implements ReaderPlugin {
   private removeLayoutToggle(): void {
     this.layoutToggleButton?.remove();
     this.layoutToggleButton = null;
+    this.adjustableOption?.remove();
+    this.adjustableOption = null;
+    this.adjustableRow?.remove();
+    this.adjustableRow = null;
   }
 
   private applyStyleFile(id: string, css: string, enabled: boolean): void {

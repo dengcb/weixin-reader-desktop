@@ -1,0 +1,16 @@
+/*
+ * @foundation 站点原生深色主题的加深（不改主题机制，只调深色底色）
+ *
+ * 「阅读设置 → 阅读背景 → 深色」时站点给的是 #242121 画布 + #353535 书页，
+ * 偏灰、与 #ccc 正文对比不足（2026-11-05 用户反馈）。这里只覆盖深色形态的
+ * 底色，其它主题与站点主题切换逻辑完全不受影响。
+ */
+html:has(.reader-layout-theme[data-theme=dark]),
+body:has(.reader-layout-theme[data-theme=dark]),
+.reader-layout-theme[data-theme=dark] {
+  background-color: #0b0c0d !important;
+}
+
+.reader-layout-theme[data-theme=dark] .chapter-detail-wrap {
+  background-color: #141517 !important;
+}
