@@ -33,17 +33,19 @@ body.atreader-qidian-paged #reader-content {
 }
 
 /*
- * 起点的章节正文不由 SSR 直出：didFinish 时 main.content 还不存在，站点
- * 客户端插入正文到分页器重绑之间会以原生单栏短暂上屏（先单列后双栏闪烁）。
- * 这里用父子关系把「尚未包进分页视口」的正文隐藏——分页器绑定后 main.content
- * 的父节点变成视口，规则自动失效；纯 CSS 生效，不依赖观察器时序。
+ * 站点正文是 SSR 直出（.print > main.content），Vue 水合在 DOMContentLoaded
+ * 之后才完成；水合前分页器已把正文包进视口（2026-11-05 时序实证：水合重建
+ * 后 class/作用域属性完整，分页器断连自愈可兜底）。这条规则消除水合前后
+ * 「原生单栏短暂上屏 → 双栏」的闪烁：正文未进视口前一律隐藏，绑定后规则
+ * 自动失效（正文父节点变成视口）。
  */
-body.atreader-qidian-paged .chapter-wrapper .enable-review > main.content {
+body.atreader-qidian-paged .chapter-wrapper :is(.print, .enable-review) > main.content {
   visibility: hidden !important;
 }
 
-/* 书页内边距由 .enable-review 提供，分页视口据此铺满剩余宽度。 */
-body.atreader-qidian-paged .chapter-wrapper .enable-review {
+/* 书页内边距由章节头容器提供，分页视口据此铺满剩余宽度。
+ * .print 的 enable-review 是条件类（段评），不能作为唯一锚点。 */
+body.atreader-qidian-paged .chapter-wrapper :is(.print, .enable-review) {
   box-sizing: border-box !important;
   width: 100% !important;
   max-width: none !important;

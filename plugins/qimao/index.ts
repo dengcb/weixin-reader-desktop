@@ -58,6 +58,14 @@ const QIMAO_READER_SETTING_KEY = 'qimao_reader_setting_data';
 /// 开机守卫轮询窗口：300ms × 40 = 12s，覆盖站点冷启动慢的首次加载
 const BOOT_GUARD_TICK_MS = 300;
 const BOOT_GUARD_MAX_TICKS = 40;
+/// 分页器绑定时机：等 Nuxt hydration 完成（Vue 2 hydrate 成功后移除
+/// #__nuxt 上的 data-server-rendered）。提前包裹 SSR 正文会让 hydrate
+/// 丢弃该子树、重建的元素丢失 class 与 data-v 作用域属性——站点按
+///「主题 + scoped 属性」着色的正文会退回黑色（2026-11-05 夜间模式实证）。
+/// 兜底上限：信号始终不出现（站点改版/非 Nuxt 页）时 9s 后照常绑定。
+const HYDRATION_POLL_MS = 100;
+const HYDRATION_WAIT_MAX_MS = 9_000;
+const POST_HYDRATION_SETTLE_MS = 400;
 
 const SINGLE_COLUMN_ICON = `
   <svg width="24" height="24" viewBox="0 0 24 24"
@@ -127,6 +135,10 @@ export class QimaoPlugin implements ReaderPlugin {
   private toolbarBootstrapTimer: ReturnType<typeof setInterval> | null = null;
   private bootGuardTimer: ReturnType<typeof setInterval> | null = null;
   private bootGuardTicks = 0;
+  private desiredDoubleColumn = true;
+  private paginatorBindArmed = false;
+  private paginatorBindScheduled = false;
+  private paginatorBindTimer: ReturnType<typeof setTimeout> | null = null;
 
   onLoad(api: PluginAPI): void {
     this.api = api;
@@ -190,6 +202,12 @@ export class QimaoPlugin implements ReaderPlugin {
     this.disarmWatchdog = null;
     for (const timer of this.diagnosticsTimers) window.clearTimeout(timer);
     this.diagnosticsTimers = [];
+    if (this.paginatorBindTimer !== null) {
+      clearTimeout(this.paginatorBindTimer);
+      this.paginatorBindTimer = null;
+    }
+    this.paginatorBindScheduled = false;
+    this.paginatorBindArmed = false;
     this.stopBootGuard();
     this.stopToolbarEnhancement();
     this.paginator?.destroy();
@@ -199,7 +217,7 @@ export class QimaoPlugin implements ReaderPlugin {
     this.cleanupFunctions = [];
 
     if (this.api) {
-      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle']) {
+      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text']) {
         this.api.style.remove(id);
       }
       this.api.log.info('Qimao plugin unloaded');
@@ -260,6 +278,7 @@ export class QimaoPlugin implements ReaderPlugin {
         reader: file('reader.css'),
         progress: file('progress.css'),
         layoutToggle: file('layout-toggle.css'),
+        themeText: file('theme-text.css'),
       },
     };
   }
@@ -435,7 +454,7 @@ export class QimaoPlugin implements ReaderPlugin {
     if (!this.api) return;
     if (!this.isReaderPage()) {
       this.paginator?.disable();
-      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle']) {
+      for (const id of ['reader', 'wide', 'toolbar', 'navbar', 'progress', 'layout-toggle', 'theme-text']) {
         this.api.style.remove(id);
       }
       this.removeLayoutToggle();
@@ -478,12 +497,48 @@ export class QimaoPlugin implements ReaderPlugin {
       styles.custom?.layoutToggle ?? '',
       hasDoubleColumn,
     );
+    // 主题文字色兜底不受能力开关影响：站点丢作用域属性时任何布局都要可读。
+    this.applyStyleFile('theme-text', styles.custom?.themeText ?? '', true);
 
-    if (doubleColumn) this.paginator?.enable();
+    this.desiredDoubleColumn = doubleColumn;
+    if (doubleColumn) this.enablePaginatorAfterHydration();
     else this.paginator?.disable();
     this.syncLayoutToggle();
 
     this.scheduleContentDiagnostics();
+  }
+
+  /*!
+   * 等站点 hydrate 收尾再包裹正文（原因见 HYDRATION_POLL_MS 常量注释）。
+   * 绑定只做一次：armed 之后布局切换直接 enable/disable。
+   */
+  private enablePaginatorAfterHydration(): void {
+    const paginator = this.paginator;
+    if (!paginator) return;
+    if (this.paginatorBindArmed) {
+      paginator.enable();
+      return;
+    }
+    if (this.paginatorBindScheduled) return;
+    this.paginatorBindScheduled = true;
+    const startedAt = Date.now();
+    const arm = (): void => {
+      this.paginatorBindScheduled = false;
+      this.paginatorBindTimer = null;
+      this.paginatorBindArmed = true;
+      if (this.desiredDoubleColumn) this.paginator?.enable();
+    };
+    const poll = (): void => {
+      if (this.api === null) return; // 已卸载
+      const root = document.getElementById('__nuxt');
+      const hydrated = !root || !root.hasAttribute('data-server-rendered');
+      if (hydrated || Date.now() - startedAt >= HYDRATION_WAIT_MAX_MS) {
+        this.paginatorBindTimer = setTimeout(arm, POST_HYDRATION_SETTLE_MS);
+        return;
+      }
+      this.paginatorBindTimer = setTimeout(poll, HYDRATION_POLL_MS);
+    };
+    poll();
   }
 
   private async restoreLayoutPreference(api: PluginAPI): Promise<void> {

@@ -4,6 +4,10 @@ import { QimaoPlugin } from './index';
 
 const READER_URL = '/shuku/222767-16480917400002/';
 
+/** 等分页器绑定：插件在 hydration 信号后留 400ms settle 再包裹正文，
+ * happy-dom 没有 #__nuxt（按已完成 hydration 处理），仍需等这个窗口。 */
+const settlePagination = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 460));
+
 const readerMarkup = () => {
   document.body.innerHTML = `
     <div class="reader-header"><div class="reader-header-con">七猫</div></div>
@@ -41,6 +45,7 @@ const createApi = (settings: Record<string, unknown> = {}) => {
     'toolbar.css': '.reader-fixed-left, .qm-fixed-right { display: none; }',
     'navbar.css': '.reader-header { display: none; }',
     'layout-toggle.css': '.atreader-qimao-layout-toggle { cursor: pointer; }',
+    'theme-text.css': '.reader-layout-theme[data-theme=dark] .chapter-detail-article { color: #ccc; }',
   };
   const api = {
     style: {
@@ -157,7 +162,7 @@ describe('Qimao native toolbar layout toggle', () => {
     const plugin = new QimaoPlugin();
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     const toolbar = document.querySelector('.qm-fixed-right')!;
     const toggle = toolbar.firstElementChild as HTMLElement;
@@ -212,7 +217,7 @@ describe('Qimao native toolbar layout toggle', () => {
     Object.defineProperty(plugin, 'manifest', { value: manifest, configurable: true });
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     const viewport = document.querySelector<HTMLElement>('.atreader-qimao-page-viewport');
     expect(document.querySelector('.atreader-qimao-page-indicator')).toBeNull();
@@ -262,7 +267,7 @@ describe('Qimao double-column chapter keyboard navigation', () => {
     const { clicked, release } = captureChapterClicks();
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     const up = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
     document.body.dispatchEvent(up);
@@ -289,7 +294,7 @@ describe('Qimao double-column chapter keyboard navigation', () => {
     const { clicked, release } = captureChapterClicks();
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     plugin.nextPage();
     expect(clicked).toEqual(['下一章']);
@@ -316,7 +321,7 @@ describe('Qimao double-column chapter keyboard navigation', () => {
     const { clicked, release } = captureChapterClicks();
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     const up = new KeyboardEvent('keydown', { key: 'ArrowUp', cancelable: true });
     document.body.dispatchEvent(up);
@@ -363,7 +368,7 @@ describe('Qimao wheel paging yields to native popup scrolling', () => {
     const plugin = new QimaoPlugin();
 
     plugin.onLoad(api);
-    await Promise.resolve();
+    await settlePagination();
 
     const list = appendCatalogPopup();
     const popupWheel = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
@@ -389,6 +394,7 @@ describe('Qimao plugin shell styles', () => {
     const navbarCss = await read('navbar.css');
     const progressCss = await read('progress.css');
     const layoutToggleCss = await read('layout-toggle.css');
+    const themeTextCss = await read('theme-text.css');
 
     expect(readerCss).toContain('body.atreader-qimao-paged .reader-wrapper > .book-info');
     expect(readerCss).toContain('body.atreader-qimao-paged .chapter-detail-wrap.reader-box');
@@ -415,6 +421,8 @@ describe('Qimao plugin shell styles', () => {
     expect(layoutToggleCss).toContain('.atreader-qimao-layout-toggle');
     expect(layoutToggleCss).toContain("data-theme='dark']");
     expect(layoutToggleCss).toContain('#cc6d29');
+    expect(themeTextCss).toContain('.reader-layout-theme[data-theme=dark] .chapter-detail-article');
+    expect(themeTextCss).toContain('color: #ccc');
   });
 });
 
@@ -510,9 +518,10 @@ describe('Qimao site boot guard: article class re-assertion', () => {
     plugin.onLoad(api);
 
     await new Promise(resolve => setTimeout(resolve, 450));
-    const naked = document.querySelector('.chapter-detail-wrap-content > div')!;
-    expect(naked.classList.contains('chapter-detail-article')).toBe(true);
-    expect(naked.classList.contains('font-18')).toBe(true);
+    // 守卫补类后分页器随即把正文包进视口，正文不再是 wrap-content 的直接子节点
+    const article = document.querySelector('.chapter-detail-wrap-content .chapter-detail-article');
+    expect(article).not.toBeNull();
+    expect(article!.classList.contains('font-18')).toBe(true);
     plugin.onUnload();
   });
 

@@ -1,0 +1,34 @@
+/*
+ * @foundation 正文主题文字色兜底（不接管配色，只补站点丢掉的声明）
+ *
+ * 站点正文颜色规则依赖 Vue 作用域属性：
+ *   .reader-layout-theme[data-theme=dark] .chapter-detail-article[data-v-…]
+ * 站点冷启动偶发把正文模板整块写丢（class 与 data-v 一起丢），开机守卫只
+ * 能补 class，正文退回继承的黑色 —— 深色底上不可读（2026-11-05 实证）。
+ *
+ * 这里按站点各主题的一级文字色写同义规则：健康时站点规则多一个作用域
+ * 属性、权重更高，本文件不生效；只有作用域属性缺失时才兜底。
+ */
+.reader-layout-theme[data-theme=default] .chapter-detail-article {
+  color: #222;
+}
+
+.reader-layout-theme[data-theme=blue] .chapter-detail-article {
+  color: #131a1e;
+}
+
+.reader-layout-theme[data-theme=yellow] .chapter-detail-article {
+  color: #413b2a;
+}
+
+.reader-layout-theme[data-theme=green] .chapter-detail-article {
+  color: #394434;
+}
+
+.reader-layout-theme[data-theme=red] .chapter-detail-article {
+  color: #453030;
+}
+
+.reader-layout-theme[data-theme=dark] .chapter-detail-article {
+  color: #ccc;
+}

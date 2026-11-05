@@ -3,6 +3,10 @@
  * [功能能力 4/6：隐藏导航栏]
  * 「阅读 → 隐藏导航栏」
  * #navbar 是起点阅读页顶部导航（logo、书库、排行榜、登录入口）。
+ *
+ * 章节头容器 .print 上的 enable-review（段评）是条件类，登录态/书籍
+ * 未启用段评时不出现；选择器一律以 .print 为锚、兼容带类形态，
+ * 否则标题/书签规则会整组失配（2026-11-05 真机实证）。
  */
 #navbar {
   display: none !important;
@@ -13,12 +17,13 @@
  * 书名/作者/字数/更新时间属于导航型信息，右上角书签入口一并收起，
  * 顶部预留从 64px 收窄，给正文让出首屏高度。
  */
-.chapter-wrapper .enable-review {
+.chapter-wrapper :is(.print, .enable-review) {
   padding-top: 24px !important;
 }
 
-.chapter-wrapper .enable-review h1.title {
-  /* 标题是 inline-block，用下边距与正文拉开一行的呼吸区（与番茄一致）。 */
+.chapter-wrapper :is(.print, .enable-review) h1.title {
+  /* 标题是 inline-block，用下边距与正文拉开一行的呼吸区（与番茄一致）。
+   * 文字色走站点主题变量：亮色为 48% 黑、深色自动切换为 40% 白。 */
   margin: 0 0 24px !important;
   color: var(--surface-gray-500, rgba(0, 0, 0, 0.48)) !important;
   font-size: 12px !important;
@@ -26,14 +31,15 @@
   line-height: 18px !important;
 }
 
-.chapter-wrapper .enable-review h1.title .review {
+.chapter-wrapper :is(.print, .enable-review) h1.title .review {
   display: none !important;
 }
 
-.chapter-wrapper .enable-review h1.title + div {
+.chapter-wrapper :is(.print, .enable-review) h1.title + div {
   display: none !important;
 }
 
-.chapter-wrapper .enable-review > .tooltip-wrapper {
+/* 右上角书签入口：与导航栏一起收起。 */
+.chapter-wrapper :is(.print, .enable-review) > .tooltip-wrapper {
   display: none !important;
 }

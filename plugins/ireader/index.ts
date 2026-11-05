@@ -32,7 +32,7 @@ import type {
   ReaderPlugin,
 } from '../../src/scripts/core/plugin_types';
 // api.log 是 console-only 实现（core/logger.ts），落文件诊断必须走 logToFile
-import { invoke, logToFile, ensureFontCache } from '../../src/scripts/core/tauri';
+import { logToFile, ensureFontCache } from '../../src/scripts/core/tauri';
 import { setSiteReadinessProbe } from '../../src/scripts/core/site_switch_loading';
 import {
   armReaderEntryWatchdog,
@@ -221,7 +221,6 @@ export class IreaderPlugin implements ReaderPlugin {
   private wheelCooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private wheelCooldown = false;
   private doubleColumnEnabled = true;
-  private wideEnabled = false;
   private darkEnabled = false;
   private fontStep = FONT_DEFAULT_INDEX;
   private weightIndex = FONT_WEIGHT_DEFAULT_INDEX;
@@ -1071,13 +1070,6 @@ export class IreaderPlugin implements ReaderPlugin {
     this.removeFontPanel();
   };
 
-  private readonly toggleWideMode = (): void => {
-    // 宽屏开关复用全局「阅读 → 阅读变宽」菜单动作：Rust 端切换
-    // global.readerWide，settings 订阅链回灌 applySettings 应用宽屏样式。
-    if (!this.api || this.manifest.capabilities.wideMode !== true) return;
-    invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {});
-  };
-
   private readonly toggleLayoutMode = (): void => {
     const api = this.api;
     if (!api || this.manifest.capabilities.doubleColumn !== true) return;
@@ -1169,7 +1161,6 @@ export class IreaderPlugin implements ReaderPlugin {
     toolbar.setAttribute('aria-label', '掌阅阅读工具栏');
     const buttons: Array<{ id: string; label: string; onClick: () => void }> = [
       { id: 'layout', label: '双栏', onClick: this.toggleLayoutMode },
-      { id: 'wide', label: '宽屏', onClick: this.toggleWideMode },
       { id: 'catalog', label: '目录', onClick: this.toggleCatalogDrawer },
       { id: 'dark', label: '夜间', onClick: this.toggleDark },
       { id: 'font', label: '字体', onClick: this.toggleFontPanel },
@@ -1198,15 +1189,6 @@ export class IreaderPlugin implements ReaderPlugin {
         layoutButton.innerHTML = (this.doubleColumnEnabled ? SINGLE_COLUMN_ICON : DOUBLE_COLUMN_ICON)
           + `<span>${label}</span>`;
         layoutButton.setAttribute('aria-label', `切换为${label}阅读`);
-      }
-    }
-    const wideButton = this.toolbarButtons.wide;
-    if (wideButton) {
-      const label = this.wideEnabled ? '标准' : '宽屏';
-      if (wideButton.dataset.targetMode !== label) {
-        wideButton.dataset.targetMode = label;
-        wideButton.innerHTML = `<span>${label}</span>`;
-        wideButton.setAttribute('aria-label', this.wideEnabled ? '恢复标准书宽' : '切换为宽屏阅读');
       }
     }
     const darkButton = this.toolbarButtons.dark;
@@ -1259,7 +1241,6 @@ export class IreaderPlugin implements ReaderPlugin {
       && readerCss.trim().length > 0;
     /*! @capability wideMode 菜单状态决定是否注入 wide.css。 */
     const wide = settings.readerWide === true;
-    this.wideEnabled = wide;
     /*! @capability hideToolbar 菜单状态决定是否隐藏插件工具栏。 */
     const hideToolbar = settings.hideToolbar === true
       && this.manifest.capabilities.hideToolbar === true;

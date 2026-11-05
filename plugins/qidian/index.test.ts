@@ -427,7 +427,7 @@ describe('Qidian plugin shell styles', () => {
     expect(readerCss).toContain('.atreader-qidian-page-viewport');
     // 起点正文晚于 didFinish 由客户端插入：未绑定进视口的正文必须先隐藏，
     // 否则插入到重绑之间会闪现原生单栏（先单列后双栏）。
-    expect(readerCss).toContain('.enable-review > main.content');
+    expect(readerCss).toContain(':is(.print, .enable-review) > main.content');
     expect(readerCss).toContain('visibility: hidden !important');
     expect(readerCss).toContain('column-count: 2 !important');
     expect(readerCss).toContain('--atreader-page-ratio: 80%');
@@ -445,7 +445,8 @@ describe('Qidian plugin shell styles', () => {
     expect(toolbarCss).toContain('#left-container');
     expect(toolbarCss).toContain('#r-menu');
     expect(navbarCss).toContain('#navbar');
-    expect(navbarCss).toContain('.chapter-wrapper .enable-review h1.title');
+    expect(navbarCss).toContain(':is(.print, .enable-review) h1.title');
+    expect(navbarCss).toContain(':is(.print, .enable-review) > .tooltip-wrapper');
     expect(navbarCss).toContain('font-size: 12px !important');
     expect(navbarCss).toContain('margin: 0 0 24px !important');
     expect(navbarCss).toContain('h1.title + div');
