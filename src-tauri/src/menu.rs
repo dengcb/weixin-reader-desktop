@@ -1335,9 +1335,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 }
                 if let Some(book_id) = id.strip_prefix("open_local_book_") {
                     if let Err(error) = crate::local_books::open_book_by_id(app, book_id) {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("show-toast", error);
-                        }
+                        crate::local_books::notify_open_failure(app, &error);
                     }
                     return;
                 }

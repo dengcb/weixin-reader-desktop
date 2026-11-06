@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 const HISTORY_VERSION: u64 = 1;
@@ -30,7 +30,8 @@ const FOLIATE_LICENSE: &[u8] = include_bytes!("../../third-party/foliate-js/LICE
 const THIRD_PARTY_NOTICES: &[u8] = include_bytes!("../../THIRD-PARTY-NOTICES.md");
 
 static LOCAL_BOOKS_LOCK: Mutex<()> = Mutex::new(());
-static STARTUP_NOTICE: Mutex<Option<String>> = Mutex::new(None);
+// 启动恢复时书已丢失：窗口就绪后弹确认框，避免 toast 在长文案下被截断。
+static STARTUP_MISSING_BOOK: Mutex<Option<(String, String)>> = Mutex::new(None);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 // macOS 冷启动时 Opened 事件可能先于主窗口 setup 到达，先暂存路径。
 static PENDING_OPEN_BOOK: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -293,13 +294,14 @@ fn find_record<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<LocalBoo
     find_record_locked(app, book_id)
 }
 
+/// 只校验文件是否仍在，不清理历史记录：文件缺失时由用户决定是否移除，
+/// 避免启动恢复或后台请求把记录静默删掉。
 fn find_record_locked<R: Runtime>(
     app: &AppHandle<R>,
     book_id: &str,
 ) -> Result<LocalBookRecord, String> {
     validate_book_id(book_id)?;
-    let path = history_path(app)?;
-    let mut document = read_document(&path);
+    let document = read_document(&history_path(app)?);
     let record = document
         .books
         .iter()
@@ -310,13 +312,28 @@ fn find_record_locked<R: Runtime>(
         Ok(metadata) if metadata.is_file() => Ok(record),
         Ok(_) => Err("本地图书路径不是文件".to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            document.books.retain(|book| book.book_id != book_id);
-            atomic_write_json(&path, &document)?;
-            remove_book_data(app, book_id);
             Err(format!("MISSING:{}", record.title))
         }
         Err(error) => Err(format!("无法读取《{}》：{error}", record.title)),
     }
+}
+
+fn forget_record_from_document(document: &mut LocalBooksDocument, book_id: &str) -> bool {
+    let before = document.books.len();
+    document.books.retain(|book| book.book_id != book_id);
+    before != document.books.len()
+}
+
+fn forget_book<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<(), String> {
+    validate_book_id(book_id)?;
+    let removed = with_document(app, |document| {
+        let removed = forget_record_from_document(document, book_id);
+        Ok((removed, removed))
+    })?;
+    if removed {
+        remove_book_data(app, book_id);
+    }
+    Ok(())
 }
 
 fn read_zip_text(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<String, String> {
@@ -1131,9 +1148,9 @@ pub fn resolve_saved_local_url<R: Runtime>(
                 "sites.local.lastReaderUrl",
                 serde_json::Value::Null,
             );
-            if let Some(message) = missing_notice(&error) {
-                if let Ok(mut notice) = STARTUP_NOTICE.lock() {
-                    *notice = Some(message);
+            if let Some(title) = error.strip_prefix("MISSING:") {
+                if let Ok(mut pending) = STARTUP_MISSING_BOOK.lock() {
+                    *pending = Some((book_id, title.to_string()));
                 }
             }
             None
@@ -1144,22 +1161,61 @@ pub fn resolve_saved_local_url<R: Runtime>(
 fn missing_notice(error: &str) -> Option<String> {
     error
         .strip_prefix("MISSING:")
-        .map(|title| format!("找不到《{title}》，已删除阅读记录"))
+        .map(|title| format!("找不到《{title}》"))
 }
 
-pub fn take_startup_notice() -> Option<String> {
-    STARTUP_NOTICE.lock().ok()?.take()
+pub fn take_startup_missing_book() -> Option<(String, String)> {
+    STARTUP_MISSING_BOOK.lock().ok()?.take()
 }
 
-fn notify_missing<R: Runtime>(app: &AppHandle<R>, error: &str) {
-    let Some(message) = missing_notice(error) else {
-        return;
-    };
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("show-toast", message);
-    }
-    let menu_app = app.clone();
-    let _ = app.run_on_main_thread(move || crate::commands::refresh_app_menu(&menu_app));
+/// 菜单打开或启动恢复最近图书但文件已丢失：先征询用户，确认后才删除历史记录。
+pub(crate) fn prompt_remove_missing_book<R: Runtime>(
+    app: &AppHandle<R>,
+    book_id: &str,
+    title: &str,
+) {
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
+
+    let app_handle = app.clone();
+    let book_id = book_id.to_string();
+    let book_title = title.to_string();
+    let message = format!(
+        "找不到《{title}》。\n\n文件可能已被删除或移动到其他位置。是否将它从「最近打开」中移除？"
+    );
+    app.dialog()
+        .message(message)
+        .title("图书文件已丢失")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "删除记录".to_string(),
+            "保留".to_string(),
+        ))
+        .kind(MessageDialogKind::Warning)
+        .show(move |confirmed| {
+            if !confirmed {
+                log::info!(target: "frontend", "[LocalBooks] recent_open_missing_kept book_id={book_id}");
+                return;
+            }
+            match forget_book(&app_handle, &book_id) {
+                Ok(()) => {
+                    log::info!(target: "frontend", "[LocalBooks] recent_open_missing_removed book_id={book_id}");
+                    crate::commands::refresh_app_menu(&app_handle);
+                }
+                Err(error) => {
+                    log::warn!(
+                        target: "frontend",
+                        "[LocalBooks] recent_open_missing_remove_failed book_id={} error={}",
+                        book_id,
+                        error
+                    );
+                    app_handle
+                        .dialog()
+                        .message(format!("无法删除《{book_title}》的阅读记录：\n{error}"))
+                        .title("删除失败")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {});
+                }
+            }
+        });
 }
 
 fn ensure_default_settings<R: Runtime>(app: &AppHandle<R>) {
@@ -1237,8 +1293,9 @@ pub fn open_book_by_id<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<
             Ok(())
         }
         Err(error) if error.starts_with("MISSING:") => {
+            let title = error.strip_prefix("MISSING:").unwrap_or_default();
             log::warn!(target: "frontend", "[LocalBooks] recent_open_missing book_id={book_id}");
-            notify_missing(app, &error);
+            prompt_remove_missing_book(app, book_id, title);
             Ok(())
         }
         Err(error) => {
@@ -1289,13 +1346,17 @@ pub fn open_book_from_path<R: Runtime>(app: &AppHandle<R>, path: &Path) -> Resul
     Ok(())
 }
 
-/// 打开失败时在主窗口弹出 toast 提示。
+/// 打开失败时弹出原生错误框：错误文案较长，注入层的 200px toast 会被截断。
 pub fn notify_open_failure<R: Runtime>(app: &AppHandle<R>, error: &str) {
+    use tauri_plugin_dialog::MessageDialogKind;
+
     log::warn!(target: "local-books", "open_book_failed error={error}");
     log::warn!(target: "frontend", "[LocalBooks] open_book_failed error={error}");
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("show-toast", local_error_toast(error));
-    }
+    app.dialog()
+        .message(local_error_toast(error))
+        .title("无法打开本地图书")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
 }
 
 pub fn open_dialog<R: Runtime>(app: &AppHandle<R>) {
@@ -1463,7 +1524,6 @@ pub fn get_local_book<R: Runtime>(
         }
         Err(error) => {
             log::warn!(target: "frontend", "[LocalBooks] metadata_failed book_id={} error={}", book_id, error);
-            notify_missing(&app, &error);
             Err(missing_notice(&error).unwrap_or(error))
         }
     }
@@ -1483,9 +1543,6 @@ pub fn get_local_reading_progress<R: Runtime>(
         find_record_locked(&app, &book_id)?;
         read_progress(&progress_dir(&app)?.join(format!("{book_id}.json")))
     })();
-    if let Err(error) = &result {
-        notify_missing(&app, error);
-    }
     result
 }
 
@@ -1543,9 +1600,6 @@ pub fn save_local_reading_progress<R: Runtime>(
         )?;
         Ok(())
     })();
-    if let Err(error) = &result {
-        notify_missing(&app, error);
-    }
     result.map_err(|error| missing_notice(&error).unwrap_or(error))
 }
 
@@ -1873,7 +1927,6 @@ pub fn protocol_response_with_referer<R: Runtime>(
         Err(error) => {
             log::warn!(target: "local-books", "protocol_book_lookup_failed book_id={} error={}", book_id, error);
             log::warn!(target: "frontend", "[LocalBooks] protocol_book_lookup_failed book_id={} error={}", book_id, error);
-            notify_missing(app, &error);
             return error_response(
                 if error.starts_with("MISSING:") {
                     410
@@ -2258,6 +2311,28 @@ mod tests {
         assert_eq!(evicted.len(), 2);
         assert_eq!(evicted[0].title, "Book 1");
         assert_eq!(evicted[1].title, "Book 0");
+    }
+
+    #[test]
+    fn forgetting_a_record_removes_only_that_book() {
+        let mut document = LocalBooksDocument::default();
+        for index in 0..2 {
+            document.books.push(LocalBookRecord {
+                book_id: format!("{index:064x}"),
+                path: PathBuf::from(format!("book-{index}.txt")),
+                format: LocalBookFormat::Txt,
+                title: format!("Book {index}"),
+                file_size: 1,
+                modified_at: 1,
+                last_opened_at: index,
+                fixed_layout: false,
+            });
+        }
+        let removed = format!("{:064x}", 0);
+        assert!(forget_record_from_document(&mut document, &removed));
+        assert_eq!(document.books.len(), 1);
+        assert_eq!(document.books[0].book_id, format!("{:064x}", 1));
+        assert!(!forget_record_from_document(&mut document, &removed));
     }
 
     #[test]

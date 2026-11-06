@@ -543,12 +543,13 @@ pub fn run() {
                             reveal_main_window_once(&reveal_app, &reveal);
                         }
                     });
-                    let Some(message) = local_books::take_startup_notice() else {
+                    let Some((book_id, title)) = local_books::take_startup_missing_book() else {
                         return;
                     };
+                    let dialog_app = window.app_handle().clone();
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                        let _ = window.emit("show-toast", message);
+                        local_books::prompt_remove_missing_book(&dialog_app, &book_id, &title);
                     });
                 });
             if let Some(ua) = user_agent {
