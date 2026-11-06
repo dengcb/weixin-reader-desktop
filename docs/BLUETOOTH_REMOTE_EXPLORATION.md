@@ -338,8 +338,19 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `tv` | 0x35 | **短按切下一个书城；长按 0.5 秒呼出 Cmd+Tab 式书城浮层**（0.5 秒/项轮播，松开提交） | 任意页面 |
 | `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
 | `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦）；**短按切换「语音翻页」开关** | 当前仅 macOS（Windows 可经 WinRT GATT，尚未接入） |
+| `menu` | 0x65 | **短按显隐阅读工具栏；长按 0.5 秒打开章节目录**（各书城原生目录 + 本地阅读器） | 仅阅读页 |
 
 - 设置页新增「蓝牙遥控」标签页（`src/windows/settings.html`）：SVG 遥控器示意图 + 8 项编号图例（几何审计零越界），含输入监控权限与平台差异说明。
+
+### 菜单键长按打开目录（2026-11-04 设计，2026-11-06 真机收口）
+
+- 交互：短按菜单键在松开时——目录开着则收起目录（长按开 → 单击关循环），否则显隐工具栏；按住 **500ms** 打开目录。
+- 注入层 `RemoteManager` 统一处理系统键盘/contextmenu 与自有 HID 的 `menu` press/release，避免双路径重复切换；`reader_toc.ts` 负责各站点入口。站点打开方式分三类（真机逐一验证，勿轻易合并）：
+  - **CSS 强制显示**（面板本就在 DOM、关闭态 display:none，注入样式放开即等效替官方脚本「显示目录」）：微信读书 `.readerCatalog`（React onClick 直调优先，未暴露 `__reactProps$` 时自动落回；另补 flex 列布局 + 滚动区 `overflow-y`/手动 scrollTop——站点在 document 捕获期 preventDefault 滚轮、面板 height 由站点 JS 惰性设置）+ 全文遮罩 + 按章节标题后缀匹配定位当前章（`isCatalogTitleMatch`）+ 选章点击自导航（`atreader:toc-chapter-pick` 事件 → chapterManager）；七猫 `.qm-fixed-right-extend`（抽屉靠 CSS :hover 展开，合成事件触发不了 :hover，连同工具栏容器一起放开并翻到工具栏左侧防溢出屏）。
+  - **点击路径**：番茄工具栏条目、起点 `#r-menu` 内最深「目录」节点、得到 `button.reader-tool-button.right-button-group-first-button`、多看 `span.j-toc`、掌阅 `[data-role="catalog"]`（原生抽屉已展开则跳过）。入口被「隐藏工具栏」收起时临时撤隐藏样式（`wxrd-hide-toolbar` / `plugin-<id>-toolbar`）再点：起点/得到关闭态宽高由站点 JS 惰性设置（rect 0×0），CSS 强制无效，只能点击。
+  - 本地阅读器在 `src/local-reader/index.ts` 单独监听 `remote-hid-button`：长按打开 `#chapterButton` 面板，短按收起；同时拦截遥控菜单键引发的 `contextmenu`（顶层 + 全部同源 iframe——焦点在正文 iframe 时事件派发不到顶层），避免弹 WebKit 默认菜单；目录/样式面板带 45% 黑遮罩（点遮罩/Esc/短按收起），面板近满高（上下 12px）。
+  - 合成点击要点：真实点击事件序列（pointerdown → mousedown → pointerup → mouseup → click）+ 坐标/`detail` 字段；`isTrusted` 在实例上 `defineProperty` 伪装为 true（原型 getter 可被实例覆盖）——番茄/起点/得到/多看均吃这套；微信读书防护更深（`isTrusted` 伪装也无效），只有 React 直调或 CSS 强制两条路。
+  - 得到原生支持 ←/→ 翻页：插件 `nextPage/prevPage` 合成方向键桥接遥控音量键翻页（`defineProperty` 注入 keyCode，同多看）。
 - 已知副作用（2026-10-31 已解决）：监听模式下按音量键，系统音量仍会真实变化——音量以 NX_SYSDEFINED 进入会话级事件流。现在 `media_key_suppressor.rs` 在遥控器音量键按住期间用会话级 CGEventTap 吞掉**全部 NX_SYSDEFINED**（系统事件里的键码与到达顺序不可靠，整类吞掉最稳），松开即恢复；30 秒兜底有效期防止 release 丢失。物理键盘音量键只在遥控器音量键按住的那一瞬间被一并吞掉。
 - 抑制器约束：修改事件需要「辅助功能」权限（未授权时只提示、不阻断翻页；已授权时遥控器连接即预启动 tap，避免首次按键漏吞）；tap 跑在专用线程 RunLoop 上（挂主线程 = 主线程一卡整机输入停摆）；系统超时/禁用后立即重新启用；进程退出由系统回收。
 - 三期：语音键接 ATVV 蓝牙音频流（SayAll 的 `AB5E0001-…` 服务族，IMA/DVI ADPCM → 16kHz PCM → 喂现有 `voice_turner` 的 Speech.framework 识别），遥控器作为语音翻页的输入麦克风；固件仅在按住语音键时发音频，天然 PTT。

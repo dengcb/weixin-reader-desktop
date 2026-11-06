@@ -125,6 +125,11 @@ body.atreader-fanqie-paged .reader-toolbar {
   left: min(calc(90% + 8px), calc(100% - 64px)) !important;
 }
 
+/* 目录抽屉同样贴书页右缘，而不是视口右缘（与工具栏同一参照）。 */
+body.atreader-fanqie-paged .reader-catalog {
+  right: calc((100% - var(--atreader-shell-width)) / 2) !important;
+}
+
 @media (max-width: 760px) {
   body.atreader-fanqie-paged {
     --atreader-shell-padding: 32px;

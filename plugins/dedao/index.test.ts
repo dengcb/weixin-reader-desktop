@@ -60,14 +60,19 @@ describe('DedaoPlugin', () => {
     expect(plugin.isReaderPage()).toBe(false);
   });
 
-  it('裸站不派发任何翻页事件（翻页完全交给站点原生）', () => {
+  it('nextPage/prevPage 合成方向键并注入 keyCode（遥控翻页桥接）', () => {
     history.replaceState({}, '', '/ebook/reader');
-    let seen = 0;
-    document.addEventListener('keydown', () => { seen += 1; });
+    const seen: KeyboardEvent[] = [];
+    document.addEventListener('keydown', (event) => { seen.push(event); });
 
     const plugin = new DedaoPlugin();
     plugin.nextPage();
     plugin.prevPage();
-    expect(seen).toBe(0);
+
+    expect(seen.length).toBe(2);
+    expect(seen[0].key).toBe('ArrowRight');
+    expect(seen[1].key).toBe('ArrowLeft');
+    expect(seen[0].keyCode).toBe(39);
+    expect(seen[1].keyCode).toBe(37);
   });
 });

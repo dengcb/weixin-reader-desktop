@@ -39,8 +39,9 @@ const createManager = () => {
     keyboardHandler: null,
     keyupHandler: null,
     contextMenuHandler: null,
-    menuKeyDebouncing: false,
-    menuDebounceTimer: null,
+    menuHoldTimer: null,
+    menuLongFired: false,
+    menuPressActive: false,
     lastMenuKeyAt: 0,
     retryTimer: null,
     initializationGeneration: 0,
@@ -130,6 +131,12 @@ describe('RemoteManager keyboard contract', () => {
       cancelable: true,
     });
     window.dispatchEvent(repeatedMenuKey);
+    window.dispatchEvent(new KeyboardEvent('keyup', {
+      key: '\u0010',
+      code: 'Unidentified',
+      keyCode: 0,
+      cancelable: true,
+    }));
 
     expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'toggle_fullscreen' });
     expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
@@ -139,6 +146,35 @@ describe('RemoteManager keyboard contract', () => {
     expect(repeatedMenuKey.defaultPrevented).toBe(true);
     expect(leakedMenuKeys).toEqual([]);
     window.removeEventListener('keydown', siteKeyListener);
+    manager.destroy();
+  });
+
+  it('按住菜单键 500ms 打开目录且不切换工具栏', async () => {
+    const catalog = document.createElement('button');
+    catalog.title = '目录';
+    catalog.textContent = '目录';
+    let clicked = 0;
+    catalog.addEventListener('click', () => {
+      clicked += 1;
+    });
+    document.body.append(catalog);
+    const { manager } = createManager();
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'Unidentified',
+      keyCode: 0,
+      cancelable: true,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(clicked).toBe(1);
+    expect(settingsStore.update).not.toHaveBeenCalledWith({ hideToolbar: true });
+    window.dispatchEvent(new KeyboardEvent('keyup', {
+      key: '\u0010',
+      code: 'Unidentified',
+      keyCode: 0,
+      cancelable: true,
+    }));
+    expect(settingsStore.update).not.toHaveBeenCalledWith({ hideToolbar: true });
+    catalog.remove();
     manager.destroy();
   });
 
@@ -349,5 +385,49 @@ describe('RemoteManager HID button contract', () => {
     expect(hidListeners.has('remote-hid-button')).toBe(false);
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'PageDown' }));
     expect(nextPage).not.toHaveBeenCalled();
+  });
+
+  it('菜单键：长按开目录 → 单击收目录 → 再单击切工具栏，可循环', async () => {
+    // 微信读书结构：目录面板已在 DOM（点击无效 → 600ms 后 CSS 强制显示）
+    document.body.innerHTML =
+      '<div class="readerControls"><button class="readerControls_item catalog" title="目录"></button></div>'
+      + '<div class="readerCatalog" style="display:none"></div>';
+    const { manager } = createManager();
+    (manager as any).siteContext.siteId = 'weread';
+    (manager as any).siteContext.isReaderPage = true;
+
+    const tocStyle = () => document.querySelector('style[data-atreader-toc-reveal]');
+    const waitFor = async (cond: () => boolean): Promise<void> => {
+      for (let i = 0; i < 40 && !cond(); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+
+    emitHid('menu', 'press');
+    emitHid('menu', 'release');
+    // 短按且目录未开：切工具栏
+    expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
+    (settingsStore.update as unknown as { mockClear: () => void }).mockClear();
+
+    // 长按 500ms：打开目录（强制显示在点击尝试后 600ms 落地）
+    emitHid('menu', 'press');
+    await waitFor(() => tocStyle() !== null);
+    expect(tocStyle()).toBeTruthy();
+    emitHid('menu', 'release');
+    expect(settingsStore.update).not.toHaveBeenCalled();
+
+    // 单击：收起目录，不切工具栏
+    emitHid('menu', 'press');
+    emitHid('menu', 'release');
+    expect(tocStyle()).toBeFalsy();
+    expect(settingsStore.update).not.toHaveBeenCalled();
+
+    // 再单击：目录已关，恢复切工具栏语义（get mock 固定返回 hideToolbar:false）
+    emitHid('menu', 'press');
+    emitHid('menu', 'release');
+    expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
+
+    document.body.innerHTML = '';
+    manager.destroy();
   });
 });

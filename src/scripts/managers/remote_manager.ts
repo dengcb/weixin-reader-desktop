@@ -6,13 +6,14 @@ import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 import { invoke } from '../core/tauri';
 import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
+import { closeReaderToc, openReaderToc } from '../core/reader_toc';
 import {
   RemoteHidButtonEvent,
   resolveRemoteHidAction,
   subscribeRemoteHidButtons,
 } from '../core/remote_hid_source';
 
-const MENU_KEY_DEBOUNCE_MS = 1000;
+const MENU_HOLD_MS = 500;
 const MENU_CONTEXT_GUARD_MS = 1500;
 
 /**
@@ -28,14 +29,19 @@ export class RemoteManager {
   private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
   private detachIframeKeyboard: (() => void) | null = null;
   private unsubscribeRemoteHid: (() => void) | null = null;
-  private menuKeyDebouncing = false;
-  private menuDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private menuHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  private menuLongFired = false;
+  private menuPressActive = false;
+  private menuHidActive = false;
   private lastMenuKeyAt = 0;
+  private lastMenuReleaseAt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private initializationGeneration = 0;
   private unsubscribeSettings: (() => void) | null = null;
   private unsubscribeReaderCommand: (() => void) | null = null;
   private routeChangedHandler: (() => void) | null = null;
+  /** 微信读书强制目录的选章事件（站点状态机未参与，需自导航） */
+  private tocPickHandler: ((event: Event) => void) | null = null;
 
   // 当前章节索引（从 URL 或 API 获取）
   private currentChapterIdx: number = -1;
@@ -76,7 +82,37 @@ export class RemoteManager {
       this.tryInitialize();
     }
 
+    // 微信读书强制目录：站点状态机没参与，点章节由这里匹配章节数据自导航
+    this.tocPickHandler = (event: Event) => {
+      if (this.siteContext.siteId !== 'weread') return;
+      const title = (event as CustomEvent<{ title?: string }>).detail?.title;
+      if (title) this.navigateToChapterTitle(title);
+    };
+    window.addEventListener('atreader:toc-chapter-pick', this.tocPickHandler);
+
     log.info('[RemoteManager] 初始化完成');
+  }
+
+  /** 按目录项标题在 chapterManager 里找章并跳转（微信读书强制目录用）。 */
+  private navigateToChapterTitle(title: string): void {
+    const normalized = title.replace(/\s+/g, '');
+    const chapters = chapterManager.getChapters();
+    // 目录项带「第N章 」前缀，用去空白后缀匹配；同名章取最后一个
+    let target: (typeof chapters)[number] | null = null;
+    for (const chapter of chapters) {
+      const chapterTitle = (chapter.title ?? '').replace(/\s+/g, '');
+      if (chapterTitle.endsWith(normalized) || normalized.endsWith(chapterTitle)) {
+        target = chapter;
+      }
+    }
+    if (!target) {
+      log.info(`[RemoteManager] 目录选章未匹配: ${title}`);
+      return;
+    }
+    const url = chapterManager.buildChapterUrl(target.chapterIdx);
+    if (!url) return;
+    log.info(`[RemoteManager] 目录跳转: ${target.title}`);
+    window.location.href = url;
   }
 
   /**
@@ -322,7 +358,7 @@ export class RemoteManager {
       }
       // 小米遥控器菜单键：首个未知信号立即切换工具栏；后续重复信号只负责阻止默认右键菜单。
       else if (e.code === 'Unidentified' && e.keyCode === 0) {
-        this.handleRemoteMenuSignal();
+        this.handleRemoteMenuSignal('system');
         handled = true;
       }
 
@@ -337,7 +373,7 @@ export class RemoteManager {
     this.contextMenuHandler = (e: MouseEvent) => {
       if (!this.siteContext.isReaderPage) return;
       if (this.isRemoteMenuContextEvent(e)) {
-        this.handleRemoteMenuSignal();
+        this.handleRemoteMenuSignal('system');
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -349,7 +385,7 @@ export class RemoteManager {
 
     this.keyupHandler = (e: KeyboardEvent) => {
       if (!this.siteContext.isReaderPage || !this.isRemoteMenuKeyboardEvent(e)) return;
-      this.handleRemoteMenuSignal();
+      this.handleRemoteMenuRelease('system');
       e.preventDefault();
       e.stopImmediatePropagation();
     };
@@ -366,6 +402,16 @@ export class RemoteManager {
   }
 
   private handleRemoteHidButton(event: RemoteHidButtonEvent) {
+    if (event.button === 'menu') {
+      if (event.phase === 'press') {
+        this.menuHidActive = true;
+        this.handleRemoteMenuSignal('hid');
+      } else if (event.phase === 'release') {
+        this.menuHidActive = false;
+        this.handleRemoteMenuRelease('hid');
+      }
+      return;
+    }
     const action = resolveRemoteHidAction(event.button, event.phase, this.siteContext.isReaderPage);
     if (action === 'page-forward') {
       this.performPageTurn('forward');
@@ -407,24 +453,62 @@ export class RemoteManager {
       && e.clientY === 1;
   }
 
-  private handleRemoteMenuSignal(): void {
+  /** 菜单键按下：短按在松开时显隐工具栏；按住 500ms 打开目录。 */
+  private handleRemoteMenuSignal(source: 'hid' | 'system'): void {
+    // 本地阅读器由自己的监听器处理，避免重复 toast/操作。
+    if (this.siteContext.siteId === 'local') return;
+    // 系统路径在 HID 按住期间不得抢先取消/重启计时。
+    if (source === 'system' && this.menuHidActive) return;
+    // 松开后迟到的系统 contextmenu 不再开启新一轮长按计时。
+    if (
+      source === 'system' &&
+      !this.menuPressActive &&
+      Date.now() - this.lastMenuReleaseAt < 300
+    ) {
+      return;
+    }
     this.lastMenuKeyAt = Date.now();
-    if (this.menuKeyDebouncing) return;
+    if (this.menuPressActive) return;
+    this.menuPressActive = true;
+    this.menuLongFired = false;
+    this.menuHoldTimer = setTimeout(() => {
+      this.menuHoldTimer = null;
+      this.menuLongFired = true;
+      const siteId = this.siteContext.siteId;
+      if (!this.siteContext.isReaderPage) return;
+      const outcome = openReaderToc(siteId);
+      log.info(`[RemoteManager] 菜单长按 site=${siteId} outcome=${outcome}`);
+      if (outcome === 'not-found') showToast('未找到目录入口');
+    }, MENU_HOLD_MS);
+  }
+
+  private handleRemoteMenuRelease(source: 'hid' | 'system'): void {
+    if (this.siteContext.siteId === 'local') return;
+    // 系统 keyup 可能早于 HID release；HID 仍按住时以 HID 为准。
+    if (source === 'system' && this.menuHidActive) return;
+    if (!this.menuPressActive) return;
+    this.menuPressActive = false;
+    this.lastMenuReleaseAt = Date.now();
+    if (this.menuHoldTimer !== null) {
+      clearTimeout(this.menuHoldTimer);
+      this.menuHoldTimer = null;
+    }
+    const longPress = this.menuLongFired;
+    this.menuLongFired = false;
+    if (longPress) return;
+    // 目录展开时，单击改为收起目录（长按开 → 单击关，可循环）；
+    // 目录没开时维持原语义：切换工具栏显隐。
+    if (closeReaderToc(this.siteContext.siteId)) return;
     const current = settingsStore.get();
     settingsStore.update({ hideToolbar: !current.hideToolbar });
-    this.menuKeyDebouncing = true;
-    this.menuDebounceTimer = setTimeout(() => {
-      this.menuKeyDebouncing = false;
-      this.menuDebounceTimer = null;
-    }, MENU_KEY_DEBOUNCE_MS);
   }
 
   destroy() {
     this.initializationGeneration++;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    if (this.menuDebounceTimer) clearTimeout(this.menuDebounceTimer);
-    this.menuDebounceTimer = null;
+    if (this.menuHoldTimer) clearTimeout(this.menuHoldTimer);
+    this.menuHoldTimer = null;
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = null;
     this.unsubscribeReaderCommand?.();
@@ -432,6 +516,10 @@ export class RemoteManager {
     if (this.routeChangedHandler) {
       window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
       this.routeChangedHandler = null;
+    }
+    if (this.tocPickHandler) {
+      window.removeEventListener('atreader:toc-chapter-pick', this.tocPickHandler);
+      this.tocPickHandler = null;
     }
     this.disable();
     chapterManager.reset();

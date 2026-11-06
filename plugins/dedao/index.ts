@@ -9,9 +9,10 @@
  * 禁止 ThemeManager 注入 html 反色滤镜（该滤镜会破坏 WebKit 在 SPA 路由
  * 切换后的点击命中）。这不是一项「功能」，而是一条「请勿打扰」声明。
  *
- * nextPage/prevPage 为接口必填的空实现：壳层拦截的 Space/PageUp/PageDown
- * 暂不做翻页桥接（蓝牙遥控器在得到内暂无翻页），←/→ 键壳层本就不拦截、
- * 由站点原生处理。
+ * nextPage/prevPage 桥接蓝牙遥控翻页：壳层拦截的 Space/PageUp/PageDown 与
+ * 遥控音量键最终都汇聚到这两个方法，这里合成 ←/→ 键交给站点原生翻页
+ *（方向键壳层本就不拦截，由站点自己监听）。合成事件必须 defineProperty
+ * 注入 keyCode/which：WebKit 的 KeyboardEventInit 不认这两个字段。
  */
 
 import type {
@@ -66,9 +67,30 @@ export class DedaoPlugin implements ReaderPlugin {
     );
   }
 
-  nextPage(): void {}
+  nextPage(): void {
+    this.dispatchFlip('ArrowRight', 39);
+  }
 
-  prevPage(): void {}
+  prevPage(): void {
+    this.dispatchFlip('ArrowLeft', 37);
+  }
+
+  private dispatchFlip(key: 'ArrowLeft' | 'ArrowRight', keyCode: number): void {
+    if (!this.isReaderPage()) return;
+    const make = (type: 'keydown' | 'keyup'): KeyboardEvent => {
+      const event = new KeyboardEvent(type, {
+        key,
+        code: key,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'keyCode', { value: keyCode });
+      Object.defineProperty(event, 'which', { value: keyCode });
+      return event;
+    };
+    document.dispatchEvent(make('keydown'));
+    document.dispatchEvent(make('keyup'));
+  }
 
   getStyles() {
     return {};

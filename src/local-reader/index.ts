@@ -281,6 +281,11 @@ class LocalReader implements LocalReaderController {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private runtime: AppRuntime | null = null;
   private keyHandler: ((event: KeyboardEvent) => void) | null = null;
+  private remoteMenuHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  private remoteMenuUnlisten: (() => void) | null = null;
+  /** 拦截 contextmenu（遥控器菜单键会引发 WebKit 默认菜单；iframe 内需单独挂） */
+  private contextMenuGuard: ((event: MouseEvent) => void) | null = null;
+  private contextMenuGuardObserver: MutationObserver | null = null;
   private visibilityHandler: (() => void) | null = null;
   private resizeHandler: (() => void) | null = null;
   private destroyed = false;
@@ -340,6 +345,7 @@ class LocalReader implements LocalReaderController {
     // 加载，onSectionLoad 按 keyHandler 是否存在决定是否给章节 iframe 挂
     // keydown；拖选进行中按方向键才不会失灵（2026-11 审计 L-P2-7）。
     this.setupKeyboard();
+    this.setupRemoteMenuHold();
     await this.restorePosition();
     localReaderLog('position_restored', { bookId: this.bookId });
     this.ready = true;
@@ -948,6 +954,7 @@ class LocalReader implements LocalReaderController {
     });
     element('chapterButton').addEventListener('click', () => this.togglePanel('chapterPanel'));
     element('styleButton').addEventListener('click', () => this.togglePanel('stylePanel'));
+    document.getElementById('panelOverlay')?.addEventListener('click', () => this.closePanels());
     // 点击面板与开关按钮以外的区域关闭面板；正文 iframe 内的点击另挂钩子。
     document.addEventListener('click', (event) => {
       const target = event.target as HTMLElement | null;
@@ -1093,6 +1100,7 @@ class LocalReader implements LocalReaderController {
         this.expandActivePath();
         this.updateActiveChapter();
       }
+      document.getElementById('panelOverlay')?.classList.add('show');
     }
   }
 
@@ -1111,6 +1119,7 @@ class LocalReader implements LocalReaderController {
     });
     element('chapterButton').classList.remove('active');
     element('styleButton').classList.remove('active');
+    document.getElementById('panelOverlay')?.classList.remove('show');
     // 关闭面板时把焦点收回外层文档：正文 iframe 一旦持有焦点，键盘事件只进入
     // iframe，window 级翻页处理收不到；仅在确实关闭了面板时收回，避免正文
     // 划选等常规交互被抢焦点。
@@ -1221,6 +1230,69 @@ class LocalReader implements LocalReaderController {
       parent.classList.remove('collapsed');
       parent.querySelector('.chapter-chevron')?.setAttribute('aria-expanded', 'true');
     }
+  }
+
+  /** 遥控器菜单键：按住 0.5s 直接展开章节目录（短按维持原行为）。 */
+  private setupRemoteMenuHold(): void {
+    // 小米遥控器菜单键在 macOS WebKit 里伴随一个 contextmenu，弹出 WebKit
+    // 默认菜单（返回/重新载入/检查元素）。焦点在正文 iframe 时事件派发到
+    // iframe 文档、顶层监听器收不到——顶层 + 全部同源 iframe 都挂拦截。
+    // 本地阅读器顶层是自研 UI，不需要右键菜单。
+    const guard = (event: MouseEvent): void => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener('contextmenu', guard, { capture: true });
+    this.contextMenuGuard = guard;
+    const attachToFrame = (frame: HTMLIFrameElement): void => {
+      try {
+        frame.contentWindow?.addEventListener('contextmenu', guard, { capture: true });
+      } catch {
+        // 跨域 iframe 无权访问，忽略（正文 iframe 为同源 atreader://）
+      }
+    };
+    document.querySelectorAll('iframe').forEach(attachToFrame);
+    const observer = new MutationObserver(() => {
+      document.querySelectorAll('iframe').forEach(attachToFrame);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    this.contextMenuGuardObserver = observer;
+    const tauri = window.__TAURI__;
+    const listen = tauri?.event?.listen;
+    if (typeof listen !== 'function') return;
+    void listen('remote-hid-button', (event) => {
+      if (this.destroyed) return;
+      const payload = event.payload as
+        | { button?: string; phase?: string }
+        | undefined;
+      if (payload?.button !== 'menu') return;
+      if (payload.phase === 'press') {
+        if (this.remoteMenuHoldTimer !== null) return;
+        this.remoteMenuHoldTimer = setTimeout(() => {
+          this.remoteMenuHoldTimer = null;
+          const panel = document.getElementById('chapterPanel');
+          if (panel && !panel.classList.contains('open')) {
+            this.togglePanel('chapterPanel');
+          }
+        }, 500);
+      } else if (payload.phase === 'release') {
+        if (this.remoteMenuHoldTimer !== null) {
+          clearTimeout(this.remoteMenuHoldTimer);
+          this.remoteMenuHoldTimer = null;
+          // 长按开过目录后，单击收起（长按开 → 单击关循环）；
+          // 目录未开时空按菜单键不做事，与远程站点语义一致。
+          const panel = document.getElementById('chapterPanel');
+          if (panel?.classList.contains('open')) {
+            this.togglePanel('chapterPanel');
+          }
+        }
+      }
+    })
+      .then((unlisten) => {
+        if (this.destroyed) unlisten();
+        else this.remoteMenuUnlisten = unlisten;
+      })
+      .catch(() => undefined);
   }
 
   private setupKeyboard(): void {
@@ -1352,6 +1424,16 @@ class LocalReader implements LocalReaderController {
     this.destroyed = true;
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler, { capture: true });
     this.keyHandler = null;
+    if (this.remoteMenuHoldTimer !== null) clearTimeout(this.remoteMenuHoldTimer);
+    this.remoteMenuHoldTimer = null;
+    this.remoteMenuUnlisten?.();
+    this.remoteMenuUnlisten = null;
+    if (this.contextMenuGuard) {
+      window.removeEventListener('contextmenu', this.contextMenuGuard, { capture: true });
+      this.contextMenuGuard = null;
+    }
+    this.contextMenuGuardObserver?.disconnect();
+    this.contextMenuGuardObserver = null;
     if (this.visibilityHandler) document.removeEventListener('visibilitychange', this.visibilityHandler);
     this.visibilityHandler = null;
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);

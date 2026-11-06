@@ -91,11 +91,7 @@ const SWITCHER_CSS = `
 #${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-panel {
   pointer-events: auto;
   display: flex;
-  flex-wrap: wrap;
-  align-content: center;
-  justify-content: center;
-  gap: 8px;
-  max-width: min(720px, 100%);
+  max-width: min(960px, 100%);
   padding: 20px;
   border: 1px solid var(--panel-border);
   border-radius: 20px;
@@ -107,6 +103,50 @@ const SWITCHER_CSS = `
   transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+/* 单行排布，永不换行；超出面板宽度时横向滚动，选中项自动滚入视野，
+   两端的裁切内容用渐隐提示（macOS Cmd+Tab 语义）。 */
+#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-track {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* 高亮项放大 1.05 + 阴影需要少量裁切余量 */
+  padding: 6px;
+  margin: -6px;
+}
+#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-track::-webkit-scrollbar {
+  display: none;
+}
+#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-track.wxrd-switcher-fade-left {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px);
+  mask-image: linear-gradient(to right, transparent 0, #000 28px);
+}
+#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-track.wxrd-switcher-fade-right {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px);
+  mask-image: linear-gradient(to left, transparent 0, #000 28px);
+}
+#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-track.wxrd-switcher-fade-left.wxrd-switcher-fade-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 28px,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 28px,
+    #000 calc(100% - 28px),
+    transparent 100%
+  );
 }
 #${BOOKSTORE_SWITCHER_ID}.wxrd-switcher-shown .wxrd-switcher-panel {
   transform: scale(1);
@@ -417,9 +457,13 @@ export class BookstoreSwitcherController {
     root.textContent = '';
     const panel = this.doc.createElement('div');
     panel.className = 'wxrd-switcher-panel';
+    const track = this.doc.createElement('div');
+    track.className = 'wxrd-switcher-track';
     this.entries.forEach((entry, entryIndex) => {
-      panel.appendChild(this.renderItem(entry, entryIndex, entryIndex === this.currentListIndex));
+      track.appendChild(this.renderItem(entry, entryIndex, entryIndex === this.currentListIndex));
     });
+    track.addEventListener('scroll', () => this.syncTrackOverflow(track));
+    panel.appendChild(track);
     root.appendChild(panel);
     if (!root.parentNode) this.doc.body.appendChild(root);
     this.updateHighlight();
@@ -477,6 +521,34 @@ export class BookstoreSwitcherController {
     root.querySelectorAll('.wxrd-switcher-item').forEach((item, itemIndex) => {
       item.classList.toggle('wxrd-switcher-active', itemIndex === this.highlightIndex);
     });
+    this.scrollHighlightIntoView();
+  }
+
+  /** 单行轨道溢出时，把高亮项滚动到可视区（Cmd+Tab 选中项自动跟随）。 */
+  private scrollHighlightIntoView(): void {
+    const root = this.doc.getElementById(BOOKSTORE_SWITCHER_ID);
+    const track = root?.querySelector<HTMLElement>('.wxrd-switcher-track');
+    const active = root?.querySelector<HTMLElement>('.wxrd-switcher-active');
+    if (!track || !active) return;
+    const trackRect = track.getBoundingClientRect();
+    const itemRect = active.getBoundingClientRect();
+    const margin = 12;
+    if (itemRect.left < trackRect.left + margin) {
+      track.scrollLeft -= trackRect.left + margin - itemRect.left;
+    } else if (itemRect.right > trackRect.right - margin) {
+      track.scrollLeft += itemRect.right - (trackRect.right - margin);
+    }
+    this.syncTrackOverflow(track);
+  }
+
+  /** 只有被裁切的那一侧才显示渐隐；滚到尽头后对应侧恢复实边。 */
+  private syncTrackOverflow(track: HTMLElement): void {
+    const overflowing = track.scrollWidth > track.clientWidth + 1;
+    track.classList.toggle('wxrd-switcher-fade-left', overflowing && track.scrollLeft > 1);
+    track.classList.toggle(
+      'wxrd-switcher-fade-right',
+      overflowing && track.scrollLeft + track.clientWidth < track.scrollWidth - 1,
+    );
   }
 
   private show(): void {

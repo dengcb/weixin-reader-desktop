@@ -108,10 +108,10 @@ body:not([data-theme="dark"]) .tool-button #themeIconDark, body[data-theme="dark
 .reader-panel {
   position: fixed;
   z-index: 50;
-  top: 70px;
+  top: 12px;
+  bottom: 12px;
   right: 84px;
   width: min(370px, calc(100vw - 112px));
-  max-height: calc(100vh - 106px);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--hairline);
@@ -125,6 +125,17 @@ body:not([data-theme="dark"]) .tool-button #themeIconDark, body[data-theme="dark
   pointer-events: none;
   transition: opacity .18s ease, transform .18s ease;
 }
+/* 面板遮罩：压暗全文、点遮罩收面板（与微信读书目录遮罩同款语义） */
+#panelOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, .45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+#panelOverlay.show { opacity: 1; pointer-events: auto; }
 .reader-panel.open { opacity: 1; transform: none; pointer-events: auto; }
 .panel-header {
   display: flex;
