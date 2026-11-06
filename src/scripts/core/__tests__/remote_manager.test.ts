@@ -42,6 +42,8 @@ const createManager = () => {
     menuHoldTimer: null,
     menuLongFired: false,
     menuPressActive: false,
+    menuHidActive: false,
+    holdTimers: new Map(),
     lastMenuKeyAt: 0,
     retryTimer: null,
     initializationGeneration: 0,
@@ -112,13 +114,15 @@ describe('RemoteManager keyboard contract', () => {
     input.remove();
   });
 
-  it('maps Enter to fullscreen toggle, Home and the menu key to setting fields', () => {
+  it('maps Enter to fullscreen toggle and intercepts the system Home key', () => {
     const { manager } = createManager();
     const leakedMenuKeys: KeyboardEvent[] = [];
     const siteKeyListener = (event: KeyboardEvent) => leakedMenuKeys.push(event);
     window.addEventListener('keydown', siteKeyListener);
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', cancelable: true }));
-    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Home', cancelable: true }));
+    // Home 系统键只拦截（防默认滚动）；显隐导航栏统一走 HID home 分流
+    const homeKey = new KeyboardEvent('keydown', { code: 'Home', cancelable: true });
+    window.dispatchEvent(homeKey);
     const menuKey = new KeyboardEvent('keydown', {
       code: 'Unidentified',
       keyCode: 0,
@@ -139,9 +143,9 @@ describe('RemoteManager keyboard contract', () => {
     }));
 
     expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'toggle_fullscreen' });
-    expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
+    expect(homeKey.defaultPrevented).toBe(true);
     expect(settingsStore.update).toHaveBeenCalledWith({ hideToolbar: true });
-    expect(settingsStore.update).toHaveBeenCalledTimes(2);
+    expect(settingsStore.update).toHaveBeenCalledTimes(1);
     expect(menuKey.defaultPrevented).toBe(true);
     expect(repeatedMenuKey.defaultPrevented).toBe(true);
     expect(leakedMenuKeys).toEqual([]);
@@ -328,16 +332,48 @@ describe('RemoteManager HID button contract', () => {
     EventBus.clearHistory();
   });
 
-  it('音量键仅阅读页翻页：Vol+ 上一页，Vol- 下一页', () => {
+  it('音量键短按松开翻页，仅阅读页生效', () => {
     const { manager, nextPage, prevPage } = createManager();
     emitHid('volume_up', 'press');
+    emitHid('volume_up', 'release');
     emitHid('volume_down', 'press');
+    emitHid('volume_down', 'release');
     expect(prevPage).toHaveBeenCalledTimes(1);
     expect(nextPage).toHaveBeenCalledTimes(1);
 
     (manager as any).siteContext.isReaderPage = false;
     emitHid('volume_up', 'press');
+    emitHid('volume_up', 'release');
     expect(prevPage).toHaveBeenCalledTimes(1);
+    manager.destroy();
+  });
+
+  it('音量键长按 0.5 秒触发缩放，松开不再翻页', async () => {
+    const { manager, nextPage, prevPage } = createManager();
+    emitHid('volume_up', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('volume_up', 'release');
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'zoom_in' });
+    expect(prevPage).not.toHaveBeenCalled();
+
+    emitHid('volume_down', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('volume_down', 'release');
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'zoom_out' });
+    expect(nextPage).not.toHaveBeenCalled();
+    manager.destroy();
+  });
+
+  it('主页键长按回书城首页，短按切导航栏', async () => {
+    const { manager } = createManager();
+    emitHid('home', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('home', 'release');
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'bookstore_home' });
+
+    emitHid('home', 'press');
+    emitHid('home', 'release');
+    expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
     manager.destroy();
   });
 
@@ -349,10 +385,16 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('返回键走菜单动作切换宽屏', () => {
+  it('返回键短按松开切宽屏，长按恢复 100%', async () => {
     const { manager } = createManager();
     emitHid('back', 'press');
+    emitHid('back', 'release');
     expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'reader_wide' });
+
+    emitHid('back', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('back', 'release');
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'zoom_reset' });
     manager.destroy();
   });
 

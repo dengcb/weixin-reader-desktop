@@ -283,6 +283,8 @@ class LocalReader implements LocalReaderController {
   private keyHandler: ((event: KeyboardEvent) => void) | null = null;
   private remoteMenuHoldTimer: ReturnType<typeof setTimeout> | null = null;
   private remoteMenuUnlisten: (() => void) | null = null;
+  /** 音量/返回/主页的按住计时（按钮 → 定时器），与远程站点同款 0.5s 分流 */
+  private holdTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 拦截 contextmenu（遥控器菜单键会引发 WebKit 默认菜单；iframe 内需单独挂） */
   private contextMenuGuard: ((event: MouseEvent) => void) | null = null;
   private contextMenuGuardObserver: MutationObserver | null = null;
@@ -1265,7 +1267,15 @@ class LocalReader implements LocalReaderController {
       const payload = event.payload as
         | { button?: string; phase?: string }
         | undefined;
-      if (payload?.button !== 'menu') return;
+      if (!payload?.button || !payload.phase) return;
+      if (payload.button !== 'menu') {
+        // 与远程站点同款 0.5s 长按分流：音量±/返回/主页
+        this.handleRemoteButtonHold(
+          payload.button,
+          payload.phase as 'press' | 'release',
+        );
+        return;
+      }
       if (payload.phase === 'press') {
         if (this.remoteMenuHoldTimer !== null) return;
         this.remoteMenuHoldTimer = setTimeout(() => {
@@ -1293,6 +1303,71 @@ class LocalReader implements LocalReaderController {
         else this.remoteMenuUnlisten = unlisten;
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * 与远程站点同款 0.5s 长按分流：
+   * 音量± 短按翻页 / 长按页面放大缩小，返回 长按恢复 100%（短按宽窄），
+   * 主页 长按回到书籍开头（短按的导航栏开关仍由系统键盘路径承担）。
+   */
+  private handleRemoteButtonHold(button: string, phase: 'press' | 'release'): void {
+    const shortcutsEnabled = settingsStore.get().enableRemoteController !== false;
+    switch (button) {
+      case 'volume_up':
+        this.handleButtonHold(button, phase, shortcutsEnabled,
+          () => void invoke('simulate_menu_click', { action: 'zoom_in' }).catch(() => {}),
+          () => {
+            // 翻页前清空选区：保留选区时 foliate 的选区联动会拦截翻页（issue #5）
+            window.getSelection()?.removeAllRanges();
+            void this.prevPage();
+          });
+        return;
+      case 'volume_down':
+        this.handleButtonHold(button, phase, shortcutsEnabled,
+          () => void invoke('simulate_menu_click', { action: 'zoom_out' }).catch(() => {}),
+          () => {
+            window.getSelection()?.removeAllRanges();
+            void this.nextPage();
+          });
+        return;
+      case 'back':
+        this.handleButtonHold(button, phase, shortcutsEnabled,
+          () => void invoke('simulate_menu_click', { action: 'zoom_reset' }).catch(() => {}),
+          () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
+        return;
+      case 'home':
+        this.handleButtonHold(button, phase, true,
+          () => {
+            this.closePanels();
+            void this.navigate({ index: 0 }, true);
+          },
+          () => {});
+        return;
+    }
+  }
+
+  /** 与 RemoteManager 同构的通用长按分流。 */
+  private handleButtonHold(
+    button: string,
+    phase: 'press' | 'release',
+    enabled: boolean,
+    onLong: () => void,
+    onShort: () => void,
+  ): void {
+    if (phase === 'press') {
+      if (!enabled || this.holdTimers.has(button)) return;
+      const timer = setTimeout(() => {
+        this.holdTimers.delete(button);
+        onLong();
+      }, 500);
+      this.holdTimers.set(button, timer);
+      return;
+    }
+    const timer = this.holdTimers.get(button);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.holdTimers.delete(button);
+    onShort();
   }
 
   private setupKeyboard(): void {
@@ -1426,6 +1501,8 @@ class LocalReader implements LocalReaderController {
     this.keyHandler = null;
     if (this.remoteMenuHoldTimer !== null) clearTimeout(this.remoteMenuHoldTimer);
     this.remoteMenuHoldTimer = null;
+    for (const timer of this.holdTimers.values()) clearTimeout(timer);
+    this.holdTimers.clear();
     this.remoteMenuUnlisten?.();
     this.remoteMenuUnlisten = null;
     if (this.contextMenuGuard) {

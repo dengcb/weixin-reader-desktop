@@ -18,38 +18,6 @@ export interface RemoteHidButtonEvent {
   usage: number;
 }
 
-export type RemoteHidAction =
-  | 'page-backward'
-  | 'page-forward'
-  | 'toggle-stealth'
-  | 'toggle-wide';
-
-/**
- * 按键 → 动作：音量+ 上一页、音量− 下一页（仅阅读页）；
- * 返回切换阅读区域宽窄；电源复用摸鱼键语义。
- * TV 由 BookstoreSwitcherManager 消费（短按切下一个书城、长按呼出
- * 切换浮层），voice 由 Rust 侧 ATVV 语音链路消费，这里都不绑定。
- */
-export const resolveRemoteHidAction = (
-  button: string,
-  phase: RemoteHidPhase,
-  isReaderPage: boolean,
-): RemoteHidAction | null => {
-  if (phase !== 'press') return null;
-  switch (button) {
-    case 'volume_up':
-      return isReaderPage ? 'page-backward' : null;
-    case 'volume_down':
-      return isReaderPage ? 'page-forward' : null;
-    case 'back':
-      return 'toggle-wide';
-    case 'power':
-      return 'toggle-stealth';
-    default:
-      return null;
-  }
-};
-
 /**
  * 订阅按键事件，返回取消函数。注册是异步的：取消发生在注册完成前时，
  * 迟到的 unlisten 会被立即执行，不产生泄漏。

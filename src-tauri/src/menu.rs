@@ -681,6 +681,7 @@ fn action_requires_main_focus(id: &str) -> bool {
             | "zoom_in"
             | "zoom_out"
             | "zoom_reset"
+            | "bookstore_home"
             | "toggle_fullscreen"
     )
 }
@@ -780,6 +781,28 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
                 let _ = win.set_zoom(1.0);
                 save_zoom(app, &site_id, 1.0);
                 let _ = win.emit("show-toast", "100%");
+            }
+        }
+        // 遥控器主页键长按：回到当前书城首页（本地书由 local-reader 前端
+        // 跳书籍开头，不经过这里）。与「记住页」无关，永远去 home_url。
+        "bookstore_home" => {
+            let site_id = current_site_id(app);
+            if site_id == "local" {
+                return Ok(());
+            }
+            let Some(url) = crate::sites::resolve_home_url(app, &site_id) else {
+                return Ok(());
+            };
+            if let Some(win) = app.get_webview_window("main") {
+                // 跨站导航外观复位与缩放预置，同 switch_to_site 的导航段
+                let _ = win.set_theme(None);
+                crate::commands::apply_site_zoom(app.clone(), site_id.clone());
+                match url.parse::<tauri::Url>() {
+                    Ok(u) => {
+                        let _ = win.navigate(u);
+                    }
+                    Err(e) => log::warn!(target: "bookstore", "Invalid URL '{}': {:?}", url, e),
+                }
             }
         }
         "show_memory" => {

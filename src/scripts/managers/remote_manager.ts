@@ -9,12 +9,14 @@ import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
 import { closeReaderToc, openReaderToc } from '../core/reader_toc';
 import {
   RemoteHidButtonEvent,
-  resolveRemoteHidAction,
+  RemoteHidPhase,
   subscribeRemoteHidButtons,
 } from '../core/remote_hid_source';
 
 const MENU_HOLD_MS = 500;
 const MENU_CONTEXT_GUARD_MS = 1500;
+/** 音量/返回/主页的「长按」判定阈值，与菜单键一致 */
+const BUTTON_HOLD_MS = 500;
 
 /**
  * RemoteManager - 极简蓝牙遥控器管理器
@@ -33,6 +35,8 @@ export class RemoteManager {
   private menuLongFired = false;
   private menuPressActive = false;
   private menuHidActive = false;
+  /** 音量/返回/主页的按住计时（按钮 → 定时器）；长按触发即删，迟到 release 自然早退 */
+  private holdTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastMenuKeyAt = 0;
   private lastMenuReleaseAt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -350,10 +354,9 @@ export class RemoteManager {
         invoke('simulate_menu_click', { action: 'toggle_fullscreen' }).catch(() => {});
         handled = true;
       }
-      // Home - 隐藏导航栏
+      // Home 键：系统路径只拦截（防默认滚动），功能统一走 HID home 的
+      // press/release（短按显隐导航栏、长按回书城首页），避免双路径重复触发。
       else if (e.code === 'Home') {
-        const current = settingsStore.get();
-        settingsStore.update({ hideNavbar: !current.hideNavbar });
         handled = true;
       }
       // 小米遥控器菜单键：首个未知信号立即切换工具栏；后续重复信号只负责阻止默认右键菜单。
@@ -412,23 +415,40 @@ export class RemoteManager {
       }
       return;
     }
-    const action = resolveRemoteHidAction(event.button, event.phase, this.siteContext.isReaderPage);
-    if (action === 'page-forward') {
-      this.performPageTurn('forward');
-      return;
-    }
-    if (action === 'page-backward') {
-      this.performPageTurn('backward');
-      return;
-    }
-    if (action === 'toggle-stealth') {
-      invoke('toggle_stealth').catch(() => {});
-      return;
-    }
-    if (action === 'toggle-wide') {
-      // 走菜单动作路径，继承阅读页门禁与状态同步
-      invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {});
-      return;
+    const isReaderPage = this.siteContext.isReaderPage;
+    switch (event.button) {
+      // 音量±：短按翻页（阅读页），长按 0.5s 页面放大/缩小（同 ⌘+/⌘−）
+      case 'volume_up':
+        this.handleButtonHold(event.button, event.phase, isReaderPage,
+          () => void invoke('simulate_menu_click', { action: 'zoom_in' }).catch(() => {}),
+          () => this.performPageTurn('backward'));
+        return;
+      case 'volume_down':
+        this.handleButtonHold(event.button, event.phase, isReaderPage,
+          () => void invoke('simulate_menu_click', { action: 'zoom_out' }).catch(() => {}),
+          () => this.performPageTurn('forward'));
+        return;
+      // 返回：短按切换阅读区域宽窄，长按 0.5s 页面恢复 100%（同 ⌘0）
+      case 'back':
+        this.handleButtonHold(event.button, event.phase, true,
+          () => void invoke('simulate_menu_click', { action: 'zoom_reset' }).catch(() => {}),
+          () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
+        return;
+      // 主页：短按显隐顶部导航栏（原系统键盘路径语义），长按 0.5s 回书城首页
+      case 'home':
+        this.handleButtonHold(event.button, event.phase, isReaderPage,
+          () => void invoke('simulate_menu_click', { action: 'bookstore_home' }).catch(() => {}),
+          () => {
+            const current = settingsStore.get();
+            settingsStore.update({ hideNavbar: !current.hideNavbar });
+          });
+        return;
+      // 电源：摸鱼键（按下即触发，无长短按之分）
+      case 'power':
+        if (event.phase === 'press') {
+          invoke('toggle_stealth').catch(() => {});
+        }
+        return;
     }
     // 未绑定动作且系统路径也给不到的键：记日志便于后续映射（voice 留给三期 ATVV）。
     if (event.phase === 'press') {
@@ -436,6 +456,33 @@ export class RemoteManager {
         log.info(`[RemoteHid] 按键 ${event.button}（暂未绑定动作）`);
       }
     }
+  }
+
+  /**
+   * 通用长按分流：按住 holdMs 触发 onLong（仅一次），松开时若长按未触发
+   * 则执行 onShort。enabled=false 时整颗按键不响应（如非阅读页的音量键）。
+   */
+  private handleButtonHold(
+    button: string,
+    phase: RemoteHidPhase,
+    enabled: boolean,
+    onLong: () => void,
+    onShort: () => void,
+  ): void {
+    if (phase === 'press') {
+      if (!enabled || this.holdTimers.has(button)) return;
+      const timer = setTimeout(() => {
+        this.holdTimers.delete(button);
+        onLong();
+      }, BUTTON_HOLD_MS);
+      this.holdTimers.set(button, timer);
+      return;
+    }
+    const timer = this.holdTimers.get(button);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.holdTimers.delete(button);
+    onShort();
   }
 
   private isRemoteMenuKeyboardEvent(e: KeyboardEvent): boolean {
@@ -509,6 +556,8 @@ export class RemoteManager {
     this.retryTimer = null;
     if (this.menuHoldTimer) clearTimeout(this.menuHoldTimer);
     this.menuHoldTimer = null;
+    for (const timer of this.holdTimers.values()) clearTimeout(timer);
+    this.holdTimers.clear();
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = null;
     this.unsubscribeReaderCommand?.();

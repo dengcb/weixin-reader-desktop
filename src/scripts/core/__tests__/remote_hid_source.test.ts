@@ -1,34 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import {
-  resolveRemoteHidAction,
-  subscribeRemoteHidButtons,
-} from '../remote_hid_source';
-
-describe('resolveRemoteHidAction', () => {
-  it('音量键仅阅读页翻页：Vol+ 上一页，Vol- 下一页', () => {
-    expect(resolveRemoteHidAction('volume_up', 'press', true)).toBe('page-backward');
-    expect(resolveRemoteHidAction('volume_down', 'press', true)).toBe('page-forward');
-    expect(resolveRemoteHidAction('volume_up', 'press', false)).toBeNull();
-    expect(resolveRemoteHidAction('volume_down', 'press', false)).toBeNull();
-  });
-
-  it('返回切宽窄、电源摸鱼在任意页面生效；TV 由书城浮层管理器消费', () => {
-    expect(resolveRemoteHidAction('back', 'press', true)).toBe('toggle-wide');
-    expect(resolveRemoteHidAction('back', 'press', false)).toBe('toggle-wide');
-    expect(resolveRemoteHidAction('tv', 'press', false)).toBeNull();
-    expect(resolveRemoteHidAction('tv', 'press', true)).toBeNull();
-    expect(resolveRemoteHidAction('power', 'press', false)).toBe('toggle-stealth');
-  });
-
-  it('release 与未映射按键返回 null', () => {
-    expect(resolveRemoteHidAction('volume_up', 'release', true)).toBeNull();
-    expect(resolveRemoteHidAction('back', 'release', false)).toBeNull();
-    expect(resolveRemoteHidAction('power', 'release', false)).toBeNull();
-    for (const button of ['voice', 'ok', 'left', 'menu', 'usage_0x99']) {
-      expect(resolveRemoteHidAction(button, 'press', true)).toBeNull();
-    }
-  });
-});
+import { subscribeRemoteHidButtons } from '../remote_hid_source';
 
 describe('subscribeRemoteHidButtons', () => {
   const hadTauri = typeof (window as any).__TAURI__ !== 'undefined';
