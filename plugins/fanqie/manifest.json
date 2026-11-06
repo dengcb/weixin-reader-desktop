@@ -13,7 +13,8 @@
       "fanqienovel.com"
     ],
     "homeUrl": "https://fanqienovel.com/",
-    "readerPattern": "/reader/"
+    "readerPattern": "/reader/",
+    "shelf": "https://fanqienovel.com/bookshelf"
   },
   "capabilities": {
     "wideMode": true,

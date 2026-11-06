@@ -83,6 +83,15 @@ export const setSiteReadinessProbe = (probe: () => boolean): void => {
 };
 
 const SWITCH_LOADING_CSS = `
+/* 站点反色滤镜激活时（html.wxrd-theme-inverted），过场层二次反转抵消，
+   保持自有深色观感不被一起反色；内部元素交回原色（过场无图片资源） */
+html.wxrd-theme-inverted #${OVERLAY_ID} {
+  filter: invert(1) hue-rotate(180deg);
+}
+html.wxrd-theme-inverted #${OVERLAY_ID} :is(img, video, canvas, svg),
+html.wxrd-theme-inverted #${OVERLAY_ID} [style*="background-image"] {
+  filter: none !important;
+}
 #${OVERLAY_ID} {
   position: fixed;
   /* 不用 inset:0——它的宽度跟随布局视口，页面加载中经典滚动条出现/消失
@@ -191,6 +200,26 @@ export const isSiteSwitchNavigation = (
 
 /** 启动后多少毫秒内的导航视为「启动恢复」，不铺过场（启动窗口本身就是加载动画） */
 export const STARTUP_SUPPRESS_MS = 5000;
+
+/**
+ * 遥控器主页键「回书架」导航标记（RemoteManager 置位，多看弹回守卫消费）。
+ * 回书架是站内跳转：过场层 5 秒内见到该标记就不铺（值 = 置位时间戳）。
+ */
+export const HOME_NAV_FLAG_KEY = 'atreader-home-nav';
+export const HOME_NAV_SKIP_MS = 5000;
+
+export const isRecentHomeNav = (
+  storage: { getItem(key: string): string | null },
+  now: number = Date.now(),
+): boolean => {
+  let value = Number.NaN;
+  try {
+    value = Number(storage.getItem(HOME_NAV_FLAG_KEY));
+  } catch {
+    return false;
+  }
+  return Number.isFinite(value) && value > 0 && now - value >= 0 && now - value < HOME_NAV_SKIP_MS;
+};
 
 /**
  * 纯判定：当前是否处于启动窗口期（Rust 在初始化脚本里注入启动时间戳）。

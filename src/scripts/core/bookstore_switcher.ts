@@ -88,6 +88,14 @@ const SWITCHER_CSS = `
 #${BOOKSTORE_SWITCHER_ID}.wxrd-switcher-shown {
   opacity: 1;
 }
+/* 站点反色滤镜激活时二次反转抵消：浮层与图标保持自有设计观感
+  （html 反色 + 浮层反色 = 原色；内部 img/svg 交回站点反转规则之外的原始色） */
+html.wxrd-theme-inverted #${BOOKSTORE_SWITCHER_ID} {
+  filter: invert(1) hue-rotate(180deg);
+}
+html.wxrd-theme-inverted #${BOOKSTORE_SWITCHER_ID} :is(img, video, canvas, svg) {
+  filter: none !important;
+}
 #${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-panel {
   pointer-events: auto;
   display: flex;

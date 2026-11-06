@@ -20,6 +20,8 @@
     "allow-get-settings",
     "allow-patch-settings",
     "allow-get-local-book",
+    "allow-get-local-books",
+    "allow-open-local-book-by-id",
     "allow-get-local-reading-progress",
     "allow-save-local-reading-progress",
     "allow-local-sha1"

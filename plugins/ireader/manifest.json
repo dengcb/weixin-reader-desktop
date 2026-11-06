@@ -12,7 +12,8 @@
       "pc.ireader.com"
     ],
     "homeUrl": "https://pc.ireader.com/",
-    "readerPattern": "/reader/\\d+"
+    "readerPattern": "/reader/\\d+",
+    "shelf": "https://pc.ireader.com/"
   },
   "capabilities": {
     "wideMode": true,

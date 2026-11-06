@@ -12,7 +12,8 @@
       "duokan.com"
     ],
     "homeUrl": "https://www.duokan.com/pc/",
-    "readerPattern": "/reader/www/app\\.html"
+    "readerPattern": "/reader/www/app\\.html",
+    "shelf": "https://www.duokan.com/pc/boughtlist"
   },
   "capabilities": {
     "autoFlip": true,

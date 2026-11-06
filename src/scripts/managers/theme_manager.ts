@@ -33,6 +33,10 @@ export class ThemeManager {
 
   private applyTheme(isDark: boolean) {
     const isIframe = window.self !== window.top;
+    const invertActive = isDark && !this.nativeThemeHandoff();
+    // 反色激活标记：自有浮层（⌘L 书城切换、切换过场）据此二次反转抵消，
+    // 不再被站点的反色滤镜一起反色（2026-11-06 用户报告）
+    document.documentElement.classList.toggle('wxrd-theme-inverted', invertActive && !isIframe);
 
     // CSS Filter Logic
     const cssContent = `

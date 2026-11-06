@@ -12,7 +12,8 @@
       "zread.ai"
     ],
     "homeUrl": "https://zread.ai/",
-    "readerPattern": "/"
+    "readerPattern": "/",
+    "shelf": "https://zread.ai/library"
   },
   "capabilities": {
     "hideToolbar": true,

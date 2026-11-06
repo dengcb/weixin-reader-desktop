@@ -335,14 +335,16 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `volume_up` | 0x80 | **短按上一页；长按页面放大**（simulate_menu_click('zoom_in')，同 ⌘+=） | 短按仅阅读页，长按任意页面 |
 | `volume_down` | 0x81 | **短按下一页；长按页面缩小**（同 ⌘+-） | 同上 |
 | `back` | 0xF1 | **短按切换阅读区域宽/窄**（simulate_menu_click('reader_wide')，继承菜单门禁）；**长按页面恢复 100%**（同 ⌘0） | 短按菜单门禁，长按任意页面 |
-| `home` | 0x4A | **短按显隐顶部导航栏**（原系统键盘路径语义，系统路径只拦截不再触发）；**长按回到书城首页**（新菜单动作 bookstore_home，本地书由 local-reader 跳书籍开头） | 短按仅阅读页，长按任意页面 |
+| `home` | 0x4A | **短按显隐顶部导航栏**（原系统键盘路径语义，系统路径只拦截不再触发）；**长按回书架**（新菜单动作 bookstore_shelf：插件 `manifest.site.shelf` 优先，缺省回退首页；本地书由 local-reader 跳本地书架页） | 短按仅阅读页，长按任意页面 |
 | `tv` | 0x35 | **短按切下一个书城；长按呼出 Cmd+Tab 式书城浮层**（0.5 秒/项轮播，松开提交） | 任意页面 |
 | `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
 | `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦）；**短按切换「语音翻页」开关** | 当前仅 macOS（Windows 可经 WinRT GATT，尚未接入） |
 | `menu` | 0x65 | **短按显隐阅读工具栏；长按打开章节目录**（各书城原生目录 + 本地阅读器） | 仅阅读页 |
 
 - 长按分流为通用机制（`handleButtonHold`，RemoteManager 与 local-reader 同构）：按住 500ms 触发长按（仅一次），松开时长按未触发才执行短按；音量/返回的短按因此从「按下即触发」改为「松开时触发」（tap 间隔内不可感知），长按与短按互斥。
-- 本地阅读页按键语义与远程站点一致（`local-reader` 的 `handleRemoteButtonHold`）：音量± 短按翻页/长按缩放，返回 长按恢复 100%（短按宽窄），主页 长按跳 `{index:0}`（书籍开头）；受「阅读快捷键与遥控器」开关统一门禁。
+- 本地阅读页按键语义与远程站点一致（`local-reader` 的 `handleRemoteButtonHold`）：音量± 短按翻页/长按缩放，返回 长按恢复 100%（短按宽窄），主页 长按跳本地书架页（`atreader://…/local-shelf`，微信读书书架式网格、深浅色自适应）；受「阅读快捷键与遥控器」开关统一门禁。
+  - 站点深链回弹守卫（如多看 10 秒内离页劫持回正文）会吞掉回书架导航：主页键长按导航前在 sessionStorage 打 `atreader-home-nav` 标记，守卫据此放行（多看插件 `guardDeepLinkBounce` 消费）。
+  - 各站书架 URL（2026-11-06 抓取）：weread `/web/shelf`、番茄 `/bookshelf`、起点 `/shelf/`、七猫 `/shelf`（未登录空壳，待登录态确认）、掌阅 首页即书架；多看 `/pc/boughtlist`（我的书架）、得到 `/bought`、zread `zread.ai/library`（我的书架，用户拍板）。
 
 - 设置页新增「蓝牙遥控」标签页（`src/windows/settings.html`）：SVG 遥控器示意图 + 8 项编号图例（几何审计零越界），含输入监控权限与平台差异说明。
 

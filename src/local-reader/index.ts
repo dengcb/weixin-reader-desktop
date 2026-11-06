@@ -1336,10 +1336,11 @@ class LocalReader implements LocalReaderController {
           () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
         return;
       case 'home':
+        // 长按回本地书架（不再跳第一页）；短按的导航栏开关仍走系统键盘路径
         this.handleButtonHold(button, phase, true,
           () => {
             this.closePanels();
-            void this.navigate({ index: 0 }, true);
+            window.location.href = `${window.location.origin}/local-shelf`;
           },
           () => {});
         return;

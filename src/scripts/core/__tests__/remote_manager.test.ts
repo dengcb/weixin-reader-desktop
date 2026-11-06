@@ -364,12 +364,12 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('主页键长按回书城首页，短按切导航栏', async () => {
+  it('主页键长按回书架，短按切导航栏', async () => {
     const { manager } = createManager();
     emitHid('home', 'press');
     await new Promise((resolve) => setTimeout(resolve, 600));
     emitHid('home', 'release');
-    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'bookstore_home' });
+    expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'bookstore_shelf' });
 
     emitHid('home', 'press');
     emitHid('home', 'release');

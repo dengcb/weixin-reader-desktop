@@ -50,6 +50,8 @@ const REARM_MAX = 5;
 /// （壳层的 lastReaderUrl 因此被清，用户看到「进度没记住」）。正文页加载时
 /// 留 sessionStorage 标记，10 秒内出现在非阅读页 = 弹回，自动导航回正文一次。
 const READER_ENTRY_KEY = 'atreader-duokan-reader-entry';
+/** 遥控器「回到书城首页」导航标记：RemoteManager 置位，弹回守卫据此放行 */
+const HOME_NAV_FLAG_KEY = 'atreader-home-nav';
 const READER_ENTRY_TTL_MS = 10000;
 /// 门槛补偿档位的插件存储键：记录自动补偿写入的 zoom，用于区分「自动档」
 /// 与「用户手动档」（⌘± 只改站点设置，插件存储不动）。
@@ -180,6 +182,8 @@ export class DuokanPlugin implements ReaderPlugin {
           READER_ENTRY_KEY,
           JSON.stringify({ href: window.location.href, at: Date.now() }),
         );
+        // 回到书城首页的导航已消费/过期，清掉防误伤真实弹回
+        sessionStorage.removeItem(HOME_NAV_FLAG_KEY);
       } catch {
         // sessionStorage 不可用（隐私模式等）：放弃弹回守卫
       }
@@ -187,6 +191,11 @@ export class DuokanPlugin implements ReaderPlugin {
     }
     let entry: { href?: string; at?: number } | null = null;
     try {
+      // 遥控器主页键「回到书架」是用户主动离开：带标记的导航不回弹
+      if (sessionStorage.getItem(HOME_NAV_FLAG_KEY)) {
+        sessionStorage.removeItem(HOME_NAV_FLAG_KEY);
+        return;
+      }
       entry = JSON.parse(sessionStorage.getItem(READER_ENTRY_KEY) ?? 'null');
     } catch {
       entry = null;

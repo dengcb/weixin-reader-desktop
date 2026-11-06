@@ -12,7 +12,8 @@
       "dedao.cn"
     ],
     "homeUrl": "https://www.dedao.cn/",
-    "readerPattern": "/ebook/reader"
+    "readerPattern": "/ebook/reader",
+    "shelf": "https://www.dedao.cn/bought"
   },
   "capabilities": {
     "nativeTheme": true

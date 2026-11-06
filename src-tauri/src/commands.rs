@@ -1199,6 +1199,7 @@ mod tests {
             site: Some(plugin_manager::PluginSiteConfig {
                 domain,
                 home_url: "https://example.com".to_string(),
+                shelf: None,
                 reader_pattern: "/reader/".to_string(),
             }),
             capabilities: None,

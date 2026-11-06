@@ -57,6 +57,7 @@ pub const SIMULATED_ACTION_IDS: &[&str] = &[
     "zoom_in",
     "zoom_out",
     "zoom_reset",
+    "bookstore_shelf",
     "toggle_fullscreen",
     "settings",
     "settings_reading",

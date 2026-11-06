@@ -168,6 +168,8 @@ const expectedLocalCommands = new Set([
   'get_settings',
   'patch_settings',
   'get_local_book',
+  'get_local_books',
+  'open_local_book_by_id',
   'get_local_reading_progress',
   'save_local_reading_progress',
   'local_sha1',

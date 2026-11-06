@@ -12,7 +12,8 @@
       "qidian.com"
     ],
     "homeUrl": "https://www.qidian.com/",
-    "readerPattern": "/chapter/\\d+/\\d+"
+    "readerPattern": "/chapter/\\d+/\\d+",
+    "shelf": "https://my.qidian.com/bookcase/"
   },
   "capabilities": {
     "wideMode": true,

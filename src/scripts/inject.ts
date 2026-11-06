@@ -1,6 +1,7 @@
 import { AppRuntime } from './core/app_runtime';
 import { applyBootStyles } from './core/boot_styles';
 import {
+  isRecentHomeNav,
   isSiteSwitchNavigation,
   showSiteSwitchLoading,
   startupWindowFromGlobal,
@@ -40,7 +41,12 @@ async function main(): Promise<void> {
   // 程序化 navigate，referrer 为空——以此与站内跳转/刷新区分。必须在任何
   // await 之前同步执行，才能赶在站点首绘前铺上过场。启动恢复的首屏不铺
   // （启动窗口本身就是加载动画，避免看两次同样的动画）。
-  if (!startupWindowFromGlobal() && isSiteSwitchNavigation(window.location, document.referrer)) {
+  if (
+    !startupWindowFromGlobal() &&
+    // 回书架是站内跳转，不铺过场（标记由主页键长按置位，多看守卫消费）
+    !isRecentHomeNav(sessionStorage) &&
+    isSiteSwitchNavigation(window.location, document.referrer)
+  ) {
     showSiteSwitchLoading(document);
   }
 

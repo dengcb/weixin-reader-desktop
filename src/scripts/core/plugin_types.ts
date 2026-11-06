@@ -70,8 +70,8 @@ export interface WebSiteConfig {
   homeUrl: string;
   /** 阅读页面匹配模式（字符串或正则） */
   readerPattern: string;
-  /** 首页匹配模式（可选） */
-  homePattern?: string;
+  /** 书架页 URL（可选）：遥控器主页键长按「回书架」目标，缺省回退首页 */
+  shelf?: string;
 }
 
 /**

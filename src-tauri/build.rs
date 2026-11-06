@@ -52,6 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "get_reading_position",
             "save_reading_position",
             "get_local_book",
+            "get_local_books",
+            "open_local_book_by_id",
             "get_local_reading_progress",
             "save_local_reading_progress",
             "local_sha1",

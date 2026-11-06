@@ -5,6 +5,7 @@
 
 import { describe, it, expect, afterEach } from 'bun:test';
 import {
+  isRecentHomeNav,
   isSiteSwitchNavigation,
   isStartupWindow,
   setSiteReadinessProbe,
@@ -48,6 +49,18 @@ describe('isSiteSwitchNavigation', () => {
 
   it('本地协议不成立（过场层只服务于远程站点）', () => {
     expect(isSiteSwitchNavigation({ protocol: 'atreader:', host: 'localhost' }, '')).toBe(false);
+  });
+});
+
+describe('isRecentHomeNav', () => {
+  it('5 秒内的回书架标记放行，过期/缺失/非法值不放行', () => {
+    const storage = (value: string | null) => ({ getItem: () => value });
+    const now = 1_000_000;
+    expect(isRecentHomeNav(storage(String(now)), now)).toBe(true);
+    expect(isRecentHomeNav(storage(String(now - 4_999)), now)).toBe(true);
+    expect(isRecentHomeNav(storage(String(now - 5_001)), now)).toBe(false);
+    expect(isRecentHomeNav(storage(null), now)).toBe(false);
+    expect(isRecentHomeNav(storage('garbage'), now)).toBe(false);
   });
 });
 

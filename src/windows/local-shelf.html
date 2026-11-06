@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>本地书架 - 艾特阅读</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      /* 深浅双主题：参考微信读书书架，浅色纸白 / 深色墨底，品牌色不变 */
+      --paper: #f7f7f5;
+      --ink: #1f2329;
+      --muted: #8a8f85;
+      --line: rgba(31, 35, 41, .1);
+      --card: #ffffff;
+      --card-hover: rgba(52, 159, 102, .06);
+      --accent: #349f66;
+      --halo: rgba(52, 159, 102, .1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #161a17;
+        --ink: #e8eae6;
+        --muted: #9ba096;
+        --line: rgba(232, 234, 230, .12);
+        --card: #20251f;
+        --card-hover: rgba(96, 195, 142, .08);
+        --halo: rgba(96, 195, 142, .1);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 50% -8rem, var(--halo), transparent 26rem),
+        var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+      overflow-y: auto;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding: 26px 36px 6px;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: .06em;
+    }
+    header .count { color: var(--muted); font-size: 12px; }
+    header .hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .shelf {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+      gap: 22px 18px;
+      padding: 18px 36px 40px;
+    }
+    .book {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 10px;
+      outline: none;
+    }
+    .book:focus-visible .cover { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
+    .cover {
+      aspect-ratio: 5 / 7;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 40px;
+      font-weight: 600;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, .18);
+      transition: transform .12s ease, box-shadow .12s ease;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .book:hover .cover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 24px rgba(0, 0, 0, .22);
+    }
+    .book:active .cover { transform: translateY(-1px) scale(.98); }
+    .meta { padding: 8px 2px 0; }
+    .title {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .sub { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .empty {
+      padding: 90px 36px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: .05em;
+    }
+    .empty .mark {
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 18px;
+      background: var(--accent);
+      -webkit-mask: url('/atrd-logo.svg') center / contain no-repeat;
+      mask: url('/atrd-logo.svg') center / contain no-repeat;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cover { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>本地书架</h1>
+    <span class="count" id="count"></span>
+    <span class="hint">点击书封继续阅读 · Esc 返回阅读页</span>
+  </header>
+  <div class="shelf" id="shelf"></div>
+  <div class="empty" id="empty" hidden>
+    <div class="mark" aria-hidden="true"></div>
+    书架还是空的——把 TXT / EPUB / MOBI / PDF 拖进窗口，或用「打开本地书」导入
+  </div>
+  <script>
+    const invoke = window.__TAURI__?.core?.invoke;
+    // 封面占位：按书名稳定取色（微信读书书架观感），无真实封面文件可渲染
+    const PALETTES = [
+      ['#c0392b', '#8e2418'], ['#2c5f8a', '#1d3f5c'], ['#5f8a2c', '#3f5c1d'],
+      ['#8a5f2c', '#5c3f1d'], ['#6b4fa0', '#4a3672'], ['#a04f6b', '#72364a'],
+      ['#2c8a7f', '#1d5c55'], ['#a0742c', '#72501d'],
+    ];
+    const coverStyle = (title) => {
+      let hash = 0;
+      for (const ch of title) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+      const [from, to] = PALETTES[hash % PALETTES.length];
+      return `background:linear-gradient(150deg, ${from}, ${to});`;
+    };
+    const formatLabel = (value) => String(value || '').toUpperCase();
+
+    const render = (books) => {
+      const shelf = document.getElementById('shelf');
+      const empty = document.getElementById('empty');
+      document.getElementById('count').textContent = books.length ? `${books.length} 本` : '';
+      empty.hidden = books.length > 0;
+      shelf.hidden = books.length === 0;
+      shelf.replaceChildren();
+      for (const book of books) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'book';
+        const cover = document.createElement('div');
+        cover.className = 'cover';
+        cover.style.cssText = coverStyle(book.title);
+        cover.textContent = Array.from(book.title)[0] ?? '·';
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.textContent = book.title;
+        title.title = book.title;
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        sub.textContent = formatLabel(book.format);
+        meta.append(title, sub);
+        card.append(cover, meta);
+        card.addEventListener('click', () => {
+          void invoke('open_local_book_by_id', { bookId: book.bookId })?.catch?.(() => {});
+        });
+        shelf.append(card);
+      }
+    };
+
+    const load = async () => {
+      if (!invoke) return;
+      try {
+        const books = await invoke('get_local_books');
+        render(Array.isArray(books) ? books : []);
+      } catch {
+        render([]);
+      }
+    };
+    void load();
+    // 阅读期间导入的新书在回到书架时补齐
+    window.addEventListener('focus', () => { void load(); });
+
+    // 保留应用级快捷键（同默认页）：⌘1~7 切书城、⌘, 设置等
+    const isWindows = navigator.userAgent.includes('Windows');
+    const windowsActions = {
+      ',': 'settings', r: 'refresh', '=': 'zoom_in', '-': 'zoom_out',
+      '0': 'zoom_reset', o: 'hide_toolbar',
+    };
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { window.history.back(); return; }
+      if (!invoke) return;
+      if (isWindows && event.key === 'F11') {
+        event.preventDefault();
+        void invoke('simulate_menu_click', { action: 'toggle_fullscreen' });
+        return;
+      }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key >= '1' && event.key <= '7') {
+        event.preventDefault();
+        invoke('switch_bookstore_by_index', { index: Number(event.key) }).catch(() => {});
+        return;
+      }
+      if (!isWindows || !event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'h') {
+        event.preventDefault();
+        void invoke('toggle_menu_bar');
+        return;
+      }
+      const action = key === 'o' && event.shiftKey
+        ? 'open_local_book'
+        : windowsActions[key];
+      if (!action) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void invoke('simulate_menu_click', { action });
+    }, true);
+  </script>
+</body>
+</html>

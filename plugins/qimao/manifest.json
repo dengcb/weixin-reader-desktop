@@ -12,7 +12,8 @@
       "qimao.com"
     ],
     "homeUrl": "https://www.qimao.com/",
-    "readerPattern": "/(reader/index/\\d+|shuku/\\d+-\\d+)"
+    "readerPattern": "/(reader/index/\\d+|shuku/\\d+-\\d+)",
+    "shelf": "https://www.qimao.com/user/bookshelf"
   },
   "capabilities": {
     "wideMode": true,

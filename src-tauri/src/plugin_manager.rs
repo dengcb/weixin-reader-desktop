@@ -51,6 +51,9 @@ pub struct PluginSiteConfig {
     pub domain: Value,
     #[serde(rename = "homeUrl")]
     pub home_url: String,
+    /// 书架页 URL（可选）：遥控器主页键长按「回书架」的目标；缺省回退 homeUrl
+    #[serde(rename = "shelf", default)]
+    pub shelf: Option<String>,
     #[serde(rename = "readerPattern")]
     pub reader_pattern: String,
 }
@@ -742,6 +745,7 @@ mod tests {
             site: Some(PluginSiteConfig {
                 domain,
                 home_url: "https://example.com/".to_string(),
+                shelf: None,
                 reader_pattern: "/reader/".to_string(),
             }),
             capabilities: None,

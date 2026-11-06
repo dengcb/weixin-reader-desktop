@@ -11,12 +11,15 @@ pub struct SiteConfig {
     pub id: &'static str,
     /// 站点首页 URL
     pub home_url: &'static str,
+    /// 书架页 URL（遥控器主页键长按目标）
+    pub shelf_url: &'static str,
 }
 
 /// 微信读书配置
 pub const WEREAD: SiteConfig = SiteConfig {
     id: "weread",
     home_url: "https://weread.qq.com/",
+    shelf_url: "https://weread.qq.com/web/shelf",
 };
 
 /// `enabledPlugins` 缺省表示全部启用，保持旧版设置文件的兼容性。
@@ -142,6 +145,24 @@ pub fn resolve_home_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Option
     plugin_manager::get_installed_plugins(app)
         .ok()
         .and_then(|plugins| resolve_plugin_home_url(plugins, site_id))
+}
+
+/// 根据 siteId 解析书架页 URL：插件 manifest.site.shelf 优先（微信读书用
+/// 内置常量），未配置时回退首页 URL，保证「回书架」永远有落点。
+pub fn resolve_shelf_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Option<String> {
+    if site_id == WEREAD.id {
+        return Some(WEREAD.shelf_url.to_string());
+    }
+    plugin_manager::get_installed_plugins(app)
+        .ok()
+        .and_then(|plugins| {
+            plugins
+                .iter()
+                .find(|plugin| plugin.id == site_id)
+                .and_then(|plugin| plugin.site.as_ref().and_then(|site| site.shelf.clone()))
+                .filter(|shelf| !shelf.trim().is_empty())
+                .or_else(|| resolve_plugin_home_url(plugins, site_id))
+        })
 }
 
 fn host_matches_domain(host: &str, domain: &str) -> bool {
@@ -270,6 +291,7 @@ mod tests {
             site: with_site.then(|| plugin_manager::PluginSiteConfig {
                 domain: json!("example.com"),
                 home_url: home_url.to_string(),
+                shelf: None,
                 reader_pattern: "/reader/".to_string(),
             }),
             capabilities: None,

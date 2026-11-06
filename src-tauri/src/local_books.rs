@@ -1603,6 +1603,31 @@ pub fn save_local_reading_progress<R: Runtime>(
     result.map_err(|error| missing_notice(&error).unwrap_or(error))
 }
 
+/// 本地书架页读取最近图书列表（仅主窗口；书架页运行在主窗口内）
+#[tauri::command]
+pub fn get_local_books<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+) -> Vec<LocalBookRecord> {
+    if window.label() != "main" {
+        return Vec::new();
+    }
+    list_recent(&app)
+}
+
+/// 本地书架页点选图书：与「最近打开」同一链路（含缺失书清理弹窗）
+#[tauri::command]
+pub fn open_local_book_by_id<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    book_id: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以打开本地图书".to_string());
+    }
+    open_book_by_id(&app, &book_id)
+}
+
 #[tauri::command]
 pub fn local_sha1<R: Runtime>(window: WebviewWindow<R>, value: String) -> Result<Vec<u8>, String> {
     validate_local_runtime(&window, None)?;

@@ -32,6 +32,9 @@ mod voice_turner;
 const LIBRARY_PAGE_PATH: &str = "/library";
 const LIBRARY_SCHEME: &str = "atreader";
 const LIBRARY_PAGE_HTML: &[u8] = include_bytes!("../../src/windows/library.html");
+/// 本地书架页：与默认页同走专用本地协议，避免经 Tauri 前端资产协议请求
+const LOCAL_SHELF_PAGE_PATH: &str = "/local-shelf";
+const LOCAL_SHELF_PAGE_HTML: &[u8] = include_bytes!("../../src/windows/local-shelf.html");
 const ATRD_LOGO_SVG: &[u8] = include_bytes!("../../atrd-logo.svg");
 const STARTUP_PAGE: &str = "index.html";
 const STARTUP_REVEAL_DELAY_MS: u64 = 320;
@@ -43,6 +46,10 @@ fn library_protocol_response(path: &str) -> tauri::http::Response<Vec<u8>> {
             .header("content-type", "text/html; charset=utf-8")
             .body(LIBRARY_PAGE_HTML.to_vec())
             .expect("valid local library response"),
+        LOCAL_SHELF_PAGE_PATH => tauri::http::Response::builder()
+            .header("content-type", "text/html; charset=utf-8")
+            .body(LOCAL_SHELF_PAGE_HTML.to_vec())
+            .expect("valid local shelf response"),
         "/atrd-logo.svg" => tauri::http::Response::builder()
             .header("content-type", "image/svg+xml")
             .body(ATRD_LOGO_SVG.to_vec())
@@ -341,6 +348,18 @@ pub fn run() {
     // 远程阅读页运行期间切换到默认页时，直接由专用本地协议返回编译进二进制的
     // 页面内容，避免再次经 Tauri 前端资产协议请求 library.html。
     builder = builder.register_uri_scheme_protocol(LIBRARY_SCHEME, |context, request| {
+        // 书架页含本地书目（隐私数据）：仅主窗口可取；默认页与 logo 公开
+        if request.uri().path() == LOCAL_SHELF_PAGE_PATH {
+            return if context.webview_label() == "main" {
+                library_protocol_response(request.uri().path())
+            } else {
+                tauri::http::Response::builder()
+                    .status(404)
+                    .header("content-type", "text/plain; charset=utf-8")
+                    .body(b"Not Found".to_vec())
+                    .expect("valid local shelf response")
+            };
+        }
         if matches!(request.uri().path(), "/library" | "/atrd-logo.svg") {
             library_protocol_response(request.uri().path())
         } else {
@@ -742,6 +761,8 @@ pub fn run() {
             reading_progress::get_reading_position,
             reading_progress::save_reading_position,
             local_books::get_local_book,
+            local_books::get_local_books,
+            local_books::open_local_book_by_id,
             local_books::get_local_reading_progress,
             local_books::save_local_reading_progress,
             local_books::local_sha1,

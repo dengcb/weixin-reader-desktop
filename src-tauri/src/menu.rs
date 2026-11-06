@@ -681,7 +681,7 @@ fn action_requires_main_focus(id: &str) -> bool {
             | "zoom_in"
             | "zoom_out"
             | "zoom_reset"
-            | "bookstore_home"
+            | "bookstore_shelf"
             | "toggle_fullscreen"
     )
 }
@@ -785,14 +785,20 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
         }
         // 遥控器主页键长按：回到当前书城首页（本地书由 local-reader 前端
         // 跳书籍开头，不经过这里）。与「记住页」无关，永远去 home_url。
-        "bookstore_home" => {
+        "bookstore_shelf" => {
             let site_id = current_site_id(app);
+            log::info!(target: "bookstore", "bookstore_shelf: site={site_id}");
             if site_id == "local" {
                 return Ok(());
             }
-            let Some(url) = crate::sites::resolve_home_url(app, &site_id) else {
+            // 书架优先（manifest.site.shelf / 内置微信读书书架），未配置回退首页
+            let url = crate::sites::resolve_shelf_url(app, &site_id)
+                .or_else(|| crate::sites::resolve_home_url(app, &site_id));
+            let Some(url) = url else {
+                log::warn!(target: "bookstore", "bookstore_shelf: 未解析到 {site_id} 的书架/首页 URL");
                 return Ok(());
             };
+            log::info!(target: "bookstore", "bookstore_shelf: navigate {url}");
             if let Some(win) = app.get_webview_window("main") {
                 // 跨站导航外观复位与缩放预置，同 switch_to_site 的导航段
                 let _ = win.set_theme(None);

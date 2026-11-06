@@ -434,11 +434,17 @@ export class RemoteManager {
           () => void invoke('simulate_menu_click', { action: 'zoom_reset' }).catch(() => {}),
           () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
         return;
-      // 主页：短按显隐顶部导航栏（原系统键盘路径语义），长按 0.5s 回书城首页
+      // 主页：短按显隐顶部导航栏（仅阅读页，原系统键盘路径语义），
+      // 长按 0.5s 回书架（manifest.site.shelf，缺省回退首页；任意页面）
       case 'home':
-        this.handleButtonHold(event.button, event.phase, isReaderPage,
-          () => void invoke('simulate_menu_click', { action: 'bookstore_home' }).catch(() => {}),
+        this.handleButtonHold(event.button, event.phase, true,
           () => {
+            // 站点弹回守卫（如多看）据此放行用户主动离开
+            try { sessionStorage.setItem('atreader-home-nav', String(Date.now())); } catch {}
+            void invoke('simulate_menu_click', { action: 'bookstore_shelf' }).catch(() => {});
+          },
+          () => {
+            if (!isReaderPage) return;
             const current = settingsStore.get();
             settingsStore.update({ hideNavbar: !current.hideNavbar });
           });

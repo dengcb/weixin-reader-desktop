@@ -656,9 +656,9 @@
             <div class="form-hint">阅读页面 URL 匹配模式</div>
           </div>
           <div class="form-group">
-            <label class="form-label">首页 URL 模式</label>
-            <input type="text" id="siteHomePattern" placeholder="/">
-            <div class="form-hint">首页 URL 匹配模式（可选）</div>
+            <label class="form-label">书架 URL</label>
+            <input type="url" id="siteShelf" placeholder="https://weread.qq.com/web/shelf">
+            <div class="form-hint">书架页地址（可选）；遥控器主页键长按跳转，缺省回退首页</div>
           </div>
         </div>
 
@@ -1183,7 +1183,7 @@ export default MyPlugin;
           document.getElementById('siteDomain').value = domain || '';
           document.getElementById('siteHomeUrl').value = m.site.homeUrl || '';
           document.getElementById('siteReaderPattern').value = m.site.readerPattern || '';
-          document.getElementById('siteHomePattern').value = m.site.homePattern || '';
+          document.getElementById('siteShelf').value = m.site.shelf || '';
         }
         
         if (m.capabilities) {
@@ -1237,7 +1237,7 @@ export default MyPlugin;
             domain: domain ? [domain] : [],
             homeUrl: document.getElementById('siteHomeUrl').value.trim(),
             readerPattern: document.getElementById('siteReaderPattern').value.trim(),
-            homePattern: document.getElementById('siteHomePattern').value.trim() || undefined
+            shelf: document.getElementById('siteShelf').value.trim() || undefined
           },
           capabilities: {
             ...(original.capabilities || {}),
