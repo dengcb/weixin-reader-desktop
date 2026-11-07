@@ -28,6 +28,7 @@ mod sites;
 mod tracker_blocker;
 mod update;
 mod voice_turner;
+mod webview_prefs;
 
 const LIBRARY_PAGE_PATH: &str = "/library";
 const LIBRARY_SCHEME: &str = "atreader";
@@ -605,6 +606,10 @@ pub fn run() {
 
             // 安装 tracker 拦截规则（macOS 原生 WKContentRuleList；非 macOS 为空操作）
             tracker_blocker::install(&win);
+
+            // 关闭 WebKit「欺诈/有害网站」红屏（掌阅 pc.ireader.com 被 Safe
+            // Browsing 整域标记；非 macOS 为空操作）
+            webview_prefs::disable_fraudulent_warning(&win);
 
             let app_handle = app.handle().clone(); // Re-declare app_handle since we commented out the previous one
 
