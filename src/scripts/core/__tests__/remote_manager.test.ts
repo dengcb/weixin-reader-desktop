@@ -42,6 +42,7 @@ const createManager = () => {
     menuHoldTimer: null,
     menuLongFired: false,
     menuPressActive: false,
+    menuPressAt: 0,
     menuHidActive: false,
     holdTimers: new Map(),
     lastMenuKeyAt: 0,
@@ -377,11 +378,41 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('电源键在任意页面触发摸鱼键', () => {
+  it('定时器被节流时按墙钟补判长按（主页键回书架）', async () => {
+    const { manager } = createManager();
+    const realSetTimeout = globalThis.setTimeout;
+    const wait = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+    // 模拟 WKWebView 隐藏页节流：定时器被推迟到 10 秒后，按住 0.6 秒即松开
+    globalThis.setTimeout = ((_callback: () => void, _delay?: number) =>
+      realSetTimeout(() => {}, 10_000)) as typeof setTimeout;
+    try {
+      emitHid('home', 'press');
+      await wait(600);
+      emitHid('home', 'release');
+      expect(tauriInvoke).toHaveBeenCalledWith('simulate_menu_click', { action: 'bookstore_shelf' });
+
+      // 短按语义不受影响：按住不足阈值仍走短按
+      emitHid('home', 'press');
+      await wait(50);
+      emitHid('home', 'release');
+      expect(settingsStore.update).toHaveBeenCalledWith({ hideNavbar: true });
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    manager.destroy();
+  });
+
+  it('电源键短按摸鱼（松开生效），长按退出应用', async () => {
     const { manager } = createManager();
     (manager as any).siteContext.isReaderPage = false;
     emitHid('power', 'press');
+    emitHid('power', 'release');
     expect(tauriInvoke).toHaveBeenCalledWith('toggle_stealth', undefined);
+
+    emitHid('power', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('power', 'release');
+    expect(tauriInvoke).toHaveBeenCalledWith('quit_app', undefined);
     manager.destroy();
   });
 
@@ -403,6 +434,33 @@ describe('RemoteManager HID button contract', () => {
     emitHid('tv', 'press');
     emitHid('tv', 'release');
     expect(tauriInvoke).not.toHaveBeenCalledWith('switch_bookstore_by_index', expect.anything());
+    manager.destroy();
+  });
+
+  // 本地阅读页跑着完整 Manager 栈，local-reader 有自己的遥控监听；
+  // RemoteManager 若也响应会双写设置（变宽又变窄/收起又展开，2026-11-07 事故）。
+  // 详见 docs/BLUETOOTH_REMOTE_EXPLORATION.md「本地阅读页的遥控双链陷阱」。
+  it('本地阅读页（siteId=local）遥控按钮全部让路给 local-reader，不产生任何动作', async () => {
+    const { manager, nextPage, prevPage } = createManager();
+    (manager as any).siteContext.siteId = 'local';
+    for (const button of ['volume_up', 'volume_down', 'back', 'home', 'power']) {
+      emitHid(button, 'press');
+      emitHid(button, 'release');
+    }
+    // 长按路径同样让路（无定时器、无导航）
+    emitHid('home', 'press');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    emitHid('home', 'release');
+    // 菜单键入口也在此守卫之内（menuHidActive 不会被置位）
+    emitHid('menu', 'press');
+    expect((manager as any).menuHidActive).toBe(false);
+    expect(prevPage).not.toHaveBeenCalled();
+    expect(nextPage).not.toHaveBeenCalled();
+    expect(settingsStore.update).not.toHaveBeenCalled();
+    const commands = tauriInvoke.mock.calls.map(call => call[0]);
+    expect(commands).not.toContain('simulate_menu_click');
+    expect(commands).not.toContain('toggle_stealth');
+    expect(commands).not.toContain('quit_app');
     manager.destroy();
   });
 

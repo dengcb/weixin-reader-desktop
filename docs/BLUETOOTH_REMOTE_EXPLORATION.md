@@ -337,12 +337,12 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 | `back` | 0xF1 | **短按切换阅读区域宽/窄**（simulate_menu_click('reader_wide')，继承菜单门禁）；**长按页面恢复 100%**（同 ⌘0） | 短按菜单门禁，长按任意页面 |
 | `home` | 0x4A | **短按显隐顶部导航栏**（原系统键盘路径语义，系统路径只拦截不再触发）；**长按回书架**（新菜单动作 bookstore_shelf：插件 `manifest.site.shelf` 优先，缺省回退首页；本地书由 local-reader 跳本地书架页） | 短按仅阅读页，长按任意页面 |
 | `tv` | 0x35 | **短按切下一个书城；长按呼出 Cmd+Tab 式书城浮层**（0.5 秒/项轮播，松开提交） | 任意页面 |
-| `power` | 0x66 | 摸鱼键（`toggle_stealth`，与 Cmd+` 同路径） | 任意页面 |
+| `power` | 0x66 | **短按摸鱼**（`toggle_stealth`，与 Cmd+` 同路径，松开生效）；**长按退出应用**（新 IPC 命令 `quit_app`，走 `app.exit(0)` 与菜单「退出」同清理路径） | 任意页面（窗口隐藏时仍可长按退出） |
 | `voice` | 0x3E | **按住语音翻页**（ATVV 收音 → 本机识别，与「语音翻页」开关解耦）；**短按切换「语音翻页」开关** | 当前仅 macOS（Windows 可经 WinRT GATT，尚未接入） |
 | `menu` | 0x65 | **短按显隐阅读工具栏；长按打开章节目录**（各书城原生目录 + 本地阅读器） | 仅阅读页 |
 
 - 长按分流为通用机制（`handleButtonHold`，RemoteManager 与 local-reader 同构）：按住 500ms 触发长按（仅一次），松开时长按未触发才执行短按；音量/返回的短按因此从「按下即触发」改为「松开时触发」（tap 间隔内不可感知），长按与短按互斥。
-- 本地阅读页按键语义与远程站点一致（`local-reader` 的 `handleRemoteButtonHold`）：音量± 短按翻页/长按缩放，返回 长按恢复 100%（短按宽窄），主页 长按跳本地书架页（`atreader://…/local-shelf`，微信读书书架式网格、深浅色自适应）；受「阅读快捷键与遥控器」开关统一门禁。
+- 本地阅读页按键语义与远程站点一致（`local-reader` 的 `handleRemoteButtonHold`）：音量± 短按翻页/长按缩放，返回 长按恢复 100%（短按宽窄），主页 长按跳本地书架页（`atreader://…/local-shelf`，微信读书书架式网格、深浅色自适应），电源 短按摸鱼/长按退出应用；音量/返回受「阅读快捷键与遥控器」开关统一门禁。
   - 站点深链回弹守卫（如多看 10 秒内离页劫持回正文）会吞掉回书架导航：主页键长按导航前在 sessionStorage 打 `atreader-home-nav` 标记，守卫据此放行（多看插件 `guardDeepLinkBounce` 消费）。
   - 各站书架 URL（2026-11-06 抓取）：weread `/web/shelf`、番茄 `/bookshelf`、起点 `/shelf/`、七猫 `/shelf`（未登录空壳，待登录态确认）、掌阅 首页即书架；多看 `/pc/boughtlist`（我的书架）、得到 `/bought`、zread `zread.ai/library`（我的书架，用户拍板）。
 
@@ -361,6 +361,16 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
 - 抑制器约束：修改事件需要「辅助功能」权限（未授权时只提示、不阻断翻页；已授权时遥控器连接即预启动 tap，避免首次按键漏吞）；tap 跑在专用线程 RunLoop 上（挂主线程 = 主线程一卡整机输入停摆）；系统超时/禁用后立即重新启用；进程退出由系统回收。
 - 三期：语音键接 ATVV 蓝牙音频流（SayAll 的 `AB5E0001-…` 服务族，IMA/DVI ADPCM → 16kHz PCM → 喂现有 `voice_turner` 的 Speech.framework 识别），遥控器作为语音翻页的输入麦克风；固件仅在按住语音键时发音频，天然 PTT。
 - 许可约束：SayAll 为 GPL-3.0-only，只学机制（API 序列、参数、坑位、实测 usage 表），Rust 独立实现，不引入其任何源码。
+
+### 本地阅读页的遥控双链陷阱（2026-11-07 修复）
+
+本地阅读页（`atreader://…/local-reader`）运行**完整的 AppRuntime('local') Manager 栈**，其中 RemoteManager 与 local-reader 自己的遥控监听**同时订阅** `remote-hid-button`——同一按键事件有两个潜在执行者。这不是缺陷而是刻意复用（设置/菜单/缩放/书城切换全走共享栈），但接线时必须意识到双链存在。
+
+- **分工边界（现行规则）**：本地页遥控按钮语义归 `src/local-reader/index.ts` 的 `handleRemoteButtonHold`（菜单/音量/返回/主页/电源）；RemoteManager 的 `handleRemoteHidButton` 入口与菜单信号入口（`handleRemoteMenuSignal`/`Release`）均以 `siteId === 'local'` 守卫整页让路。TV 键由 `BookstoreSwitcherManager` 独立订阅，不受守卫影响。
+- **RemoteManager 不能在本地页裁掉**：菜单「上一页/下一页/上一章/下一章」经 MenuManager 发 `READER_COMMAND`，由 RemoteManager 执行 `performPageTurn`/`navigateChapter`，再经 LocalSiteRuntime 桥接到本地阅读器——删了它本地菜单翻页全失灵。
+- **事故指纹（2026-11-07）**：返回/主页短按设置被翻转两次（页面变宽又变窄、导航栏收起又展开）；电源短按 `toggle_stealth` 两次等于失效；音量键两条链各调一次 nextPage，同一 tick 内都算出同一目标页，视觉合并成一次——**侥幸掩盖了双链**，让人误判只有部分按键出问题。
+- **排查提示**：RemoteManager 的动作日志走 `log.info`（console-only，不落盘），`艾特阅读.log` 只会看到 local-reader 的动作（`key_event`/`system_action`/`remote_action`）。「日志里每键只有一次动作、设置却翻了两次」就是 Manager 栈里存在第二个执行者的指纹。
+- **开发守则**：给**本地页**加遥控按键 → 只改 local-reader 的 `handleRemoteButtonHold`；给**站点**加新按键 → RemoteManager 加 case（本地页被守卫自动跳过）；任何「Manager 栈与 local-reader 都可能订阅的输入」（遥控 HID、系统键盘、事件总线）接线前先问一句：**这个输入在这页归谁**。回归测试：`remote_manager.test.ts`「本地阅读页（siteId=local）遥控按钮全部让路给 local-reader」。
 
 ### 最终协议确认（2026-10-30 17:16 会话，Karabiner 卸载后）
 

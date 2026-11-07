@@ -339,6 +339,7 @@ describe('Tauri application contracts', () => {
       'allow-set-active-bookstore',
       'allow-set-title',
       'allow-toggle-stealth',
+      'allow-quit-app',
       'allow-toggle-menu-bar',
       'allow-reveal-menu-bar-transient',
       'allow-simulate-menu-click',

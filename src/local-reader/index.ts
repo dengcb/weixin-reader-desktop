@@ -2,7 +2,7 @@ import { AppRuntime } from '../scripts/core/app_runtime';
 import { createSiteContext } from '../scripts/core/site_context';
 import { setLocalReaderController, type LocalReaderController } from '../scripts/core/local_runtime_bridge';
 import { settingsStore } from '../scripts/core/settings_store';
-import { invoke, logToFile, waitForTauri } from '../scripts/core/tauri';
+import { invoke, listen, logToFile, waitForTauri } from '../scripts/core/tauri';
 import type { Chapter, PluginAPI } from '../scripts/core/plugin_types';
 import { EPUB_DOCUMENT_TYPES, chapterBreakCss as buildChapterBreakCss, sanitizeEpubMarkup, wrapSvgSpineDocument } from './epub_security';
 import { resolveLocalKeyboardAction, shouldHandleLocalKeyboardAction } from './keyboard';
@@ -70,6 +70,8 @@ interface FoliateBook {
   dir?: string;
   resolveHref?(href: string): { index: number; anchor?: (doc: Document) => Node | Range | number | null } | null;
   resolveCFI?(cfi: string): { index: number; anchor?: (doc: Document) => Node | Range | number | null } | null;
+  /** foliate-js 的 EPUB/MOBI 提供内嵌封面提取；TXT/PDF 自建 book 无此方法 */
+  getCover?(): Promise<Blob | null>;
   destroy?(): void;
 }
 
@@ -283,8 +285,11 @@ class LocalReader implements LocalReaderController {
   private keyHandler: ((event: KeyboardEvent) => void) | null = null;
   private remoteMenuHoldTimer: ReturnType<typeof setTimeout> | null = null;
   private remoteMenuUnlisten: (() => void) | null = null;
-  /** 音量/返回/主页的按住计时（按钮 → 定时器），与远程站点同款 0.5s 分流 */
-  private holdTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private menuActionUnlisten: (() => void) | null = null;
+  /** 菜单键按下的墙钟时刻：定时器被系统节流时在释放按墙钟补判长按 */
+  private remoteMenuPressedAt = 0;
+  /** 音量/返回/主页的按住计时（按钮 → 定时器+按下时刻），与远程站点同款 0.5s 分流 */
+  private holdTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; pressedAt: number }>();
   /** 拦截 contextmenu（遥控器菜单键会引发 WebKit 默认菜单；iframe 内需单独挂） */
   private contextMenuGuard: ((event: MouseEvent) => void) | null = null;
   private contextMenuGuardObserver: MutationObserver | null = null;
@@ -343,11 +348,14 @@ class LocalReader implements LocalReaderController {
     localReaderLog('renderer_created', { bookId: this.bookId, fixedLayout: this.fixedLayout });
     this.bindUI();
     this.applyTypography();
+    this.applyNavbarVisibility();
+    this.applyToolbarVisibility();
     // 键盘监听必须在 restorePosition 之前就绪：恢复位置会触发首个 section
     // 加载，onSectionLoad 按 keyHandler 是否存在决定是否给章节 iframe 挂
     // keydown；拖选进行中按方向键才不会失灵（2026-11 审计 L-P2-7）。
     this.setupKeyboard();
     this.setupRemoteMenuHold();
+    this.setupMenuActionListener();
     await this.restorePosition();
     localReaderLog('position_restored', { bookId: this.bookId });
     this.ready = true;
@@ -357,9 +365,13 @@ class LocalReader implements LocalReaderController {
     this.unsubscribeSettings = settingsStore.subscribe(() => {
       this.typography = this.readTypography();
       this.applyTypography();
+      this.applyNavbarVisibility();
+      this.applyToolbarVisibility();
     });
     this.updateTitles();
     this.hideLoading();
+    // 阅读页就绪后再后台提取封面，不占开书关键路径
+    void this.saveBookCover();
     window.__ATREADER_RUNTIME__ = this;
   }
 
@@ -377,6 +389,36 @@ class LocalReader implements LocalReaderController {
       paragraphSpacing: boundedNumber(config.paragraphSpacing, 0, 2.5, DEFAULT_TYPOGRAPHY.paragraphSpacing),
       pagePaddingX: boundedNumber(config.pagePaddingX, 0, 60, DEFAULT_TYPOGRAPHY.pagePaddingX),
     };
+  }
+
+  /**
+   * 封面缓存：EPUB/MOBI 由 foliate-js 提取内嵌封面，缩放为 ≤320×480 JPEG
+   * 经 save_local_book_cover 落盘（Rust 侧已存在即跳过，删除图书时一并清理）。
+   * TXT/PDF 无封面，书架回退占位封面。失败只落日志，不影响阅读。
+   */
+  private async saveBookCover(): Promise<void> {
+    try {
+      const format = this.metadata?.format;
+      if (format !== 'epub' && format !== 'mobi') return;
+      const blob = await this.book?.getCover?.();
+      if (!blob || this.destroyed) return;
+      const bitmap = await createImageBitmap(blob);
+      const scale = Math.min(1, 320 / bitmap.width, 480 / bitmap.height);
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      if (this.destroyed) return;
+      await invoke('save_local_book_cover', { bookId: this.bookId, dataUrl });
+    } catch (error) {
+      localReaderLog('cover_extract_failed', { bookId: this.bookId, error: errorMessage(error) });
+    }
   }
 
   private async loadTxtBook(): Promise<FoliateBook> {
@@ -1234,6 +1276,49 @@ class LocalReader implements LocalReaderController {
     }
   }
 
+  /** 左下工具列显隐跟随 sites.local.hideToolbar（菜单 ⌘O 与遥控器菜单键短按共用）。 */
+  private applyToolbarVisibility(): void {
+    let hidden = false;
+    try {
+      hidden = settingsStore.getSite('local')?.hideToolbar === true;
+    } catch {
+      hidden = false;
+    }
+    document.body.classList.toggle('toolbar-hidden', hidden);
+  }
+
+  /** 顶部导航栏显隐跟随 sites.local.hideNavbar（遥控器主页键短按 / Home 键共用）。 */
+  private applyNavbarVisibility(): void {
+    let hidden = false;
+    try {
+      hidden = settingsStore.getSite('local')?.hideNavbar === true;
+    } catch {
+      hidden = false;
+    }
+    document.body.classList.toggle('navbar-hidden', hidden);
+  }
+
+  /**
+   * 菜单动作接线：Rust 菜单（⌘O / 菜单点击 / 遥控器菜单键短按经
+   * simulate_menu_click）发 menu-action 到主窗口；inject 的 MenuManager
+   * 不跑本地页，这里自行消费 hide_toolbar 翻转设置。
+   */
+  private setupMenuActionListener(): void {
+    void listen<string>('menu-action', (event) => {
+      if (this.destroyed) return;
+      if (event.payload !== 'hide_toolbar') return;
+      const site = settingsStore.getSite('local');
+      void settingsStore
+        .updateSite('local', { hideToolbar: !site.hideToolbar })
+        .catch(() => undefined);
+    })
+      .then((unlisten) => {
+        if (this.destroyed) unlisten();
+        else this.menuActionUnlisten = unlisten;
+      })
+      .catch(() => undefined);
+  }
+
   /** 遥控器菜单键：按住 0.5s 直接展开章节目录（短按维持原行为）。 */
   private setupRemoteMenuHold(): void {
     // 小米遥控器菜单键在 macOS WebKit 里伴随一个 contextmenu，弹出 WebKit
@@ -1268,6 +1353,10 @@ class LocalReader implements LocalReaderController {
         | { button?: string; phase?: string }
         | undefined;
       if (!payload?.button || !payload.phase) return;
+      // 诊断链第一环：菜单键事件是否到达前端（音量键已证实链路通，此处只记 menu）
+      if (payload.button === 'menu') {
+        localReaderLog('remote_menu_signal', { phase: payload.phase });
+      }
       if (payload.button !== 'menu') {
         // 与远程站点同款 0.5s 长按分流：音量±/返回/主页
         this.handleRemoteButtonHold(
@@ -1278,12 +1367,17 @@ class LocalReader implements LocalReaderController {
       }
       if (payload.phase === 'press') {
         if (this.remoteMenuHoldTimer !== null) return;
+        this.remoteMenuPressedAt = Date.now();
         this.remoteMenuHoldTimer = setTimeout(() => {
           this.remoteMenuHoldTimer = null;
           const panel = document.getElementById('chapterPanel');
           if (panel && !panel.classList.contains('open')) {
             this.togglePanel('chapterPanel');
           }
+          // 诊断链：事件到达 → 长按触发 → 面板类是否真的加上
+          localReaderLog('remote_menu_hold_fired', {
+            panelOpen: panel?.classList.contains('open') ?? false,
+          });
         }, 500);
       } else if (payload.phase === 'release') {
         if (this.remoteMenuHoldTimer !== null) {
@@ -1292,8 +1386,25 @@ class LocalReader implements LocalReaderController {
           // 长按开过目录后，单击收起（长按开 → 单击关循环）；
           // 目录未开时空按菜单键不做事，与远程站点语义一致。
           const panel = document.getElementById('chapterPanel');
-          if (panel?.classList.contains('open')) {
+          const panelWasOpen = panel?.classList.contains('open') ?? false;
+          const elapsed = Date.now() - this.remoteMenuPressedAt;
+          if (elapsed >= 500) {
+            // 节流兜底：按满阈值但定时器被推迟（页面被误判隐藏时 WKWebView
+            // 按整秒推迟定时器），松开时按墙钟补开目录
+            if (!panelWasOpen) this.togglePanel('chapterPanel');
+            localReaderLog('remote_menu_hold_fired', {
+              panelOpen: true,
+              elapsed,
+              fallback: true,
+            });
+          } else if (panelWasOpen) {
             this.togglePanel('chapterPanel');
+            localReaderLog('remote_menu_short_release', { panelWasOpen });
+          } else {
+            // 与远程站点同语义：短按菜单键显隐阅读工具栏（左下工具列），
+            // 经标准动作链路（Rust emit menu-action → 本页监听翻转设置）
+            localReaderLog('remote_menu_short_release', { panelWasOpen });
+            void invoke('simulate_menu_click', { action: 'hide_toolbar' }).catch(() => {});
           }
         }
       }
@@ -1308,7 +1419,8 @@ class LocalReader implements LocalReaderController {
   /**
    * 与远程站点同款 0.5s 长按分流：
    * 音量± 短按翻页 / 长按页面放大缩小，返回 长按恢复 100%（短按宽窄），
-   * 主页 长按回到书籍开头（短按的导航栏开关仍由系统键盘路径承担）。
+   * 主页 长按回本地书架（短按的导航栏开关仍由系统键盘路径承担），
+   * 电源 短按摸鱼 / 长按退出应用。
    */
   private handleRemoteButtonHold(button: string, phase: 'press' | 'release'): void {
     const shortcutsEnabled = settingsStore.get().enableRemoteController !== false;
@@ -1331,9 +1443,14 @@ class LocalReader implements LocalReaderController {
           });
         return;
       case 'back':
+        // 本地页没有 MenuManager（inject 不跑本地页），menu-action 无人接听：
+        // 宽窄直接翻转设置，与键盘 Enter 的 toggle-wide 同一条链
         this.handleButtonHold(button, phase, shortcutsEnabled,
           () => void invoke('simulate_menu_click', { action: 'zoom_reset' }).catch(() => {}),
-          () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
+          () => {
+            const site = settingsStore.getSite('local');
+            void settingsStore.updateSite('local', { readerWide: !site.readerWide });
+          });
         return;
       case 'home':
         // 长按回本地书架（不再跳第一页）；短按的导航栏开关仍走系统键盘路径
@@ -1344,10 +1461,16 @@ class LocalReader implements LocalReaderController {
           },
           () => {});
         return;
+      case 'power':
+        // 与站点侧同语义：短按摸鱼，长按 0.5s 退出应用
+        this.handleButtonHold(button, phase, true,
+          () => void invoke('quit_app').catch(() => {}),
+          () => invoke('toggle_stealth').catch(() => {}));
+        return;
     }
   }
 
-  /** 与 RemoteManager 同构的通用长按分流。 */
+  /** 与 RemoteManager 同构的通用长按分流（含定时器被节流时的墙钟兜底）。 */
   private handleButtonHold(
     button: string,
     phase: 'press' | 'release',
@@ -1357,17 +1480,25 @@ class LocalReader implements LocalReaderController {
   ): void {
     if (phase === 'press') {
       if (!enabled || this.holdTimers.has(button)) return;
-      const timer = setTimeout(() => {
-        this.holdTimers.delete(button);
-        onLong();
-      }, 500);
-      this.holdTimers.set(button, timer);
+      this.holdTimers.set(button, {
+        timer: setTimeout(() => {
+          this.holdTimers.delete(button);
+          onLong();
+        }, 500),
+        pressedAt: Date.now(),
+      });
       return;
     }
-    const timer = this.holdTimers.get(button);
-    if (timer === undefined) return;
-    clearTimeout(timer);
+    const entry = this.holdTimers.get(button);
+    if (!entry) return;
+    clearTimeout(entry.timer);
     this.holdTimers.delete(button);
+    if (Date.now() - entry.pressedAt >= 500) {
+      localReaderLog('remote_action', { button, kind: 'long', fallback: true });
+      onLong();
+      return;
+    }
+    localReaderLog('remote_action', { button, kind: 'short' });
     onShort();
   }
 
@@ -1402,11 +1533,13 @@ class LocalReader implements LocalReaderController {
           case 'previous-chapter': void this.prevChapter(); break;
           case 'next-chapter': void this.nextChapter(); break;
           case 'toggle-wide': {
+            localReaderLog('system_action', { action: 'toggle-wide' });
             const site = settingsStore.getSite('local');
             void settingsStore.updateSite('local', { readerWide: !site.readerWide });
             break;
           }
           case 'toggle-navbar': {
+            localReaderLog('system_action', { action: 'toggle-navbar' });
             const site = settingsStore.getSite('local');
             void settingsStore.updateSite('local', { hideNavbar: !site.hideNavbar });
             break;
@@ -1502,10 +1635,12 @@ class LocalReader implements LocalReaderController {
     this.keyHandler = null;
     if (this.remoteMenuHoldTimer !== null) clearTimeout(this.remoteMenuHoldTimer);
     this.remoteMenuHoldTimer = null;
-    for (const timer of this.holdTimers.values()) clearTimeout(timer);
+    for (const entry of this.holdTimers.values()) clearTimeout(entry.timer);
     this.holdTimers.clear();
     this.remoteMenuUnlisten?.();
     this.remoteMenuUnlisten = null;
+    this.menuActionUnlisten?.();
+    this.menuActionUnlisten = null;
     if (this.contextMenuGuard) {
       window.removeEventListener('contextmenu', this.contextMenuGuard, { capture: true });
       this.contextMenuGuard = null;

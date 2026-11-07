@@ -35,10 +35,12 @@ export class RemoteManager {
   private menuLongFired = false;
   private menuPressActive = false;
   private menuHidActive = false;
-  /** 音量/返回/主页的按住计时（按钮 → 定时器）；长按触发即删，迟到 release 自然早退 */
-  private holdTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 音量/返回/主页的按住计时（按钮 → 定时器+按下时刻）；长按触发即删，迟到 release 自然早退 */
+  private holdTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; pressedAt: number }>();
   private lastMenuKeyAt = 0;
   private lastMenuReleaseAt = 0;
+  /** 菜单键按下的墙钟时刻：定时器被系统节流时在释放按墙钟补判长按 */
+  private menuPressAt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private initializationGeneration = 0;
   private unsubscribeSettings: (() => void) | null = null;
@@ -405,6 +407,12 @@ export class RemoteManager {
   }
 
   private handleRemoteHidButton(event: RemoteHidButtonEvent) {
+    // 本地阅读页由 local-reader 自己的监听器全量接管（菜单/音量/返回/主页/电源，
+    // 同 handleRemoteMenuSignal 的本地守卫）：这里再处理会双写站点设置——
+    // 主页/返回短按的 hideNavbar、readerWide 各被翻转两次，表现为收起又展开、
+    // 变宽又变窄；音量键双 nextPage 恰好落同一目标页而侥幸不显。TV 键由
+    // BookstoreSwitcherManager 独立订阅，不受此守卫影响。
+    if (this.siteContext.siteId === 'local') return;
     if (event.button === 'menu') {
       if (event.phase === 'press') {
         this.menuHidActive = true;
@@ -449,13 +457,12 @@ export class RemoteManager {
             settingsStore.update({ hideNavbar: !current.hideNavbar });
           });
         return;
-      // 电源：摸鱼键（按下即触发，无长短按之分）
+      // 电源：短按摸鱼（松开生效，与其他按键短按语义一致），长按 0.5s 退出应用
       case 'power':
-        if (event.phase === 'press') {
-          invoke('toggle_stealth').catch(() => {});
-        }
-        return;
-    }
+        this.handleButtonHold(event.button, event.phase, true,
+          () => void invoke('quit_app').catch(() => {}),
+          () => invoke('toggle_stealth').catch(() => {}));
+        return;    }
     // 未绑定动作且系统路径也给不到的键：记日志便于后续映射（voice 留给三期 ATVV）。
     if (event.phase === 'press') {
       if (event.button === 'voice' || event.button.startsWith('usage_')) {
@@ -467,6 +474,8 @@ export class RemoteManager {
   /**
    * 通用长按分流：按住 holdMs 触发 onLong（仅一次），松开时若长按未触发
    * 则执行 onShort。enabled=false 时整颗按键不响应（如非阅读页的音量键）。
+   * 墙钟兜底：WKWebView 在页面被误判为隐藏（摸鱼往返/启动揭示后 occlusion
+   * 状态卡滞）会把定时器按整秒推迟，按住时长已达阈值时释放按墙钟补判长按。
    */
   private handleButtonHold(
     button: string,
@@ -477,17 +486,25 @@ export class RemoteManager {
   ): void {
     if (phase === 'press') {
       if (!enabled || this.holdTimers.has(button)) return;
-      const timer = setTimeout(() => {
-        this.holdTimers.delete(button);
-        onLong();
-      }, BUTTON_HOLD_MS);
-      this.holdTimers.set(button, timer);
+      this.holdTimers.set(button, {
+        timer: setTimeout(() => {
+          this.holdTimers.delete(button);
+          onLong();
+        }, BUTTON_HOLD_MS),
+        pressedAt: Date.now(),
+      });
       return;
     }
-    const timer = this.holdTimers.get(button);
-    if (timer === undefined) return;
-    clearTimeout(timer);
+    const entry = this.holdTimers.get(button);
+    if (!entry) return;
+    clearTimeout(entry.timer);
     this.holdTimers.delete(button);
+    if (Date.now() - entry.pressedAt >= BUTTON_HOLD_MS) {
+      log.info(`[RemoteHid] ${button} 长按动作（墙钟兜底）`);
+      onLong();
+      return;
+    }
+    log.info(`[RemoteHid] ${button} 短按动作`);
     onShort();
   }
 
@@ -524,6 +541,7 @@ export class RemoteManager {
     if (this.menuPressActive) return;
     this.menuPressActive = true;
     this.menuLongFired = false;
+    this.menuPressAt = Date.now();
     this.menuHoldTimer = setTimeout(() => {
       this.menuHoldTimer = null;
       this.menuLongFired = true;
@@ -545,6 +563,16 @@ export class RemoteManager {
     if (this.menuHoldTimer !== null) {
       clearTimeout(this.menuHoldTimer);
       this.menuHoldTimer = null;
+      // 节流兜底（同 handleButtonHold）：按满阈值但定时器被推迟，松开时补长按
+      if (Date.now() - this.menuPressAt >= MENU_HOLD_MS) {
+        const siteId = this.siteContext.siteId;
+        if (this.siteContext.isReaderPage) {
+          const outcome = openReaderToc(siteId);
+          log.info(`[RemoteManager] 菜单长按(节流兜底) site=${siteId} outcome=${outcome}`);
+          if (outcome === 'not-found') showToast('未找到目录入口');
+        }
+        return;
+      }
     }
     const longPress = this.menuLongFired;
     this.menuLongFired = false;
@@ -562,7 +590,7 @@ export class RemoteManager {
     this.retryTimer = null;
     if (this.menuHoldTimer) clearTimeout(this.menuHoldTimer);
     this.menuHoldTimer = null;
-    for (const timer of this.holdTimers.values()) clearTimeout(timer);
+    for (const entry of this.holdTimers.values()) clearTimeout(entry.timer);
     this.holdTimers.clear();
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = null;

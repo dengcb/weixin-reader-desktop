@@ -13,6 +13,7 @@
     "allow-set-title",
     "allow-toggle-menu-bar",
     "allow-simulate-menu-click",
+    "allow-quit-app",
     "allow-switch-bookstore-by-index",
     "allow-get-bookstore-list",
     "allow-apply-site-zoom",
@@ -22,6 +23,8 @@
     "allow-get-local-book",
     "allow-get-local-books",
     "allow-open-local-book-by-id",
+    "allow-remove-local-books",
+    "allow-save-local-book-cover",
     "allow-get-local-reading-progress",
     "allow-save-local-reading-progress",
     "allow-local-sha1"

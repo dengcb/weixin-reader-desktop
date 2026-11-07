@@ -7,6 +7,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../src/scripts/local_reader_bootstrap.js");
     println!("cargo:rerun-if-changed=../src/windows/local-reader.html");
     println!("cargo:rerun-if-changed=../src/windows/local-reader.css");
+    // include_bytes! 进二进制的页面必须登记，否则改文件不会触发壳重编译
+    println!("cargo:rerun-if-changed=../src/windows/local-shelf.html");
     println!("cargo:rerun-if-changed=../third-party/foliate-js/LICENSE");
     println!("cargo:rerun-if-changed=../THIRD-PARTY-NOTICES.md");
     // Tauri 会在编译期把 frontendDist 的资源嵌入应用；默认页新增或更新后必须
@@ -23,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "set_active_bookstore",
             "set_title",
             "toggle_stealth",
+            "quit_app",
             "toggle_menu_bar",
             "reveal_menu_bar_transient",
             "is_main_fullscreen",
@@ -54,6 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "get_local_book",
             "get_local_books",
             "open_local_book_by_id",
+            "remove_local_books",
+            "save_local_book_cover",
             "get_local_reading_progress",
             "save_local_reading_progress",
             "local_sha1",

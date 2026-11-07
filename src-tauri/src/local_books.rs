@@ -135,7 +135,7 @@ fn modified_millis(metadata: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+pub(crate) fn config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map_err(|error| format!("无法定位应用配置目录：{error}"))
@@ -153,7 +153,7 @@ fn cache_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(config_dir(app)?.join("local-book-cache"))
 }
 
-fn validate_book_id(book_id: &str) -> Result<(), String> {
+pub(crate) fn validate_book_id(book_id: &str) -> Result<(), String> {
     if book_id.len() != 64 || !book_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("无效的本地图书 ID".to_string());
     }
@@ -279,6 +279,7 @@ fn remove_book_data<R: Runtime>(app: &AppHandle<R>, book_id: &str) {
     if let Ok(progress) = progress_dir(app) {
         let _ = fs::remove_file(progress.join(format!("{book_id}.json")));
     }
+    crate::local_covers::remove_cover(app, book_id);
     if let Ok(cache_root) = cache_dir(app) {
         let cache = cache_root.join(book_id);
         if cache.exists() {
@@ -336,7 +337,7 @@ fn forget_book<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn read_zip_text(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<String, String> {
+pub(crate) fn read_zip_text(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<String, String> {
     let mut entry = archive
         .by_name(name)
         .map_err(|error| format!("EPUB 缺少 {name}：{error}"))?;
@@ -347,7 +348,7 @@ fn read_zip_text(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<Stri
     Ok(text)
 }
 
-fn resolve_epub_href(opf_path: &str, href: &str) -> Result<String, String> {
+pub(crate) fn resolve_epub_href(opf_path: &str, href: &str) -> Result<String, String> {
     let without_fragment = href.split_once('#').map_or(href, |(path, _)| path);
     let href = without_fragment
         .split_once('?')
@@ -394,7 +395,7 @@ fn resolve_epub_href(opf_path: &str, href: &str) -> Result<String, String> {
 /// though the reader itself can render them. Allowing the declaration keeps
 /// the XML well-formedness check while `roxmltree` still does not fetch
 /// external resources and keeps its entity-expansion loop protections.
-fn parse_epub_xml(markup: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
+pub(crate) fn parse_epub_xml(markup: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
     roxmltree::Document::parse_with_options(
         markup,
         roxmltree::ParsingOptions {
@@ -1603,7 +1604,8 @@ pub fn save_local_reading_progress<R: Runtime>(
     result.map_err(|error| missing_notice(&error).unwrap_or(error))
 }
 
-/// 本地书架页读取最近图书列表（仅主窗口；书架页运行在主窗口内）
+/// 本地书架页读取最近图书列表（仅主窗口；书架页运行在主窗口内）。
+/// 顺带触发封面后台补齐：历史书籍缺封面时直接从书文件提取，无需重开。
 #[tauri::command]
 pub fn get_local_books<R: Runtime>(
     app: AppHandle<R>,
@@ -1612,6 +1614,7 @@ pub fn get_local_books<R: Runtime>(
     if window.label() != "main" {
         return Vec::new();
     }
+    crate::local_covers::start_backfill(&app);
     list_recent(&app)
 }
 
@@ -1626,6 +1629,102 @@ pub fn open_local_book_by_id<R: Runtime>(
         return Err("只有主窗口可以打开本地图书".to_string());
     }
     open_book_by_id(&app, &book_id)
+}
+
+/// 仅主窗口查询：书架页读取最近图书列表时的记录存在性检查也在此复用。
+pub(crate) fn book_record_exists<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> bool {
+    if validate_book_id(book_id).is_err() {
+        return false;
+    }
+    let Ok(path) = history_path(app) else {
+        return false;
+    };
+    read_document(&path)
+        .books
+        .iter()
+        .any(|book| book.book_id == book_id)
+}
+
+/// 封面落盘（含阅读器前端路径与后台补齐路径）：必须在仓储锁内做「记录仍在」
+/// 校验，与删除/驱逐/清空历史竞态时不会留下孤儿封面文件。
+pub(crate) fn store_cover_if_book_known<R: Runtime>(
+    app: &AppHandle<R>,
+    book_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    validate_book_id(book_id)?;
+    let _guard = LOCAL_BOOKS_LOCK
+        .lock()
+        .map_err(|_| "本地图书仓储锁已损坏".to_string())?;
+    let document = read_document(&history_path(app)?);
+    if !document.books.iter().any(|book| book.book_id == book_id) {
+        return Err("本地图书记录不存在".to_string());
+    }
+    drop(_guard);
+    crate::local_covers::write_cover(app, book_id, bytes)
+}
+
+/// 书架页批量移除图书：删除阅读记录/进度/缓存/封面，源文件保留。
+/// lastReaderUrl 指向被移除图书时一并清空，避免回退链把过期地址当在线站点。
+#[tauri::command]
+pub fn remove_local_books<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    book_ids: Vec<String>,
+) -> Result<usize, String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以管理本地书架".to_string());
+    }
+    if book_ids.is_empty() {
+        return Ok(0);
+    }
+    for book_id in &book_ids {
+        validate_book_id(book_id)?;
+    }
+    let removed_ids: Vec<String> = {
+        let _guard = LOCAL_BOOKS_LOCK
+            .lock()
+            .map_err(|_| "本地图书仓储锁已损坏".to_string())?;
+        let path = history_path(&app)?;
+        let mut document = read_document(&path);
+        let mut removed_ids = Vec::with_capacity(book_ids.len());
+        for book_id in &book_ids {
+            if forget_record_from_document(&mut document, book_id) {
+                removed_ids.push(book_id.clone());
+            }
+        }
+        if !removed_ids.is_empty() {
+            let evicted = sort_and_truncate(&mut document);
+            atomic_write_json(&path, &document)?;
+            for record in evicted {
+                remove_book_data(&app, &record.book_id);
+            }
+        }
+        drop(_guard);
+        removed_ids
+    };
+    if removed_ids.is_empty() {
+        return Ok(0);
+    }
+    for book_id in &removed_ids {
+        remove_book_data(&app, book_id);
+    }
+    let stale = crate::settings::read_settings(&app)
+        .ok()
+        .and_then(|settings| {
+            settings
+                .get("sites")?
+                .get("local")?
+                .get("lastReaderUrl")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .is_some_and(|url| removed_ids.iter().any(|book_id| url.contains(book_id)));
+    if stale {
+        crate::settings::update_setting(&app, "sites.local.lastReaderUrl", Value::Null)?;
+    }
+    crate::commands::refresh_app_menu(&app);
+    Ok(removed_ids.len())
 }
 
 #[tauri::command]
@@ -1655,6 +1754,7 @@ pub fn clear_local_history(app: AppHandle, window: WebviewWindow) -> Result<(), 
     if cache.exists() {
         fs::remove_dir_all(cache).map_err(|error| format!("无法清除本地图书缓存：{error}"))?;
     }
+    crate::local_covers::purge_all_covers(&app)?;
     drop(_guard);
     crate::settings::update_setting(&app, "sites.local.lastReaderUrl", Value::Null)?;
     crate::commands::refresh_app_menu(&app);
@@ -1721,7 +1821,7 @@ fn mime_for_entry(name: &str) -> &'static str {
     }
 }
 
-fn validate_epub_entry_name(name: &str) -> Result<(), String> {
+pub(crate) fn validate_epub_entry_name(name: &str) -> Result<(), String> {
     if name.is_empty()
         || name.contains('\0')
         || name.contains('\\')

@@ -8,6 +8,7 @@ mod atvv_core;
 mod commands;
 mod font_cache;
 mod local_books;
+mod local_covers;
 mod menu;
 mod menu_model;
 pub mod monitor;
@@ -349,6 +350,18 @@ pub fn run() {
     // 远程阅读页运行期间切换到默认页时，直接由专用本地协议返回编译进二进制的
     // 页面内容，避免再次经 Tauri 前端资产协议请求 library.html。
     builder = builder.register_uri_scheme_protocol(LIBRARY_SCHEME, |context, request| {
+        // 本地书封面：与书架页同级隐私处理——仅主窗口可取；404 由书架回退占位封面
+        if let Some(book_id) = request.uri().path().strip_prefix("/local-book-cover/") {
+            return if context.webview_label() == "main" {
+                local_covers::cover_response(context.app_handle(), book_id)
+            } else {
+                tauri::http::Response::builder()
+                    .status(404)
+                    .header("content-type", "text/plain; charset=utf-8")
+                    .body(b"Not Found".to_vec())
+                    .expect("valid local cover response")
+            };
+        }
         // 书架页含本地书目（隐私数据）：仅主窗口可取；默认页与 logo 公开
         if request.uri().path() == LOCAL_SHELF_PAGE_PATH {
             return if context.webview_label() == "main" {
@@ -768,12 +781,15 @@ pub fn run() {
             local_books::get_local_book,
             local_books::get_local_books,
             local_books::open_local_book_by_id,
+            local_books::remove_local_books,
+            local_covers::save_local_book_cover,
             local_books::get_local_reading_progress,
             local_books::save_local_reading_progress,
             local_books::local_sha1,
             local_books::clear_local_history,
             commands::set_title,
             commands::toggle_stealth,
+            commands::quit_app,
             commands::toggle_menu_bar,
             #[cfg(target_os = "windows")]
             commands::reveal_menu_bar_transient,

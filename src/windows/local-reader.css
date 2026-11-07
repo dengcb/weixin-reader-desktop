@@ -83,6 +83,18 @@ foliate-paginator::part(filter), foliate-fxl::part(filter) { background: var(--p
   backdrop-filter: blur(18px) saturate(1.15);
   transition: opacity .2s ease, transform .2s ease;
 }
+/* 阅读工具栏显隐（sites.local.hideToolbar）：遥控器菜单键短按 / 菜单 ⌘O 共用 */
+body.toolbar-hidden .local-toolbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(12px);
+}
+/* 顶部导航栏显隐（sites.local.hideNavbar）：遥控器主页键短按 / Home 键共用 */
+body.navbar-hidden .local-navbar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
 .tool-button {
   width: 52px;
   min-height: 52px;

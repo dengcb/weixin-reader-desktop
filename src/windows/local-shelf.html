@@ -7,25 +7,37 @@
   <style>
     :root {
       color-scheme: light dark;
-      /* 深浅双主题：参考微信读书书架，浅色纸白 / 深色墨底，品牌色不变 */
+      /* 深浅双主题：浅色纸白 / 深色墨底，品牌色不变（DESIGN_TOKENS #349f66） */
       --paper: #f7f7f5;
       --ink: #1f2329;
       --muted: #8a8f85;
-      --line: rgba(31, 35, 41, .1);
-      --card: #ffffff;
-      --card-hover: rgba(52, 159, 102, .06);
+      --line: rgba(31, 35, 41, .08);
+      --field: #ececea;
+      --field-ink: #55595e;
+      --pill: #ececea;
+      --pill-hover: #e2e2df;
       --accent: #349f66;
+      --danger: #c0392b;
       --halo: rgba(52, 159, 102, .1);
+      --topbar-bg: rgba(247, 247, 245, .86);
+      --cover-shadow: 0 4px 14px rgba(0, 0, 0, .16);
+      --cover-shadow-hover: 0 12px 26px rgba(0, 0, 0, .2);
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --paper: #161a17;
-        --ink: #e8eae6;
-        --muted: #9ba096;
-        --line: rgba(232, 234, 230, .12);
-        --card: #20251f;
-        --card-hover: rgba(96, 195, 142, .08);
-        --halo: rgba(96, 195, 142, .1);
+        --paper: #17181a;
+        --ink: #e8eaec;
+        --muted: #989d9e;
+        --line: rgba(232, 234, 236, .09);
+        --field: #232529;
+        --field-ink: #b6bbbd;
+        --pill: #232529;
+        --pill-hover: #2e3136;
+        --danger: #c2544a;
+        --halo: rgba(96, 195, 142, .08);
+        --topbar-bg: rgba(23, 24, 26, .86);
+        --cover-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+        --cover-shadow-hover: 0 12px 26px rgba(0, 0, 0, .6);
       }
     }
     * { box-sizing: border-box; }
@@ -34,30 +46,116 @@
       margin: 0;
       color: var(--ink);
       background:
-        radial-gradient(circle at 50% -8rem, var(--halo), transparent 26rem),
+        radial-gradient(circle at 50% -10rem, var(--halo), transparent 30rem),
         var(--paper);
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
       overflow-y: auto;
+      user-select: none;
+      -webkit-user-select: none;
     }
-    header {
+
+    /* ---- 顶栏：品牌 / 居中搜索 / 导入入口（同微信读书书架布局） ---- */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 1fr minmax(240px, 400px) 1fr;
+      align-items: center;
+      gap: 16px;
+      height: 60px;
+      padding: 0 28px;
+      background: var(--topbar-bg);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
       display: flex;
-      align-items: baseline;
-      gap: 12px;
-      padding: 26px 36px 6px;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
     }
-    header h1 {
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      flex: none;
+      background: var(--accent);
+      -webkit-mask: url('/atrd-logo.svg') center / contain no-repeat;
+      mask: url('/atrd-logo.svg') center / contain no-repeat;
+    }
+    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: var(--field);
+      color: var(--field-ink);
+    }
+    .search svg { width: 15px; height: 15px; flex: none; }
+    .search input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      /* body 全局 user-select:none 下显式恢复输入框文本可选可编辑 */
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .search input::placeholder { color: var(--muted); }
+    .topbar-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .pill {
+      border: 0;
+      padding: 9px 18px;
+      border-radius: 999px;
+      background: var(--pill);
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .12s ease, transform .12s ease;
+    }
+    .pill:hover { background: var(--pill-hover); }
+    .pill:active { transform: scale(.97); }
+    .pill:focus-visible { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
+    .pill.danger { background: var(--danger); color: #fff; }
+    .pill.danger:disabled { opacity: .35; cursor: default; }
+    .pill.danger.armed { filter: brightness(.85); }
+
+    /* ---- 问候区：衬线大标题（微信读书书架的用户名排印） ---- */
+    main {
+      max-width: 1168px;
+      margin: 0 auto;
+      padding: 0 32px 48px;
+    }
+    .greeting { padding: 52px 2px 0; }
+    .greeting h1 {
       margin: 0;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: .06em;
+      font-family: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: .05em;
     }
-    header .count { color: var(--muted); font-size: 12px; }
-    header .hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .greeting .sub { margin: 10px 2px 0; color: var(--muted); font-size: 12.5px; }
+
+    /* ---- 封面网格：居中限宽，观感对齐微信读书书架 ---- */
     .shelf {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-      gap: 22px 18px;
-      padding: 18px 36px 40px;
+      grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+      gap: 34px 22px;
+      padding: 34px 0 0;
     }
     .book {
       border: 0;
@@ -67,77 +165,226 @@
       font: inherit;
       text-align: left;
       cursor: pointer;
-      border-radius: 10px;
       outline: none;
+      min-width: 0;
     }
-    .book:focus-visible .cover { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
     .cover {
+      position: relative;
       aspect-ratio: 5 / 7;
-      border-radius: 8px;
+      border-radius: 6px;
       display: grid;
       place-items: center;
-      color: #fff;
-      font-size: 40px;
+      color: rgba(255, 255, 255, .92);
+      font-family: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+      font-size: 42px;
       font-weight: 600;
-      box-shadow: 0 6px 16px rgba(0, 0, 0, .18);
-      transition: transform .12s ease, box-shadow .12s ease;
-      user-select: none;
-      -webkit-user-select: none;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+      /* 内衬细线 + 外投影：占位封面保留纸书质感 */
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, .14),
+        var(--cover-shadow);
+      transition: transform .14s ease, box-shadow .14s ease;
     }
+    .cover::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      border-radius: inherit;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, 0) 11%),
+        linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(0, 0, 0, .08) 88%);
+      pointer-events: none;
+    }
+    /* 内嵌封面：img 始终参与布局（display:none 会让 lazy 加载永不触发），
+       加载成功前 opacity 0 占位；缺缓存时 404 → 移除 img 回退渐变占位封面 */
+    .cover-img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: inherit;
+      opacity: 0;
+    }
+    .cover.has-cover .cover-img { opacity: 1; }
+    .cover.has-cover { color: transparent; text-shadow: none; }
     .book:hover .cover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 24px rgba(0, 0, 0, .22);
+      transform: translateY(-5px);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14), var(--cover-shadow-hover);
     }
-    .book:active .cover { transform: translateY(-1px) scale(.98); }
-    .meta { padding: 8px 2px 0; }
+    .book:active .cover { transform: translateY(-2px) scale(.985); }
+    .book:focus-visible .cover { outline: 3px solid rgba(52, 159, 102, .45); outline-offset: 3px; }
+    .meta { padding: 10px 2px 0; }
     .title {
-      font-size: 13px;
+      font-size: 13.5px;
       font-weight: 600;
-      line-height: 1.35;
+      line-height: 1.45;
+      /* 固定占两行：一行放得下的标题第二行留白，同一排卡片标题/副行对齐；
+         超两行由 line-clamp 截断出省略号 */
+      height: calc(1.45em * 2);
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
-    .sub { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .sub { margin-top: 4px; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .noresult {
+      padding: 84px 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: .04em;
+    }
+
+    /* ---- 空书架：居中引导（脱敏版默认入口即此页） ---- */
     .empty {
-      padding: 90px 36px;
+      padding: 120px 0 90px;
       text-align: center;
       color: var(--muted);
       font-size: 13px;
       letter-spacing: .05em;
     }
     .empty .mark {
-      width: 52px;
-      height: 52px;
-      margin: 0 auto 18px;
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 22px;
       background: var(--accent);
       -webkit-mask: url('/atrd-logo.svg') center / contain no-repeat;
       mask: url('/atrd-logo.svg') center / contain no-repeat;
     }
+    .empty h2 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-family: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: .06em;
+    }
+    .empty .pill { margin-top: 26px; }
+
+    /* ---- 管理模式：封面右上角选择角标，选中封面压暗 ---- */
+    .badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 2;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, .92);
+      background: rgba(0, 0, 0, .25);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+      display: none;
+    }
+    .book.managing .badge { display: block; }
+    .book.selected .badge { background: var(--accent); }
+    .book.selected .badge::after {
+      content: '✓';
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .book.selected .cover::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      border-radius: inherit;
+      background: rgba(0, 0, 0, .3);
+    }
+    .book.managing { cursor: pointer; }
+
+    /* ---- 底部管理操作栏 ---- */
+    .manage-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 28px;
+      background: var(--topbar-bg);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-top: 1px solid var(--line);
+    }
+    .bar-select {
+      border: 0;
+      padding: 6px 2px;
+      background: transparent;
+      color: var(--accent);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .bar-select:focus-visible { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
+    .bar-count { flex: 1; color: var(--muted); font-size: 12.5px; }
+    body.managing main { padding-bottom: 112px; }
+
     @media (prefers-reduced-motion: reduce) {
-      .cover { transition: none; }
+      .cover, .pill { transition: none; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>本地书架</h1>
-    <span class="count" id="count"></span>
-    <span class="hint">点击书封继续阅读 · Esc 返回阅读页</span>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">艾特阅读</span>
+    </div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"></circle>
+        <path d="M20 20l-3.6-3.6"></path>
+      </svg>
+      <input id="search" type="text" placeholder="在书架中搜索" aria-label="搜索本地图书" spellcheck="false">
+    </label>
+    <div class="topbar-actions">
+      <button type="button" class="pill" id="manageBtn">管理</button>
+      <button type="button" class="pill" id="importBtn">导入图书</button>
+    </div>
   </header>
-  <div class="shelf" id="shelf"></div>
-  <div class="empty" id="empty" hidden>
-    <div class="mark" aria-hidden="true"></div>
-    书架还是空的——把 TXT / EPUB / MOBI / PDF 拖进窗口，或用「打开本地书」导入
+  <main>
+    <section class="greeting">
+      <h1>本地书架</h1>
+      <p class="sub" id="greetingSub"></p>
+    </section>
+    <section class="shelf" id="shelf"></section>
+    <div class="noresult" id="noresult" hidden></div>
+    <div class="empty" id="empty" hidden>
+      <div class="mark" aria-hidden="true"></div>
+      <h2>书架还是空的</h2>
+      把 TXT / EPUB / MOBI / PDF 拖进窗口即可上架
+      <br>
+      <button type="button" class="pill" id="emptyImportBtn">导入本地图书</button>
+    </div>
+  </main>
+  <div class="manage-bar" id="manageBar" hidden>
+    <button type="button" class="bar-select" id="selectAllBtn">全选</button>
+    <span class="bar-count" id="manageCount">已选 0 本</span>
+    <button type="button" class="pill danger" id="removeBtn" disabled>移除</button>
   </div>
   <script>
     const invoke = window.__TAURI__?.core?.invoke;
+    // 从阅读页进入时窗口标题还停留在旧书名：JS 设置 document.title 触发壳同步，
+    // 同时直接调 set_title 双保险
+    document.title = '本地书架 - 艾特阅读';
+    void invoke?.('set_title', { title: '本地书架 - 艾特阅读' })?.catch?.(() => {});
     // 封面占位：按书名稳定取色（微信读书书架观感），无真实封面文件可渲染
     const PALETTES = [
-      ['#c0392b', '#8e2418'], ['#2c5f8a', '#1d3f5c'], ['#5f8a2c', '#3f5c1d'],
-      ['#8a5f2c', '#5c3f1d'], ['#6b4fa0', '#4a3672'], ['#a04f6b', '#72364a'],
-      ['#2c8a7f', '#1d5c55'], ['#a0742c', '#72501d'],
+      ['#b3382e', '#7e1f18'], ['#2e5e8f', '#1c3d60'], ['#4a7a2c', '#2e521a'],
+      ['#8a5a2c', '#5e3a18'], ['#6b4fa0', '#463172'], ['#a0425e', '#6e2a40'],
+      ['#2c7f78', '#1a5550'], ['#a07a2c', '#6e531b'], ['#3a5a9f', '#24396b'],
+      ['#7f3550', '#571f34'],
     ];
     const coverStyle = (title) => {
       let hash = 0;
@@ -147,14 +394,34 @@
     };
     const formatLabel = (value) => String(value || '').toUpperCase();
 
-    const render = (books) => {
+    const relativeTime = (millis) => {
+      if (!millis) return '';
+      const diff = Date.now() - millis;
+      if (diff < 60000) return '刚刚阅读';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前阅读`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前阅读`;
+      if (diff < 86400000 * 30) return `${Math.floor(diff / 86400000)} 天前阅读`;
+      const date = new Date(millis);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} 阅读`;
+    };
+
+    let books = [];
+
+    const render = (list, keyword) => {
       const shelf = document.getElementById('shelf');
       const empty = document.getElementById('empty');
-      document.getElementById('count').textContent = books.length ? `${books.length} 本` : '';
-      empty.hidden = books.length > 0;
-      shelf.hidden = books.length === 0;
+      const noresult = document.getElementById('noresult');
+      const total = books.length;
+      document.getElementById('greetingSub').textContent = `共 ${total} 本 · Esc 返回阅读页`;
+      empty.hidden = total > 0;
+      shelf.hidden = total === 0 || list.length === 0;
+      noresult.hidden = !(total > 0 && list.length === 0);
+      if (!noresult.hidden) {
+        noresult.textContent = `没有找到与「${keyword}」匹配的书`;
+      }
       shelf.replaceChildren();
-      for (const book of books) {
+      for (const book of list) {
         const card = document.createElement('button');
         card.type = 'button';
         card.className = 'book';
@@ -162,36 +429,154 @@
         cover.className = 'cover';
         cover.style.cssText = coverStyle(book.title);
         cover.textContent = Array.from(book.title)[0] ?? '·';
+        const coverImg = document.createElement('img');
+        coverImg.className = 'cover-img';
+        coverImg.alt = '';
+        coverImg.loading = 'lazy';
+        coverImg.decoding = 'async';
+        coverImg.addEventListener('load', () => cover.classList.add('has-cover'));
+        coverImg.addEventListener('error', () => coverImg.remove());
+        coverImg.src = `/local-book-cover/${book.bookId}`;
+        cover.append(coverImg);
         const meta = document.createElement('div');
         meta.className = 'meta';
         const title = document.createElement('div');
         title.className = 'title';
         title.textContent = book.title;
         title.title = book.title;
+        const readAt = relativeTime(book.lastOpenedAt);
         const sub = document.createElement('div');
         sub.className = 'sub';
-        sub.textContent = formatLabel(book.format);
+        sub.textContent = readAt ? `${formatLabel(book.format)} · ${readAt}` : formatLabel(book.format);
         meta.append(title, sub);
         card.append(cover, meta);
+        if (manageMode) {
+          card.classList.add('managing');
+          if (selected.has(book.bookId)) card.classList.add('selected');
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.setAttribute('aria-hidden', 'true');
+          cover.append(badge);
+        }
         card.addEventListener('click', () => {
+          if (manageMode) {
+            toggleSelect(book.bookId, card);
+            return;
+          }
           void invoke('open_local_book_by_id', { bookId: book.bookId })?.catch?.(() => {});
         });
         shelf.append(card);
       }
     };
 
+    const applyFilter = () => {
+      const keyword = document.getElementById('search').value.trim().toLowerCase();
+      const list = keyword
+        ? books.filter((book) => book.title.toLowerCase().includes(keyword))
+        : books;
+      render(list, keyword.trim());
+    };
+
     const load = async () => {
       if (!invoke) return;
       try {
-        const books = await invoke('get_local_books');
-        render(Array.isArray(books) ? books : []);
+        books = await invoke('get_local_books');
+        if (!Array.isArray(books)) books = [];
       } catch {
-        render([]);
+        books = [];
       }
+      applyFilter();
     };
+
+    document.getElementById('search').addEventListener('input', applyFilter);
+
+    const importBook = () => {
+      void invoke('simulate_menu_click', { action: 'open_local_book' })?.catch?.(() => {});
+    };
+    document.getElementById('importBtn').addEventListener('click', importBook);
+    document.getElementById('emptyImportBtn').addEventListener('click', importBook);
+
+    // ---- 管理模式：选择图书批量移除（记录/进度/缓存/封面删除，源文件保留） ----
+    let manageMode = false;
+    let confirmRemove = false;
+    const selected = new Set();
+    const manageBar = document.getElementById('manageBar');
+    const manageCount = document.getElementById('manageCount');
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    const removeBtn = document.getElementById('removeBtn');
+
+    const resetConfirm = () => {
+      confirmRemove = false;
+      removeBtn.textContent = '移除';
+      removeBtn.classList.remove('armed');
+    };
+
+    const updateManageBar = () => {
+      manageCount.textContent = `已选 ${selected.size} 本`;
+      selectAllBtn.textContent =
+        books.length > 0 && selected.size === books.length ? '取消全选' : '全选';
+      removeBtn.disabled = selected.size === 0;
+      if (selected.size === 0) resetConfirm();
+    };
+
+    const setManageMode = (on) => {
+      manageMode = on;
+      selected.clear();
+      resetConfirm();
+      manageBar.hidden = !on;
+      document.getElementById('manageBtn').textContent = on ? '完成' : '管理';
+      document.body.classList.toggle('managing', on);
+      updateManageBar();
+      applyFilter();
+    };
+
+    const toggleSelect = (bookId, card) => {
+      if (selected.has(bookId)) {
+        selected.delete(bookId);
+        card.classList.remove('selected');
+      } else {
+        selected.add(bookId);
+        card.classList.add('selected');
+      }
+      updateManageBar();
+    };
+
+    document.getElementById('manageBtn').addEventListener('click', () => setManageMode(!manageMode));
+    selectAllBtn.addEventListener('click', () => {
+      const allSelected = books.length > 0 && selected.size === books.length;
+      selected.clear();
+      if (!allSelected) for (const book of books) selected.add(book.bookId);
+      applyFilter();
+      updateManageBar();
+    });
+    removeBtn.addEventListener('click', () => {
+      if (!selected.size || !invoke) return;
+      // 两段式确认：首次点击变「确认移除」，再次点击执行
+      if (!confirmRemove) {
+        confirmRemove = true;
+        removeBtn.textContent = '确认移除';
+        removeBtn.classList.add('armed');
+        return;
+      }
+      const bookIds = [...selected];
+      Promise.resolve(invoke('remove_local_books', { bookIds }))
+        .then(() => {
+          selected.clear();
+          resetConfirm();
+          updateManageBar();
+          return load();
+        })
+        .then(() => {
+          if (!books.length) setManageMode(false);
+        })
+        .catch(() => {});
+    });
+
     void load();
     // 阅读期间导入的新书在回到书架时补齐
     window.addEventListener('focus', () => { void load(); });
+    // Rust 侧后台补齐历史封面完成后通知刷新（EPUB/MOBI 免重开即出封面）
+    window.__TAURI__?.event?.listen?.('local-book-covers-updated', () => { void load(); });
 
     // 保留应用级快捷键（同默认页）：⌘1~7 切书城、⌘, 设置等
     const isWindows = navigator.userAgent.includes('Windows');
@@ -200,7 +585,22 @@
       '0': 'zoom_reset', o: 'hide_toolbar',
     };
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { window.history.back(); return; }
+      if (event.key === 'Escape') {
+        // 管理模式下先退出管理；搜索有关键词时先清搜索，再次 Esc 才返回阅读页
+        if (manageMode) {
+          setManageMode(false);
+          return;
+        }
+        const search = document.getElementById('search');
+        if (search.value) {
+          search.value = '';
+          applyFilter();
+          search.focus();
+          return;
+        }
+        window.history.back();
+        return;
+      }
       if (!invoke) return;
       if (isWindows && event.key === 'F11') {
         event.preventDefault();

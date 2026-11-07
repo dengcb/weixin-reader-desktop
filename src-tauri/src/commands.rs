@@ -189,6 +189,13 @@ pub fn toggle_stealth<R: Runtime>(app: AppHandle<R>) {
     }
 }
 
+/// 遥控器电源键长按：退出应用。app.exit 会走 RunEvent::Exit 清理路径
+/// （自动翻页状态复位等），与菜单「退出艾特阅读」行为一致。
+#[tauri::command]
+pub fn quit_app<R: Runtime>(app: AppHandle<R>) {
+    app.exit(0);
+}
+
 /// Windows 专属：切换菜单栏可见性（Ctrl+H，见 inject.ts / local-reader 前端键位；
 /// 菜单 accelerator 刻意为 None——WebView2 下 accelerator 失效，前端模拟触发）
 /// 不持久化，重启后恢复默认显示
