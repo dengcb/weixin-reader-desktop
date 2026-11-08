@@ -476,25 +476,51 @@ pub fn start(app: &AppHandle<Wry>) {
         IOHIDManagerRegisterDeviceMatchingCallback(manager, on_device_matched, context.cast());
         IOHIDManagerRegisterDeviceRemovalCallback(manager, on_device_removed, context.cast());
         IOHIDManagerRegisterInputReportCallback(manager, on_input_report, context.cast());
-        IOHIDManagerScheduleWithRunLoop(
-            manager,
-            // setup 在主线程执行，主 RunLoop 由 Tauri 事件循环驱动。
-            run_loop_main(),
-            kCFRunLoopCommonModes,
-        );
         manager
     };
 
-    let open_result = unsafe { IOHIDManagerOpen(manager, K_IOHID_OPTIONS_TYPE_NONE) };
-    if open_result == K_IO_RETURN_SUCCESS {
-        log::info!(target: TARGET, "HID 监听已打开（监听模式）");
-    } else {
-        log::warn!(
-            target: TARGET,
-            "HID 监听打开失败 result={open_result}(0x{:X})（权限未授予或被占用），进入授权等待重试",
-            open_result as u32
-        );
-        spawn_open_retry(manager as usize);
+    // HID 回调挂专用线程 RunLoop：音量抑制的 HELD 标志必须赶在系统
+    // NX_SYSDEFINED 抵达抑制 tap 前置位。原挂主 RunLoop，应用激活等主线程
+    // 高峰期回调可滞后数百毫秒——切前台后首次按音量键会先漏吞一次系统
+    // 音量（2026-11-08 实证的偶发竞速）。专用线程上标志位微秒级落位。
+    // manager 裸指针非 Send，按地址值传递（spawn_open_retry 同款）。
+    let manager_addr = manager as usize;
+    let scheduled = std::thread::Builder::new()
+        .name("hid-remote-report".into())
+        .spawn(move || unsafe {
+            let manager = manager_addr as IOHIDManagerRef;
+            let run_loop = run_loop_current();
+            IOHIDManagerScheduleWithRunLoop(manager, run_loop, kCFRunLoopCommonModes);
+            let open_result = IOHIDManagerOpen(manager, K_IOHID_OPTIONS_TYPE_NONE);
+            if open_result == K_IO_RETURN_SUCCESS {
+                log::info!(target: TARGET, "HID 监听已打开（监听模式，专用 RunLoop）");
+            } else {
+                log::warn!(
+                    target: TARGET,
+                    "HID 监听打开失败 result={open_result}(0x{:X})（权限未授予或被占用），进入授权等待重试",
+                    open_result as u32
+                );
+                spawn_open_retry(manager as usize);
+            }
+            run_loop_run();
+        })
+        .is_ok();
+    if !scheduled {
+        // 线程创建失败（资源耗尽）时退回主 RunLoop，监听不中断。
+        unsafe {
+            IOHIDManagerScheduleWithRunLoop(manager, run_loop_main(), kCFRunLoopCommonModes);
+            let open_result = IOHIDManagerOpen(manager, K_IOHID_OPTIONS_TYPE_NONE);
+            if open_result == K_IO_RETURN_SUCCESS {
+                log::info!(target: TARGET, "HID 监听已打开（监听模式，主 RunLoop 降级）");
+            } else {
+                log::warn!(
+                    target: TARGET,
+                    "HID 监听打开失败 result={open_result}(0x{:X})（权限未授予或被占用），进入授权等待重试",
+                    open_result as u32
+                );
+                spawn_open_retry(manager as usize);
+            }
+        }
     }
     // 节点打开失败（授权窗口期瞬时失败）的补开清扫。
     spawn_node_retry(context);
@@ -529,6 +555,23 @@ unsafe fn run_loop_main() -> CFRunLoopRef {
         fn CFRunLoopGetMain() -> CFRunLoopRef;
     }
     CFRunLoopGetMain()
+}
+
+unsafe fn run_loop_current() -> CFRunLoopRef {
+    // 与 media_key_suppressor 的同名声明 ABI 一致（同为指针宽度），仅
+    // 可变性标注不同；沿用 crate 内 clashing_extern_declarations 豁免。
+    #[allow(clashing_extern_declarations)]
+    extern "C" {
+        fn CFRunLoopGetCurrent() -> CFRunLoopRef;
+    }
+    CFRunLoopGetCurrent()
+}
+
+unsafe fn run_loop_run() {
+    extern "C" {
+        fn CFRunLoopRun();
+    }
+    CFRunLoopRun()
 }
 
 /// 打开失败（通常是授权未完成）时的有界重试；线程侧只持地址值。
@@ -582,17 +625,6 @@ unsafe fn read_device_property_i32(device: IOHIDDeviceRef, key: &str) -> Option<
     result
 }
 
-fn mark_node(context: *mut c_void, device: IOHIDDeviceRef, opened: bool) {
-    if let Some(ctx) = context_ref(context) {
-        if let Ok(mut nodes) = ctx.nodes.lock() {
-            if let Some(state) = nodes.get_mut(&(device as usize)) {
-                state.opened = opened;
-                state.attempts += 1;
-            }
-        }
-    }
-}
-
 /// 节点身份描述（日志用）：LocationID + 用途页。DeviceUsagePage 在本机
 /// 恒为 None，PrimaryUsagePage 是可用性更好的替代。
 unsafe fn node_identity(device: IOHIDDeviceRef) -> String {
@@ -605,12 +637,20 @@ unsafe fn node_identity(device: IOHIDDeviceRef) -> String {
 /// 打开单个节点（监听模式；被独占持有且可排除键盘页时夺取兜底）。
 /// 0xE00002C5 = kIOReturnExclusiveAccess：节点被其他进程（如 SayAll 这类
 /// 会 seize 遥控器的工具）或系统栈独占，重试无效，只有夺取或持有者退出。
-unsafe fn open_node(context: *mut c_void, device: IOHIDDeviceRef) -> bool {
+/// 须持 nodes 锁调用：与设备移除回调跨线程互斥，杜绝对已移除节点的悬垂
+/// 打开；HID 打开为微秒级同步调用，锁内直写状态、无重入。
+unsafe fn open_node_locked(nodes: &mut HashMap<usize, NodeState>, device: IOHIDDeviceRef) -> bool {
+    let mark = |nodes: &mut HashMap<usize, NodeState>, opened: bool| {
+        if let Some(state) = nodes.get_mut(&(device as usize)) {
+            state.opened = opened;
+            state.attempts += 1;
+        }
+    };
     let identity = node_identity(device);
     let result = IOHIDDeviceOpen(device, K_IOHID_OPTIONS_TYPE_NONE);
     if result == K_IO_RETURN_SUCCESS {
         log::info!(target: TARGET, "设备节点已监听打开 {identity}");
-        mark_node(context, device, true);
+        mark(nodes, true);
         return true;
     }
     log::warn!(
@@ -626,7 +666,7 @@ unsafe fn open_node(context: *mut c_void, device: IOHIDDeviceRef) -> bool {
         let seized = IOHIDDeviceOpen(device, K_IOHID_OPTIONS_TYPE_SEIZE_DEVICE);
         if seized == K_IO_RETURN_SUCCESS {
             log::info!(target: TARGET, "节点已从独占持有者夺取打开（非键盘页）{identity}");
-            mark_node(context, device, true);
+            mark(nodes, true);
             return true;
         }
         log::warn!(
@@ -635,41 +675,38 @@ unsafe fn open_node(context: *mut c_void, device: IOHIDDeviceRef) -> bool {
             seized as u32
         );
     }
-    mark_node(context, device, false);
+    mark(nodes, false);
     false
 }
 
-/// 主线程上执行：补开所有失败未超限的节点并打一条状态汇总。
-/// 与设备移除回调同在主线程串行，不会对已移除节点悬垂打开。
+/// 补开所有失败未超限的节点并打一条状态汇总。
+/// 打开与移除回调分处不同线程，靠 nodes 锁互斥即可，不会对已移除节点
+/// 悬垂打开（HID 回调迁专用线程后，「同在主线程串行」的旧前提不再成立）。
 extern "C" fn sweep_pending_opens(context: *mut c_void) {
     let Some(ctx) = context_ref(context) else {
         return;
     };
-    let pending: Vec<usize> = {
-        let Ok(nodes) = ctx.nodes.lock() else {
-            return;
-        };
-        nodes
-            .iter()
-            .filter(|(_, state)| !state.opened && state.attempts < NODE_OPEN_MAX_ATTEMPTS)
-            .map(|(addr, _)| *addr)
-            .collect()
+    let Ok(mut nodes) = ctx.nodes.lock() else {
+        return;
     };
+    let pending: Vec<usize> = nodes
+        .iter()
+        .filter(|(_, state)| !state.opened && state.attempts < NODE_OPEN_MAX_ATTEMPTS)
+        .map(|(addr, _)| *addr)
+        .collect();
     for addr in pending {
-        let device = addr as IOHIDDeviceRef;
-        unsafe { open_node(context, device) };
+        unsafe { open_node_locked(&mut nodes, addr as IOHIDDeviceRef) };
     }
-    if let Ok(nodes) = ctx.nodes.lock() {
-        let opened = nodes.values().filter(|state| state.opened).count();
-        let still_pending = nodes.values().filter(|state| !state.opened).count();
-        if still_pending > 0 {
-            log::info!(target: TARGET, "节点打开状态 已打开={opened} 待重试={still_pending}");
-        }
+    let opened = nodes.values().filter(|state| state.opened).count();
+    let still_pending = nodes.values().filter(|state| !state.opened).count();
+    if still_pending > 0 {
+        log::info!(target: TARGET, "节点打开状态 已打开={opened} 待重试={still_pending}");
     }
 }
 
 /// 节点打开重试线程：固定窗口内每 5 秒向主线程投递一次清扫。
-/// 上下文以地址值传递（与 open 重试线程同一模式），实际打开在主线程执行。
+/// 上下文以地址值传递（与 open 重试线程同一模式）；打开与移除回调经
+/// nodes 锁互斥，清扫跑在哪个线程都已安全。
 fn spawn_node_retry(context: *mut HidContext) {
     let context_addr = context as usize;
     std::thread::spawn(move || {
@@ -709,9 +746,9 @@ unsafe extern "C" fn on_device_matched(
     if let Some(ctx) = context_ref(context) {
         if let Ok(mut nodes) = ctx.nodes.lock() {
             nodes.entry(device as usize).or_default();
+            unsafe { open_node_locked(&mut nodes, device) };
         }
     }
-    open_node(context, device);
 }
 
 unsafe extern "C" fn on_device_removed(
