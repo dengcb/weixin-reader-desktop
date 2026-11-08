@@ -12,7 +12,7 @@ const manifest: PluginManifest = {
   version: '1.0.0',
   sourceType: 'web',
   renderMode: 'webview',
-  capabilities: {},
+  capabilities: { progressTracker: true },
   site: {
     domain: 'example.com',
     homeUrl: 'https://example.com/',
@@ -158,5 +158,20 @@ describe('IPCManager initial route', () => {
 
     await Bun.sleep(520);
     expect(invokeMock).not.toHaveBeenCalledWith('save_reading_position', expect.anything());
+  });
+
+  it('stops saving scroll position when the progress tracking capability is off', async () => {
+    plugin.manifest.capabilities.progressTracker = false;
+    try {
+      manager = new IPCManager();
+      await Bun.sleep(0);
+      (window as any).__wxrd_scroll_restored = true;
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 300 });
+      window.dispatchEvent(new Event('scroll'));
+      await Bun.sleep(520);
+      expect(invokeMock).not.toHaveBeenCalledWith('save_reading_position', expect.anything());
+    } finally {
+      plugin.manifest.capabilities.progressTracker = true;
+    }
   });
 });

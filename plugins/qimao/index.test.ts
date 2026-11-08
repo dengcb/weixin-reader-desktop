@@ -301,10 +301,10 @@ describe('Qimao native toolbar layout toggle', () => {
     plugin.onUnload();
   });
 
-  it('hides the page indicator and reclaims its bottom space when progress tracking is off', async () => {
+  it('keeps the page indicator when progress tracking is off and stops position memory', async () => {
     history.replaceState({}, '', READER_URL);
     readerMarkup();
-    const { api } = createApi();
+    const { api, stored } = createApi();
     const plugin = new QimaoPlugin();
     const manifest: PluginManifest = {
       ...plugin.manifest,
@@ -315,11 +315,14 @@ describe('Qimao native toolbar layout toggle', () => {
     plugin.onLoad(api);
     await settlePagination();
 
-    const viewport = document.querySelector<HTMLElement>('.atreader-qimao-page-viewport');
-    expect(document.querySelector('.atreader-qimao-page-indicator')).toBeNull();
-    expect(document.getElementById('test-progress')).toBeNull();
-    expect(viewport?.style.getPropertyValue('--atreader-page-height'))
-      .toBe(`${Math.max(320, window.innerHeight - 16)}px`);
+    // 页码常显：进度追踪开关不再控制页码及其预留高度。
+    expect(document.querySelector('.atreader-qimao-page-indicator')).not.toBeNull();
+    expect(document.getElementById('test-progress')).not.toBeNull();
+
+    // 位置记忆关闭：翻页不得写入 `spread:` 章节位置。
+    plugin.nextPage();
+    await settlePagination();
+    expect([...stored.keys()].some(key => key.startsWith('spread:'))).toBe(false);
 
     plugin.onUnload();
   });
@@ -513,7 +516,8 @@ describe('Qimao plugin shell styles', () => {
     expect(navbarCss).toContain('.chapter-detail-wrap-info .chapter-title');
     expect(navbarCss).toContain('font-size: 12px !important');
     expect(navbarCss).toContain('.chapter-detail-wrap-info .chapter-tips');
-    expect(progressCss).toContain('[功能能力 6/6：进度追踪]');
+    expect(progressCss).toContain('@foundation');
+    expect(progressCss).toContain('页码常显');
     expect(progressCss).toContain('.atreader-qimao-page-indicator');
     expect(layoutToggleCss).toContain('.atreader-qimao-layout-toggle');
     expect(layoutToggleCss).toContain("data-theme='dark']");

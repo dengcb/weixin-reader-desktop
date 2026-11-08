@@ -1,8 +1,6 @@
 /*
- * @capability progressTracker
- * [功能能力 6/6：进度追踪]
- * 开启时，本文件与底部“当前页 / 总页数”节点一起生效。
- * 关闭能力后，代码会移除节点、停止注入本文件，并回收底部 48px 预留空间。
+ * @foundation 底部「当前页 / 总页数」指示器。
+ * 页码常显，不随进度追踪开关变化；开关只控制位置记忆（见 index.ts）。
  */
 .atreader-fanqie-page-indicator {
   position: fixed;

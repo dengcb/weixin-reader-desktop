@@ -428,9 +428,10 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
             .and_then(|s| s.get("lastReaderUrl"))
             .and_then(|u| u.as_str())
             .map(|s| s.to_string())
-            .or_else(|| crate::sites::resolve_home_url(app, site_id))
+            // 无正文记忆时按「默认页面」设置回首页或书架
+            .or_else(|| crate::sites::resolve_default_page_url(app, site_id))
     } else {
-        crate::sites::resolve_home_url(app, site_id)
+        crate::sites::resolve_default_page_url(app, site_id)
     };
     if let Some(url) = target {
         if let Some(win) = app.get_webview_window("main") {

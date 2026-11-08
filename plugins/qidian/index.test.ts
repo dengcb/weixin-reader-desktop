@@ -250,10 +250,10 @@ describe('Qidian native toolbar layout toggle', () => {
     plugin.onUnload();
   });
 
-  it('hides the page indicator and reclaims its bottom space when progress tracking is off', async () => {
+  it('keeps the page indicator when progress tracking is off and stops position memory', async () => {
     history.replaceState({}, '', READER_URL);
     readerMarkup();
-    const { api } = createApi();
+    const { api, stored } = createApi();
     const plugin = new QidianPlugin();
     const manifest: PluginManifest = {
       ...plugin.manifest,
@@ -264,11 +264,14 @@ describe('Qidian native toolbar layout toggle', () => {
     plugin.onLoad(api);
     await Promise.resolve();
 
-    const viewport = document.querySelector<HTMLElement>('.atreader-qidian-page-viewport');
-    expect(document.querySelector('.atreader-qidian-page-indicator')).toBeNull();
-    expect(document.getElementById('test-progress')).toBeNull();
-    expect(viewport?.style.getPropertyValue('--atreader-page-height'))
-      .toBe(`${Math.max(320, window.innerHeight - 16)}px`);
+    // 页码常显：进度追踪开关不再控制页码及其预留高度。
+    expect(document.querySelector('.atreader-qidian-page-indicator')).not.toBeNull();
+    expect(document.getElementById('test-progress')).not.toBeNull();
+
+    // 位置记忆关闭：翻页不得写入 `spread:` 章节位置。
+    plugin.nextPage();
+    await Promise.resolve();
+    expect([...stored.keys()].some(key => key.startsWith('spread:'))).toBe(false);
 
     plugin.onUnload();
   });
@@ -450,7 +453,8 @@ describe('Qidian plugin shell styles', () => {
     expect(navbarCss).toContain('font-size: 12px !important');
     expect(navbarCss).toContain('margin: 0 0 24px !important');
     expect(navbarCss).toContain('h1.title + div');
-    expect(progressCss).toContain('[功能能力 6/6：进度追踪]');
+    expect(progressCss).toContain('@foundation');
+    expect(progressCss).toContain('页码常显');
     expect(progressCss).toContain('.atreader-qidian-page-indicator');
     expect(layoutToggleCss).toContain('.atreader-qidian-layout-toggle');
     expect(layoutToggleCss).toContain('width: 64px');

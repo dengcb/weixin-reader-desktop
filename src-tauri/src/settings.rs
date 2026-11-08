@@ -42,6 +42,7 @@ pub fn default_settings() -> Value {
             "autoUpdate": true,
             "lastPage": true,
             "rememberSite": true,
+            "defaultPage": "home",
             "hideCursor": false,
             "voicePageTurn": false,
             "voicePageTurnPhrase": "翻页",

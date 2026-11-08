@@ -20,6 +20,7 @@
     "hideNavbar": true,
     "hideCursor": true,
     "nativeTheme": true,
+    "progressTracker": true,
     "autoFlip": true,
     "chapterNav": true
   },

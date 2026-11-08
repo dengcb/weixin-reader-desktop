@@ -162,7 +162,7 @@ const IREADER_RUNTIME_MANIFEST: PluginManifest = {
     chapterNav: true,
     doubleColumn: true,
     hideToolbar: true,
-    // 进度追踪：底部「当前页 / 总页数」指示器及其预留高度的总开关。
+    // 进度追踪：记录/恢复上次阅读位置；页码指示器常显，不受开关控制。
     progressTracker: true,
     // 深浅由本插件控制（深色主题样式），壳层不得注入反色滤镜。
     nativeTheme: true,
@@ -275,6 +275,7 @@ export class IreaderPlugin implements ReaderPlugin {
       },
       onPositionChange: (pageIndex, pageCount) => {
         if (!this.positionReady || pageCount <= 0) return;
+        if (!this.positionMemoryEnabled()) return;
         const ratio = pageCount <= 1 ? 0 : pageIndex / (pageCount - 1);
         void this.api?.storage.set(this.positionStorageKey(this.getChapterKey()), ratio);
       },
@@ -696,6 +697,12 @@ export class IreaderPlugin implements ReaderPlugin {
     return `spread:${chapterKey}`;
   }
 
+  /*! @capability progressTracker [进度追踪] 开关只控制「记录/恢复上次阅读位置」；
+   * 页码指示器常显，不再受此开关控制。 */
+  private positionMemoryEnabled(): boolean {
+    return this.manifest.capabilities.progressTracker === true;
+  }
+
   private restoreChapterPosition(chapterKey: string): void {
     const api = this.api;
     const paginator = this.paginator;
@@ -708,6 +715,12 @@ export class IreaderPlugin implements ReaderPlugin {
       paginator.requestOpenAtEnd();
     }
     if (openMode !== null) {
+      this.positionReady = true;
+      return;
+    }
+
+    // 进度追踪开关关闭：不恢复存储的章节位置（页码仍常显）。
+    if (!this.positionMemoryEnabled()) {
       this.positionReady = true;
       return;
     }
@@ -1244,18 +1257,15 @@ export class IreaderPlugin implements ReaderPlugin {
     /*! @capability hideToolbar 菜单状态决定是否隐藏插件工具栏。 */
     const hideToolbar = settings.hideToolbar === true
       && this.manifest.capabilities.hideToolbar === true;
-    /*! @capability progressTracker 清单能力直接控制底部页码及其预留高度。 */
-    const showProgress = this.manifest.capabilities.progressTracker === true;
-
-    // 进度能力关闭时不创建底部页码，并让分页视口回收其 48px 预留区。
-    this.paginator?.setProgressVisible(showProgress);
+    // 页码指示器常显：progressTracker 开关只管位置记忆，不再控制页码。
+    this.paginator?.setProgressVisible(true);
 
     this.applyStyleFile('reader', readerCss, doubleColumn);
     this.applyStyleFile('wide', styles.wideMode?.enabled ?? '', doubleColumn && wide);
     this.applyStyleFile('dark', styles.custom?.dark ?? '', this.darkEnabled);
     this.applyStyleFile('font', styles.custom?.font ?? '', !this.isFontNative());
     this.applyStyleFile('toolbar', styles.custom?.toolbar ?? '', true);
-    this.applyStyleFile('progress', styles.custom?.progress ?? '', doubleColumn && showProgress);
+    this.applyStyleFile('progress', styles.custom?.progress ?? '', doubleColumn);
 
     this.desiredDoubleColumn = doubleColumn;
     if (doubleColumn) this.enablePaginatorAfterLoad();

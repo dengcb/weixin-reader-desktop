@@ -271,6 +271,8 @@ export class IPCManager extends BaseManager {
 
       // 分页阅读器自行保存结构化位置，只有滚动模式保存 window.scrollY。
       if (this.siteContext.isPaginated) return;
+      // 进度追踪开关关闭：该站点不记录滚动位置（页码显示不受影响）。
+      if (!this.siteContext.progressTrackerEnabled) return;
 
       const scrollY = window.scrollY;
 

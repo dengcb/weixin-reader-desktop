@@ -73,6 +73,14 @@ export class SiteContext {
 
   get siteId(): string { return this.currentRuntime?.id ?? 'unknown'; }
 
+  /*! @capability progressTracker [进度追踪] 当前站点是否记录/恢复阅读位置。
+   * 运行时未就绪时保持开启，避免装配竞态吞掉恢复；能力未声明视为关闭。 */
+  get progressTrackerEnabled(): boolean {
+    const runtime = this.currentRuntime;
+    if (!runtime) return true;
+    return runtime.manifest.capabilities.progressTracker === true;
+  }
+
   onDoubleColumnChange(callback: (value: boolean) => void): () => void {
     this.doubleColumnListeners.add(callback);
     callback(this.isDoubleColumn);

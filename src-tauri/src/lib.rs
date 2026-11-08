@@ -203,8 +203,9 @@ fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> 
         }
     }
     let external_site_ids = installed_external_site_ids(app);
+    // 非正文回退页（无 lastReaderUrl 时）按「默认页面」设置回首页或书架。
     resolve_enabled_startup_url(settings, &external_site_ids, |site_id| {
-        sites::resolve_home_url(app, site_id)
+        sites::resolve_default_page_url(app, site_id)
     })
     .map(MainStartupTarget::Online)
     .unwrap_or(MainStartupTarget::Library)

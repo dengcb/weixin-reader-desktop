@@ -164,7 +164,8 @@ describe('Fanqie spread shell styles', () => {
     expect(readerCss).toContain('transition: none !important');
     expect(readerCss).not.toContain('transition: transform');
     expect(readerCss).not.toContain('.atreader-fanqie-page-indicator');
-    expect(progressCss).toContain('[功能能力 6/6：进度追踪]');
+    expect(progressCss).toContain('@foundation');
+    expect(progressCss).toContain('页码常显');
     expect(progressCss).toContain('.atreader-fanqie-page-indicator');
     expect(readerCss).not.toMatch(/1240px|1400px/);
     expect(wideCss).not.toMatch(/1540px|1700px/);

@@ -363,10 +363,10 @@ describe('IreaderPlugin', () => {
     plugin.onUnload();
   });
 
-  it('进度追踪能力关闭：隐藏页码并回收底部预留（progress.css 一并移除）', () => {
+  it('进度追踪能力关闭：页码常显，位置记忆停止（spread: 不再写入）', () => {
     history.replaceState({}, '', '/reader/12382646');
     const plugin = new IreaderPlugin();
-    const { api, injectedCss } = createApi({});
+    const { api, injectedCss, storage } = createApi({});
     plugin.onLoad(api);
     expect(injectedCss.has('progress')).toBe(true);
 
@@ -376,13 +376,14 @@ describe('IreaderPlugin', () => {
       capabilities: { ...plugin.manifest.capabilities, progressTracker: false },
     };
     Object.defineProperty(plugin, 'manifest', { value: manifest, configurable: true });
-    const setProgressVisible = mock(() => undefined);
-    const paginator = (plugin as unknown as { paginator: Record<string, unknown> }).paginator!;
-    paginator.setProgressVisible = setProgressVisible as unknown as (visible: boolean) => void;
 
     window.dispatchEvent(new Event('ipc:route-changed'));
-    expect(setProgressVisible).toHaveBeenCalledWith(false);
-    expect(injectedCss.has('progress')).toBe(false);
+    // 页码常显：开关不再隐藏页码或回收底部预留。
+    expect(injectedCss.has('progress')).toBe(true);
+
+    // 位置记忆关闭：翻页不得写入 `spread:` 章节位置。
+    plugin.nextPage();
+    expect([...storage.keys()].some(key => key.startsWith('spread:'))).toBe(false);
     plugin.onUnload();
   });
 

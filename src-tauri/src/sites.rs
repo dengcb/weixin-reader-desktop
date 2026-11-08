@@ -165,6 +165,30 @@ pub fn resolve_shelf_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Optio
         })
 }
 
+/// 全局「默认页面」偏好：非正文退出后的回退落点（home=书城首页，shelf=书架）。
+/// 缺失/非法值一律按 home 处理，与默认设置一致。
+pub fn default_page_prefers_shelf(settings: &serde_json::Value) -> bool {
+    settings
+        .get("global")
+        .and_then(|global| global.get("defaultPage"))
+        .and_then(serde_json::Value::as_str)
+        == Some("shelf")
+}
+
+/// 根据 siteId 解析「默认页面」：上次不是从图书正文退出时，启动/切换书店
+/// 应回到的落点。设置 shelf 时书架未配置的站点经 resolve_shelf_url 回退首页。
+pub fn resolve_default_page_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Option<String> {
+    let prefers_shelf = crate::settings::read_settings(app)
+        .as_ref()
+        .map(default_page_prefers_shelf)
+        .unwrap_or(false);
+    if prefers_shelf {
+        resolve_shelf_url(app, site_id)
+    } else {
+        resolve_home_url(app, site_id)
+    }
+}
+
 fn host_matches_domain(host: &str, domain: &str) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let domain = domain
@@ -327,6 +351,21 @@ mod tests {
         sort_plugins_by_site_order(&settings, &mut plugins);
         let ids: Vec<&str> = plugins.iter().map(|item| item.id.as_str()).collect();
         assert_eq!(ids, vec!["zread", "qimao", "fanqie", "qidian"]);
+    }
+
+    #[test]
+    fn default_page_prefers_shelf_only_for_explicit_shelf_value() {
+        assert!(default_page_prefers_shelf(&json!({
+            "global": { "defaultPage": "shelf" }
+        })));
+        // 缺失、home、非法值一律按首页处理
+        assert!(!default_page_prefers_shelf(&json!({})));
+        assert!(!default_page_prefers_shelf(&json!({
+            "global": { "defaultPage": "home" }
+        })));
+        assert!(!default_page_prefers_shelf(&json!({
+            "global": { "defaultPage": 42 }
+        })));
     }
 
     #[test]

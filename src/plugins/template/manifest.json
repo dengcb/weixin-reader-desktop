@@ -21,7 +21,7 @@
     "hideNavbar": false,
     "autoFlip": true,
     "chapterNav": false,
-    "progressTracker": false,
+    "progressTracker": true,
     "doubleColumn": false,
     "hideCursor": true,
     "remoteControl": false

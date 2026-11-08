@@ -126,6 +126,7 @@ describe('AppManager persistence lifecycle', () => {
       isDoubleColumn: false,
       isPaginated: false,
       siteId: 'demo',
+      progressTrackerEnabled: true,
     });
     await (manager as any).restoreScrollPosition();
 
@@ -134,6 +135,22 @@ describe('AppManager persistence lifecycle', () => {
     manager.destroy();
     expect((manager as any).restoreTimer).toBeNull();
     expect((manager as any).initAbortController.signal.aborted).toBe(true);
+  });
+
+  it('skips scroll restoration when the progress tracking capability is off', async () => {
+    invokeMock.mockImplementation(async () => 800);
+    const manager = bareManager({
+      isReaderPage: true,
+      isDoubleColumn: false,
+      isPaginated: false,
+      siteId: 'demo',
+      progressTrackerEnabled: false,
+    });
+    await (manager as any).restoreScrollPosition();
+
+    expect(invokeMock).not.toHaveBeenCalledWith('get_reading_position', expect.anything());
+    expect((window as any).__wxrd_scroll_restored).toBe(true);
+    expect((manager as any).restoreTimer).toBeNull();
   });
 
   it('falls back to the legacy position when the URL repository read fails', async () => {
@@ -146,6 +163,7 @@ describe('AppManager persistence lifecycle', () => {
       isDoubleColumn: false,
       isPaginated: false,
       siteId: 'demo',
+      progressTrackerEnabled: true,
     });
     await (manager as any).restoreScrollPosition();
 

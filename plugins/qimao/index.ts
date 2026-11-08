@@ -14,7 +14,7 @@
  * 3. 隐藏工具栏：按菜单状态注入 toolbar.css（左右浮动工具栏）；
  * 4. 隐藏导航栏：按菜单状态注入 navbar.css（站点顶部导航）；
  * 5. 章节导航：双栏时用上/下键切换上一章/下一章；
- * 6. 进度追踪：显示底部页码，关闭后同时回收页码占用的高度。
+ * 6. 进度追踪：记录/恢复上次阅读位置；页码指示器常显，不受开关控制。
  */
 
 import type {
@@ -174,6 +174,7 @@ export class QimaoPlugin implements ReaderPlugin {
       },
       onPositionChange: (pageIndex, pageCount) => {
         if (!this.positionReady || pageCount <= 0) return;
+        if (!this.positionMemoryEnabled()) return;
         const ratio = pageCount <= 1 ? 0 : pageIndex / (pageCount - 1);
         void this.api?.storage.set(this.positionStorageKey(this.getChapterKey()), ratio);
       },
@@ -494,22 +495,15 @@ export class QimaoPlugin implements ReaderPlugin {
     /*! @capability hideNavbar [功能能力 4/6：隐藏导航栏] 同时要求清单能力和菜单状态开启。 */
     const hideNavbar = settings.hideNavbar === true
       && this.manifest.capabilities.hideNavbar === true;
-    /*! @capability progressTracker [功能能力 6/6：进度追踪] 清单能力直接控制底部页码及其预留高度。 */
-    const showProgress = this.manifest.capabilities.progressTracker === true;
-
-    // 进度能力关闭时不创建底部页码，并让分页视口回收其 48px 预留区。
-    this.paginator?.setProgressVisible(showProgress);
+    // 页码指示器常显：progressTracker 开关只管位置记忆，不再控制页码。
+    this.paginator?.setProgressVisible(true);
 
     // reader.css 提供 80% 基线；wide.css 必须随后注入，才能把同级规则覆盖为 90%。
     this.applyStyleFile('reader', readerCss, doubleColumn);
     this.applyStyleFile('wide', styles.wideMode?.enabled ?? '', wide);
     this.applyStyleFile('toolbar', styles.toolbar?.enabled ?? '', hideToolbar);
     this.applyStyleFile('navbar', styles.navbar?.enabled ?? '', hideNavbar);
-    this.applyStyleFile(
-      'progress',
-      styles.custom?.progress ?? '',
-      doubleColumn && showProgress,
-    );
+    this.applyStyleFile('progress', styles.custom?.progress ?? '', doubleColumn);
     this.applyStyleFile(
       'layout-toggle',
       styles.custom?.layoutToggle ?? '',
@@ -1049,6 +1043,12 @@ export class QimaoPlugin implements ReaderPlugin {
       return;
     }
 
+    // 进度追踪开关关闭：不恢复存储的章节位置（页码仍常显）。
+    if (!this.positionMemoryEnabled()) {
+      this.positionReady = true;
+      return;
+    }
+
     void api.storage.get<number>(this.positionStorageKey(chapterKey))
       .then(ratio => {
         if (generation !== this.restoreGeneration || ratio === null) return;
@@ -1084,6 +1084,12 @@ export class QimaoPlugin implements ReaderPlugin {
 
   private positionStorageKey(chapterKey: string): string {
     return `spread:${chapterKey}`;
+  }
+
+  /*! @capability progressTracker [进度追踪] 开关只控制「记录/恢复上次阅读位置」；
+   * 页码指示器常显，不再受此开关控制。 */
+  private positionMemoryEnabled(): boolean {
+    return this.manifest.capabilities.progressTracker === true;
   }
 
   private clearWheelState(): void {

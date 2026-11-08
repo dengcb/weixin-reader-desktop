@@ -17,6 +17,8 @@ export interface GlobalSettings {
   autoUpdate?: boolean;
   lastPage?: boolean;
   rememberSite?: boolean;
+  /** 非正文退出后的回退落点：home=书城首页（默认），shelf=书架。 */
+  defaultPage?: 'home' | 'shelf';
   lastSiteId?: string;
   hideCursor?: boolean;
   enableRemoteController?: boolean;

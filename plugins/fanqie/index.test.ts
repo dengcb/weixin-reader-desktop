@@ -178,10 +178,10 @@ describe('Fanqie native toolbar layout toggle', () => {
     expect(document.getElementById('test-navbar')).toBeNull();
   });
 
-  it('hides the page indicator and reclaims its bottom space when progress tracking is off', async () => {
+  it('keeps the page indicator when progress tracking is off and stops position memory', async () => {
     history.replaceState({}, '', '/reader/chapter-progress-hidden');
     readerMarkup();
-    const { api } = createApi();
+    const { api, stored } = createApi();
     const plugin = new FanqiePlugin();
     const manifest: PluginManifest = {
       ...plugin.manifest,
@@ -192,11 +192,14 @@ describe('Fanqie native toolbar layout toggle', () => {
     plugin.onLoad(api);
     await Promise.resolve();
 
-    const viewport = document.querySelector<HTMLElement>('.atreader-fanqie-page-viewport');
-    expect(document.querySelector('.atreader-fanqie-page-indicator')).toBeNull();
-    expect(document.getElementById('test-progress')).toBeNull();
-    expect(viewport?.style.getPropertyValue('--atreader-page-height'))
-      .toBe(`${Math.max(320, window.innerHeight - 16)}px`);
+    // 页码常显：进度追踪开关不再控制页码及其预留高度。
+    expect(document.querySelector('.atreader-fanqie-page-indicator')).not.toBeNull();
+    expect(document.getElementById('test-progress')).not.toBeNull();
+
+    // 位置记忆关闭：翻页不得写入 `spread:` 章节位置。
+    plugin.nextPage();
+    await Promise.resolve();
+    expect([...stored.keys()].some(key => key.startsWith('spread:'))).toBe(false);
 
     plugin.onUnload();
   });

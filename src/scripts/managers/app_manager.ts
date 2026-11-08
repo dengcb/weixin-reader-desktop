@@ -157,6 +157,12 @@ export class AppManager {
     const settings = settingsStore.get();
     const isReader = this.siteContext.isReaderPage;
 
+    // 进度追踪开关关闭：不恢复站点滚动位置（站点自身云进度不受影响）。
+    if (isReader && !this.siteContext.progressTrackerEnabled) {
+      ScrollState.markRestorationComplete();
+      return;
+    }
+
     // Only restore if on reader page and has saved scroll position
     const currentUrl = window.location.href;
     let targetScroll: number | null | undefined;

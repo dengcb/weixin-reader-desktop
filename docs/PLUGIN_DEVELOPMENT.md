@@ -135,7 +135,7 @@ Manifest 还支持 `autoFlip`、`hideCursor`、`remoteControl`、`nativeTheme` �
 | 隐藏工具栏 | `hideToolbar` | 根据站点设置隐藏网站工具栏 |
 | 隐藏导航栏 | `hideNavbar` | 隐藏网站顶部导航，并回收原占位空间 |
 | 章节导航 | `chapterNav` | 双栏激活时允许上/下键切换章节 |
-| 进度追踪 | `progressTracker` | 显示底部当前页数；关闭后回收页码占位空间 |
+| 进度追踪 | `progressTracker` | 记录/恢复上次阅读位置（章节内翻页比例或滚动位置）；底部页码指示器常显，不受此开关控制。仅作用于在线站点，本地阅读器不受影响 |
 
 ### 4.1 代码标记
 
