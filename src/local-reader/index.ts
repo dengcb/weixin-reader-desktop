@@ -1443,8 +1443,7 @@ class LocalReader implements LocalReaderController {
           });
         return;
       case 'back':
-        // 本地页没有 MenuManager（inject 不跑本地页），menu-action 无人接听：
-        // 宽窄直接翻转设置，与键盘 Enter 的 toggle-wide 同一条链
+        // 宽窄直接翻转设置（菜单「阅读变宽」同源）；Enter/OK 键已让位给全屏
         this.handleButtonHold(button, phase, shortcutsEnabled,
           () => void invoke('simulate_menu_click', { action: 'zoom_reset' }).catch(() => {}),
           () => {
@@ -1532,12 +1531,6 @@ class LocalReader implements LocalReaderController {
           case 'next-page': void this.nextPage(); break;
           case 'previous-chapter': void this.prevChapter(); break;
           case 'next-chapter': void this.nextChapter(); break;
-          case 'toggle-wide': {
-            localReaderLog('system_action', { action: 'toggle-wide' });
-            const site = settingsStore.getSite('local');
-            void settingsStore.updateSite('local', { readerWide: !site.readerWide });
-            break;
-          }
           case 'toggle-navbar': {
             localReaderLog('system_action', { action: 'toggle-navbar' });
             const site = settingsStore.getSite('local');

@@ -7,7 +7,7 @@ describe('本地阅读键盘回退控制', () => {
     expect(resolveLocalKeyboardAction('PageDown', false)).toBe('next-page');
     expect(resolveLocalKeyboardAction('ArrowUp', false)).toBe('previous-chapter');
     expect(resolveLocalKeyboardAction('ArrowDown', false)).toBe('next-chapter');
-    expect(resolveLocalKeyboardAction('Enter', false)).toBe('toggle-wide');
+    expect(resolveLocalKeyboardAction('Enter', false)).toBe('toggle-fullscreen');
     expect(resolveLocalKeyboardAction('Home', false)).toBe('toggle-navbar');
   });
 
@@ -18,7 +18,7 @@ describe('本地阅读键盘回退控制', () => {
   it('key 非标准时按 code 兜底（蓝牙遥控器在旧 WebKit 上 key 为 Unidentified）', () => {
     expect(resolveLocalKeyboardAction('Unidentified', false, 'ArrowUp')).toBe('previous-chapter');
     expect(resolveLocalKeyboardAction('', false, 'PageDown')).toBe('next-page');
-    expect(resolveLocalKeyboardAction('Unidentified', false, 'Enter')).toBe('toggle-wide');
+    expect(resolveLocalKeyboardAction('Unidentified', false, 'Enter')).toBe('toggle-fullscreen');
   });
 
   it('key 命中优先于 code，双标准键时不重复匹配', () => {
