@@ -457,11 +457,14 @@ export class RemoteManager {
             settingsStore.update({ hideNavbar: !current.hideNavbar });
           });
         return;
-      // 电源：短按摸鱼（松开生效，与其他按键短按语义一致），长按 0.5s 退出应用
+      // 电源：短按摸鱼（按下即触发）。长按不绑定：macOS 的 loginwindow 在
+      // HID 系统层对电源键按住 ~1 秒直接发起息屏，CGEventTap 都拦不住
+      // （2026-11-10 真机实证），按住交给系统与原生电源键行为一致；退出走
+      // ⌘Q / 应用菜单。
       case 'power':
-        this.handleButtonHold(event.button, event.phase, true,
-          () => void invoke('quit_app').catch(() => {}),
-          () => invoke('toggle_stealth').catch(() => {}));
+        if (event.phase === 'press') {
+          invoke('toggle_stealth').catch(() => {});
+        }
         return;    }
     // 未绑定动作且系统路径也给不到的键：记日志便于后续映射（voice 留给三期 ATVV）。
     if (event.phase === 'press') {

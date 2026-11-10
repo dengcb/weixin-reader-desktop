@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 const HISTORY_VERSION: u64 = 1;
@@ -63,6 +63,10 @@ pub struct LocalBookRecord {
     pub path: PathBuf,
     pub format: LocalBookFormat,
     pub title: String,
+    /// 首次重命名前的原始书名：改名直接覆盖 title（全 App 显示统一生效），
+    /// 原名留存于此供「恢复默认」还原；None = 从未改过名。
+    #[serde(default)]
+    pub original_title: Option<String>,
     pub file_size: u64,
     pub modified_at: u64,
     pub last_opened_at: u64,
@@ -80,6 +84,40 @@ pub struct LocalBookPublic {
     pub modified_at: u64,
     pub last_opened_at: u64,
     pub fixed_layout: bool,
+}
+
+/// 书架页条目：最近图书记录 + 该书进度摘要（书架展示「最后阅读时间 · 大概百分比」）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalBookShelfItem {
+    #[serde(flatten)]
+    pub book: LocalBookRecord,
+    /// 进度文件缺失或无有效数据时为 None。
+    pub progress: Option<LocalBookProgressInfo>,
+    /// 有自定义书名或自定义封面（书架右键菜单据此显示「恢复默认」）。
+    pub customized: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalBookProgressInfo {
+    pub fraction: f64,
+}
+
+/// 读取单本书的进度摘要（书架 ≤10 本，逐文件小 JSON，开销可忽略）。
+/// 只取大概章节比例，不追求精确（用户拍板：有个百分之多少即可）。
+fn book_progress_summary<R: Runtime>(
+    app: &AppHandle<R>,
+    book_id: &str,
+) -> Option<LocalBookProgressInfo> {
+    let path = progress_dir(app).ok()?.join(format!("{book_id}.json"));
+    let value = read_progress(&path).ok()??;
+    let fraction = value
+        .get("bookFraction")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    (fraction > 0.0).then_some(LocalBookProgressInfo { fraction })
 }
 
 impl From<&LocalBookRecord> for LocalBookPublic {
@@ -1046,6 +1084,7 @@ fn inspect_path(path: &Path) -> Result<LocalBookRecord, String> {
         path: canonical,
         format,
         title: parsed_title,
+        original_title: None,
         file_size: metadata.len(),
         modified_at: modified_millis(&metadata),
         last_opened_at: now_millis(),
@@ -1610,12 +1649,143 @@ pub fn save_local_reading_progress<R: Runtime>(
 pub fn get_local_books<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
-) -> Vec<LocalBookRecord> {
+) -> Vec<LocalBookShelfItem> {
     if window.label() != "main" {
         return Vec::new();
     }
     crate::local_covers::start_backfill(&app);
     list_recent(&app)
+        .into_iter()
+        .map(|book| {
+            let progress = book_progress_summary(&app, &book.book_id);
+            let customized = book.original_title.is_some()
+                || crate::local_covers::custom_cover_exists(&app, &book.book_id);
+            LocalBookShelfItem {
+                book,
+                progress,
+                customized,
+            }
+        })
+        .collect()
+}
+
+/// 在仓储锁内修改单本书记录；闭包返回 (结果, 是否有变更)。
+fn update_record<R: Runtime, T>(
+    app: &AppHandle<R>,
+    book_id: &str,
+    operation: impl FnOnce(&mut LocalBookRecord) -> Result<(T, bool), String>,
+) -> Result<T, String> {
+    validate_book_id(book_id)?;
+    with_document(app, |document| {
+        let record = document
+            .books
+            .iter_mut()
+            .find(|book| book.book_id == book_id)
+            .ok_or_else(|| "本地图书记录不存在".to_string())?;
+        operation(record)
+    })
+}
+
+/// 书架右键「修改名称」：直接覆盖记录 title（书架、最近打开菜单、阅读页
+/// 标题全 App 统一生效）；首次改名前留存原名供恢复。
+#[tauri::command]
+pub fn rename_local_book<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    book_id: String,
+    title: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以重命名本地图书".to_string());
+    }
+    let trimmed = title.trim();
+    let length = trimmed.chars().count();
+    if length == 0 || length > 120 {
+        return Err("书名须为 1~120 个字符".to_string());
+    }
+    let new_title = trimmed.to_string();
+    let renamed = update_record(&app, &book_id, |record| {
+        if record.title == new_title {
+            return Ok((false, false));
+        }
+        if record.original_title.is_none() {
+            record.original_title = Some(record.title.clone());
+        }
+        record.title = new_title.clone();
+        Ok((true, true))
+    })?;
+    if renamed {
+        crate::commands::refresh_app_menu(&app);
+    }
+    Ok(())
+}
+
+/// 书架右键「修改封面」：系统文件框选 JPG（≤1MB），存为该书自定义封面
+/// （读取优先于自动提取）。返回 false = 用户取消选择。
+#[tauri::command]
+pub async fn set_local_book_cover<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    book_id: String,
+) -> Result<bool, String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以修改本地书封面".to_string());
+    }
+    validate_book_id(&book_id)?;
+    if !book_record_exists(&app, &book_id) {
+        return Err("本地图书记录不存在".to_string());
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("JPEG 图片", &["jpg", "jpeg"])
+        .set_title("选择图书封面")
+        .pick_file(move |picked| {
+            let _ = sender.send(picked);
+        });
+    let Some(picked) = receiver.await.map_err(|_| "文件选择器已关闭".to_string())? else {
+        return Ok(false);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|_| "所选文件不是本地文件".to_string())?;
+    let bytes = std::fs::read(&path).map_err(|error| format!("无法读取所选图片：{error}"))?;
+    crate::local_covers::write_custom_cover(&app, &book_id, &bytes)?;
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.emit("local-book-covers-updated", ());
+    }
+    Ok(true)
+}
+
+/// 书架右键「恢复默认」：一次还原书名与封面（封面回到自动提取结果）。
+/// 返回是否有任何还原发生。
+#[tauri::command]
+pub fn reset_local_book_customization<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    book_id: String,
+) -> Result<bool, String> {
+    if window.label() != "main" {
+        return Err("只有主窗口可以恢复本地图书默认信息".to_string());
+    }
+    let cover_reset = crate::local_covers::custom_cover_exists(&app, &book_id);
+    let name_reset = update_record(&app, &book_id, |record| match record.original_title.take() {
+        Some(original) => {
+            record.title = original;
+            Ok((true, true))
+        }
+        None => Ok((false, false)),
+    })?;
+    if cover_reset {
+        crate::local_covers::remove_custom_cover(&app, &book_id);
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.emit("local-book-covers-updated", ());
+        }
+    }
+    if name_reset {
+        crate::commands::refresh_app_menu(&app);
+    }
+    Ok(cover_reset || name_reset)
 }
 
 /// 本地书架页点选图书：与「最近打开」同一链路（含缺失书清理弹窗）
@@ -2326,7 +2496,8 @@ mod tests {
             file_size: fs::metadata(&path).unwrap().len(),
             modified_at: 0,
             last_opened_at: 0,
-            fixed_layout: false,
+            original_title: None,
+        fixed_layout: false,
         };
         let whole = read_mobi_bytes(&record, None).unwrap();
         let ranged = read_mobi_bytes(&record, Some("start=60&end=68")).unwrap();
@@ -2428,6 +2599,7 @@ mod tests {
                 modified_at: 1,
                 last_opened_at: index,
                 fixed_layout: false,
+                original_title: None,
             });
         }
         let evicted = sort_and_truncate(&mut document);
@@ -2451,6 +2623,7 @@ mod tests {
                 modified_at: 1,
                 last_opened_at: index,
                 fixed_layout: false,
+                original_title: None,
             });
         }
         let removed = format!("{:064x}", 0);

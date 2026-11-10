@@ -148,7 +148,7 @@
       font-weight: 600;
       letter-spacing: .05em;
     }
-    .greeting .sub { margin: 10px 2px 0; color: var(--muted); font-size: 12.5px; }
+    .greeting .count { margin-left: 10px; color: var(--muted); font-size: 13px; font-weight: 400; letter-spacing: 0; }
 
     /* ---- 封面网格：居中限宽，观感对齐微信读书书架 ---- */
     .shelf {
@@ -333,6 +333,19 @@
     @media (prefers-reduced-motion: reduce) {
       .cover, .pill { transition: none; }
     }
+    /* 书籍右键菜单：修改名称 / 修改封面 / 恢复默认 */
+    .book-ctx { position: fixed; z-index: 60; min-width: 152px; padding: 6px; border-radius: 12px;
+      background: var(--topbar-bg); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--line); box-shadow: 0 14px 34px rgba(0, 0, 0, .18); }
+    .book-ctx button { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 8px;
+      background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+    .book-ctx button:hover { background: var(--pill-hover); }
+    .book-ctx button.danger { color: var(--danger); }
+    .book-ctx .sep { height: 1px; margin: 5px 8px; background: var(--line); }
+    /* 行内改名输入框（沿用标题行样式） */
+    .title-input { width: 100%; box-sizing: border-box; padding: 3px 6px; margin: -3px -6px;
+      border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--ink);
+      font: inherit; text-overflow: ellipsis; }
   </style>
 </head>
 <body>
@@ -355,8 +368,7 @@
   </header>
   <main>
     <section class="greeting">
-      <h1>本地书架</h1>
-      <p class="sub" id="greetingSub"></p>
+      <h1>本地书架 <span class="count" id="shelfCount"></span></h1>
     </section>
     <section class="shelf" id="shelf"></section>
     <div class="noresult" id="noresult" hidden></div>
@@ -397,13 +409,14 @@
     const relativeTime = (millis) => {
       if (!millis) return '';
       const diff = Date.now() - millis;
-      if (diff < 60000) return '刚刚阅读';
-      if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前阅读`;
-      if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前阅读`;
-      if (diff < 86400000 * 30) return `${Math.floor(diff / 86400000)} 天前阅读`;
+      // 书籍下信息栏空间有限（不出现省略号），时间描述保持最短
+      if (diff < 60000) return '刚刚';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
+      if (diff < 86400000 * 30) return `${Math.floor(diff / 86400000)} 天前`;
       const date = new Date(millis);
       const pad = (n) => String(n).padStart(2, '0');
-      return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} 阅读`;
+      return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
     };
 
     let books = [];
@@ -413,7 +426,7 @@
       const empty = document.getElementById('empty');
       const noresult = document.getElementById('noresult');
       const total = books.length;
-      document.getElementById('greetingSub').textContent = `共 ${total} 本 · Esc 返回阅读页`;
+      document.getElementById('shelfCount').textContent = `共 ${total} 本`;
       empty.hidden = total > 0;
       shelf.hidden = total === 0 || list.length === 0;
       noresult.hidden = !(total > 0 && list.length === 0);
@@ -444,12 +457,21 @@
         title.className = 'title';
         title.textContent = book.title;
         title.title = book.title;
+        // 「格式 · 大概百分比 · 最后阅读时间」；无进度时维持原两段式
         const readAt = relativeTime(book.lastOpenedAt);
         const sub = document.createElement('div');
         sub.className = 'sub';
-        sub.textContent = readAt ? `${formatLabel(book.format)} · ${readAt}` : formatLabel(book.format);
+        const progress = book.progress;
+        const percent = progress && Number.isFinite(progress.fraction) && progress.fraction > 0
+          ? `${Math.round(progress.fraction * 100)}%` : null;
+        const parts = [formatLabel(book.format)];
+        if (percent) parts.push(percent);
+        if (readAt) parts.push(readAt);
+        sub.textContent = parts.join(' · ');
         meta.append(title, sub);
         card.append(cover, meta);
+        card.dataset.bookId = book.bookId;
+        card.dataset.customized = book.customized ? '1' : '0';
         if (manageMode) {
           card.classList.add('managing');
           if (selected.has(book.bookId)) card.classList.add('selected');
@@ -458,7 +480,9 @@
           badge.setAttribute('aria-hidden', 'true');
           cover.append(badge);
         }
-        card.addEventListener('click', () => {
+        card.addEventListener('click', (event) => {
+          // 行内改名输入框的点击不得触发开书（卡片本身是 button）
+          if (event.target?.closest?.('.title-input')) return;
           if (manageMode) {
             toggleSelect(book.bookId, card);
             return;
@@ -584,9 +608,112 @@
       ',': 'settings', r: 'refresh', '=': 'zoom_in', '-': 'zoom_out',
       '0': 'zoom_reset', o: 'hide_toolbar',
     };
+    const flashHint = (text) => {
+      let hint = document.getElementById('shelf-hint');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.id = 'shelf-hint';
+        hint.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%)'
+          + ';padding:8px 16px;border-radius:10px;background:rgba(0,0,0,.72);color:#fff'
+          + ';font-size:14px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none';
+        document.body.append(hint);
+      }
+      hint.textContent = text;
+      hint.style.opacity = '1';
+      clearTimeout(flashHint.timer);
+      flashHint.timer = setTimeout(() => { hint.style.opacity = '0'; }, 1800);
+    };
+
+    // 书籍右键菜单：修改名称 / 修改封面 / 恢复默认（有自定义时才显示第三项）
+    let ctxMenu = null;
+    const closeCtxMenu = () => {
+      ctxMenu?.remove();
+      ctxMenu = null;
+      document.removeEventListener('pointerdown', onCtxDismiss, true);
+    };
+    const onCtxDismiss = (event) => {
+      if (ctxMenu && !ctxMenu.contains(event.target)) closeCtxMenu();
+    };
+    const ctxItem = (label, onClick, danger) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      if (danger) button.className = 'danger';
+      button.addEventListener('click', () => { closeCtxMenu(); onClick(); });
+      return button;
+    };
+    const startRename = (card) => {
+      const titleEl = card.querySelector('.title');
+      if (!titleEl || card.querySelector('.title-input')) return;
+      const current = titleEl.textContent || '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'title-input';
+      input.value = current;
+      input.maxLength = 120;
+      titleEl.textContent = '';
+      titleEl.append(input);
+      input.focus();
+      input.select();
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        const value = input.value.trim();
+        if (save && value && value !== current) {
+          invoke('rename_local_book', { bookId: card.dataset.bookId, title: value })
+            ?.then?.(() => { void load(); })
+            ?.catch?.((error) => { flashHint(`重命名失败：${error}`); void load(); });
+          return;
+        }
+        void load();
+      };
+      input.addEventListener('keydown', (event) => {
+        event.stopPropagation();
+        if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+        else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      });
+      input.addEventListener('blur', () => finish(false));
+    };
+    const openCtxMenu = (event, card) => {
+      event.preventDefault();
+      closeCtxMenu();
+      const menu = document.createElement('div');
+      menu.className = 'book-ctx';
+      menu.append(ctxItem('修改名称…', () => startRename(card)));
+      menu.append(ctxItem('修改封面…', () => {
+        invoke('set_local_book_cover', { bookId: card.dataset.bookId })
+          ?.then?.((applied) => { if (applied) void load(); })
+          ?.catch?.((error) => flashHint(`封面修改失败：${error}`));
+      }));
+      if (card.dataset.customized === '1') {
+        const sep = document.createElement('div');
+        sep.className = 'sep';
+        menu.append(sep);
+        menu.append(ctxItem('恢复默认', () => {
+          invoke('reset_local_book_customization', { bookId: card.dataset.bookId })
+            ?.then?.(() => { void load(); })
+            ?.catch?.((error) => flashHint(`恢复失败：${error}`));
+        }, true));
+      }
+      document.body.append(menu);
+      const rect = menu.getBoundingClientRect();
+      const left = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+      const top = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+      menu.style.left = `${Math.max(8, left)}px`;
+      menu.style.top = `${Math.max(8, top)}px`;
+      ctxMenu = menu;
+      document.addEventListener('pointerdown', onCtxDismiss, true);
+    };
+    document.addEventListener('contextmenu', (event) => {
+      const card = event.target?.closest?.('.book');
+      if (!card || !card.dataset.bookId) return;
+      if (manageMode) return;
+      openCtxMenu(event, card);
+    });
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
-        // 管理模式下先退出管理；搜索有关键词时先清搜索，再次 Esc 才返回阅读页
+        // 管理模式下先退出管理；搜索有关键词时先清搜索
         if (manageMode) {
           setManageMode(false);
           return;
@@ -596,9 +723,7 @@
           search.value = '';
           applyFilter();
           search.focus();
-          return;
         }
-        window.history.back();
         return;
       }
       if (!invoke) return;
@@ -629,5 +754,7 @@
       void invoke('simulate_menu_click', { action });
     }, true);
   </script>
+  <!-- ⌘L 书城切换浮层（与注入页同款控制器，裸页直装） -->
+  <script src="/bookstore-overlay.js"></script>
 </body>
 </html>

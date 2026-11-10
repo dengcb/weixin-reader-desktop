@@ -453,6 +453,48 @@ pub fn switch_to_site<R: Runtime>(app: &tauri::AppHandle<R>, site_id: &str) {
     }
 }
 
+/// 切换到「本地图书」书城（书城列表序号 0）：允许恢复且有正文记忆时回到
+/// 上次图书，否则打开本地书架页。已在本地页面时只写 lastSiteId 不重复导航。
+pub fn switch_to_local<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let already_local = app
+        .get_webview_window("main")
+        .and_then(|window| window.url().ok())
+        .is_some_and(|url| {
+            crate::local_books::is_local_reader_url(&url) || crate::is_local_shelf_url(&url)
+        });
+    let _ = crate::settings::update_setting(app, "global.lastSiteId", serde_json::json!("local"));
+    if already_local {
+        return;
+    }
+    disable_reader_menu_items(app);
+    let settings =
+        crate::settings::read_settings(app).unwrap_or_else(|_| crate::settings::default_settings());
+    let remember_page = settings
+        .get("global")
+        .and_then(|g| g.get("lastPage"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let last_reader_url = remember_page
+        .then(|| {
+            settings
+                .get("sites")
+                .and_then(|s| s.get("local"))
+                .and_then(|s| s.get("lastReaderUrl"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .flatten();
+    let url = last_reader_url
+        .and_then(|value| value.parse::<tauri::Url>().ok())
+        .filter(|url| crate::local_books::is_local_reader_url(url))
+        .unwrap_or_else(crate::local_shelf_page_url);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_theme(None);
+        crate::commands::apply_site_zoom(app.clone(), "local".to_string());
+        let _ = win.navigate(url);
+    }
+}
+
 // Re-export monitor module functions for convenience
 #[cfg(target_os = "macos")]
 use crate::monitor::{
@@ -850,7 +892,14 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
         }
         "settings_reading" => open_settings_target(app, "reading", Some("auto-flip"), None),
         "settings_content" => open_settings_target(app, "content", None, None),
-        "settings_data" => open_settings_target(app, "data", Some("local-history"), None),
+        "settings_data" => {
+            // 最近打开 → 管理阅读记录：直接进本地书架页（本地书目与封面管理）
+            let url = crate::local_shelf_page_url();
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_theme(None);
+                let _ = win.navigate(url);
+            }
+        }
         "shortcuts" => open_settings_target(app, "reading", Some("shortcuts"), None),
         "help" => {
             use tauri_plugin_opener::OpenerExt;

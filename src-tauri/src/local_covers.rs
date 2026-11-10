@@ -38,11 +38,48 @@ fn cover_file<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<PathBuf, 
     Ok(covers_dir(app)?.join(book_id))
 }
 
+/// 自定义封面（书架右键「修改封面」指定的 JPG）：与自动提取封面同目录，
+/// 加 `.custom` 后缀区分，读取时优先于自动提取结果。
+fn custom_cover_file<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> Result<PathBuf, String> {
+    Ok(covers_dir(app)?.join(format!("{book_id}.custom")))
+}
+
+/// 自定义封面大小上限（用户拍板：1MB 以内的 JPG）。
+const CUSTOM_COVER_MAX_BYTES: usize = 1_000_000;
+
+pub(crate) fn custom_cover_exists<R: Runtime>(app: &AppHandle<R>, book_id: &str) -> bool {
+    custom_cover_file(app, book_id).is_ok_and(|path| path.exists())
+}
+
+/// 写入自定义封面（允许覆盖旧值）：只接受 1MB 以内的 JPEG（魔数校验）。
+pub(crate) fn write_custom_cover<R: Runtime>(
+    app: &AppHandle<R>,
+    book_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if bytes.len() < 3 || bytes.len() > CUSTOM_COVER_MAX_BYTES {
+        return Err("封面图片须为 1MB 以内的 JPG".to_string());
+    }
+    if bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
+        return Err("所选文件不是有效的 JPG 图片".to_string());
+    }
+    let path = custom_cover_file(app, book_id)?;
+    fs::create_dir_all(covers_dir(app)?).map_err(|error| format!("无法创建封面目录：{error}"))?;
+    fs::write(&path, bytes).map_err(|error| format!("无法写入自定义封面：{error}"))
+}
+
+pub(crate) fn remove_custom_cover<R: Runtime>(app: &AppHandle<R>, book_id: &str) {
+    if let Ok(path) = custom_cover_file(app, book_id) {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// 书记录删除（含最近列表驱逐）时同步删除封面。
 pub(crate) fn remove_cover<R: Runtime>(app: &AppHandle<R>, book_id: &str) {
     if let Ok(path) = cover_file(app, book_id) {
         let _ = fs::remove_file(path);
     }
+    remove_custom_cover(app, book_id);
 }
 
 /// 清空本地阅读记录时整目录删除封面。
@@ -119,6 +156,14 @@ pub fn cover_response<R: Runtime>(
         || !crate::local_books::book_record_exists(app, book_id)
     {
         return not_found;
+    }
+    // 自定义封面优先（写入时已做 JPEG 魔数校验，这里再嗅探一次防文件被换）
+    if let Ok(custom) = custom_cover_file(app, book_id) {
+        if let Ok(bytes) = fs::read(&custom) {
+            if sniff_image_mime(&bytes).is_some() {
+                return response(200, "image/jpeg", bytes);
+            }
+        }
     }
     let bytes = match cover_file(app, book_id).and_then(|path| {
         fs::read(&path).map_err(|error| format!("无法读取封面缓存：{error}"))

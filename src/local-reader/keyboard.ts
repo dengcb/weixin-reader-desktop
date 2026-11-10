@@ -3,7 +3,6 @@ export type LocalKeyboardAction =
   | 'next-page'
   | 'previous-chapter'
   | 'next-chapter'
-  | 'toggle-navbar'
   | 'toggle-fullscreen';
 
 export const resolveLocalKeyboardAction = (
@@ -25,8 +24,8 @@ export const resolveLocalKeyboardAction = (
       case 'ArrowDown': return 'next-chapter';
       // Enter（遥控 OK 键）＝全屏，与站点侧 RemoteManager 语义一致；
       // 宽窄切换走 9 键 / 菜单「阅读变宽」/ 遥控返回键短按。
+      // 主页键不在此映射：短按/长按由 HID 长按分流裁决，键盘路径只拦截。
       case 'Enter': return 'toggle-fullscreen';
-      case 'Home': return 'toggle-navbar';
       case 'F11':
         if (isWindows) return 'toggle-fullscreen';
         break;

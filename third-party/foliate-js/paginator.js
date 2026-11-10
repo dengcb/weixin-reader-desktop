@@ -946,6 +946,8 @@ export class Paginator extends HTMLElement {
         await this.#scrollToPage(newPage + 1, reason)
     }
     #getVisibleRange() {
+        // [atreader] destroy 后残留的滚动/定时回调会走到这里，#view 可能为空
+        if (!this.#view) return null
         if (this.scrolled) return getVisibleRange(this.#view.document,
             this.start + this.#margin, this.end - this.#margin, this.#getRectMapper())
         const size = this.#rtl ? -this.size : this.size
@@ -997,6 +999,8 @@ export class Paginator extends HTMLElement {
             }))
             this.#view = view
         }
+        // [atreader] destroy 后 #view 为空，后续锚点定位无从谈起
+        if (!this.#view) return
         await this.scrollToAnchor((typeof anchor === 'function'
             ? anchor(this.#view.document) : anchor) ?? 0, select)
         if (hasFocus) this.focusView()
@@ -1112,11 +1116,14 @@ export class Paginator extends HTMLElement {
         } else $style.textContent = styles
 
         // NOTE: needs `requestAnimationFrame` in Chromium
-        requestAnimationFrame(() =>
-            this.#background.style.background = getBackground(this.#view.document))
+        // [atreader] rAF 可能在 destroy()（含 bfcache pagehide）之后触发，
+        // 此时 #view 已置空，必须守卫（2026-11-09 真机崩溃实证）
+        requestAnimationFrame(() => {
+            if (!this.#view) return
+            this.#background.style.background = getBackground(this.#view.document)})
 
         // needed because the resize observer doesn't work in Firefox
-        this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
+        this.#view?.document?.fonts?.ready?.then(() => this.#view?.expand?.())
     }
     focusView() {
         this.#view.document.defaultView.focus()

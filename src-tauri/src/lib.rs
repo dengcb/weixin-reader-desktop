@@ -37,6 +37,9 @@ const LIBRARY_PAGE_HTML: &[u8] = include_bytes!("../../src/windows/library.html"
 /// 本地书架页：与默认页同走专用本地协议，避免经 Tauri 前端资产协议请求
 const LOCAL_SHELF_PAGE_PATH: &str = "/local-shelf";
 const LOCAL_SHELF_PAGE_HTML: &[u8] = include_bytes!("../../src/windows/local-shelf.html");
+/// 本地裸页（默认页/本地书架）共用的 ⌘L 书城切换浮层脚本
+const BOOKSTORE_OVERLAY_PATH: &str = "/bookstore-overlay.js";
+const BOOKSTORE_OVERLAY_JS: &[u8] = include_bytes!("../../src/scripts/local_page_overlay.js");
 const ATRD_LOGO_SVG: &[u8] = include_bytes!("../../atrd-logo.svg");
 const STARTUP_PAGE: &str = "index.html";
 const STARTUP_REVEAL_DELAY_MS: u64 = 320;
@@ -52,6 +55,10 @@ fn library_protocol_response(path: &str) -> tauri::http::Response<Vec<u8>> {
             .header("content-type", "text/html; charset=utf-8")
             .body(LOCAL_SHELF_PAGE_HTML.to_vec())
             .expect("valid local shelf response"),
+        BOOKSTORE_OVERLAY_PATH => tauri::http::Response::builder()
+            .header("content-type", "text/javascript; charset=utf-8")
+            .body(BOOKSTORE_OVERLAY_JS.to_vec())
+            .expect("valid bookstore overlay response"),
         "/atrd-logo.svg" => tauri::http::Response::builder()
             .header("content-type", "image/svg+xml")
             .body(ATRD_LOGO_SVG.to_vec())
@@ -201,6 +208,10 @@ fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> 
         if let Some(url) = local_books::resolve_saved_local_url(app, settings) {
             return MainStartupTarget::Local(url);
         }
+        // 记住的来源是本地但没有正文记忆（回过书架被清，或书已丢）：落
+        // 本地书架。本地也是「阅读来源」，不能掉进在线站点候选——那里的
+        // 语义是「无本地可用」，会直接跳去微信读书（2026-11-10 实证）。
+        return MainStartupTarget::Local(local_shelf_page_url());
     }
     let external_site_ids = installed_external_site_ids(app);
     // 非正文回退页（无 lastReaderUrl 时）按「默认页面」设置回首页或书架。
@@ -247,6 +258,27 @@ fn is_library_page_url(url: &tauri::Url) -> bool {
     let is_local_origin = (url.scheme() == LIBRARY_SCHEME && url.host_str() == Some("localhost"))
         || (url.scheme() == "http" && url.host_str() == Some("atreader.localhost"));
     is_local_origin && url.path().trim_end_matches('/') == LIBRARY_PAGE_PATH
+}
+
+/// 本地书架页 URL：菜单「管理阅读记录」与书城切换到本地的落点。
+#[cfg(target_os = "windows")]
+pub(crate) fn local_shelf_page_url() -> tauri::Url {
+    "http://atreader.localhost/local-shelf"
+        .parse()
+        .expect("valid local shelf URL")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn local_shelf_page_url() -> tauri::Url {
+    "atreader://localhost/local-shelf"
+        .parse()
+        .expect("valid local shelf URL")
+}
+
+pub(crate) fn is_local_shelf_url(url: &tauri::Url) -> bool {
+    let is_local_origin = (url.scheme() == LIBRARY_SCHEME && url.host_str() == Some("localhost"))
+        || (url.scheme() == "http" && url.host_str() == Some("atreader.localhost"));
+    is_local_origin && url.path().trim_end_matches('/') == LOCAL_SHELF_PAGE_PATH
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -366,6 +398,18 @@ pub fn run() {
         // 书架页含本地书目（隐私数据）：仅主窗口可取；默认页与 logo 公开
         if request.uri().path() == LOCAL_SHELF_PAGE_PATH {
             return if context.webview_label() == "main" {
+                // 回到书架=离开正文：清掉 lastReaderUrl，下次进「本地」停在书架
+                // 而不是跳回书里（与在线站「回首页即清」的注入层行为对齐）。
+                // 每本书的进度文件不受影响；异步写，不阻塞页面响应。阅读页的
+                // 注入运行时会随路由持续回写 lastReaderUrl，Esc 返回正文亦恢复。
+                let app = context.app_handle().clone();
+                std::thread::spawn(move || {
+                    let _ = settings::update_setting(
+                        &app,
+                        "sites.local.lastReaderUrl",
+                        serde_json::Value::Null,
+                    );
+                });
                 library_protocol_response(request.uri().path())
             } else {
                 tauri::http::Response::builder()
@@ -373,9 +417,12 @@ pub fn run() {
                     .header("content-type", "text/plain; charset=utf-8")
                     .body(b"Not Found".to_vec())
                     .expect("valid local shelf response")
-            };
+            }
         }
-        if matches!(request.uri().path(), "/library" | "/atrd-logo.svg") {
+        if matches!(
+            request.uri().path(),
+            "/library" | "/atrd-logo.svg" | "/bookstore-overlay.js"
+        ) {
             library_protocol_response(request.uri().path())
         } else {
             local_books::protocol_response_with_referer(
@@ -783,6 +830,9 @@ pub fn run() {
             local_books::get_local_books,
             local_books::open_local_book_by_id,
             local_books::remove_local_books,
+            local_books::rename_local_book,
+            local_books::set_local_book_cover,
+            local_books::reset_local_book_customization,
             local_covers::save_local_book_cover,
             local_books::get_local_reading_progress,
             local_books::save_local_reading_progress,

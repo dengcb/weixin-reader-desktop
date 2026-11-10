@@ -247,16 +247,17 @@ describe('BookstoreSwitcherController', () => {
     expect(host.state.committed.map(entry => entry.id)).toEqual(['c']);
   });
 
-  it('序号角标只渲染前 7 项', async () => {
-    const entries = ['一', '二', '三', '四', '五', '六', '七', '八', '九'].map((name, i) =>
-      entry(`site-${i}`, name, { index: i + 1 }),
+  it('序号角标渲染 0~7（0=本地图书），其余不渲染', async () => {
+    const entries = ['本地', '一', '二', '三', '四', '五', '六', '七', '八', '九'].map((name, i) =>
+      entry(`site-${i}`, name, { index: i }),
     );
     boot({ entries, currentIndex: -1 });
     cmdLDown();
     await flush();
     const badges = Array.from(document.querySelectorAll(`#${BOOKSTORE_SWITCHER_ID} .wxrd-switcher-badge`));
-    expect(badges).toHaveLength(7);
-    expect(badges[6].textContent).toBe('7');
+    expect(badges).toHaveLength(8);
+    expect(badges[0].textContent).toBe('0');
+    expect(badges[7].textContent).toBe('7');
   });
 
   it('图标存在渲染 img，缺失渲染首字母兜底块；当前站有描边标记', async () => {

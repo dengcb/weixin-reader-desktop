@@ -741,6 +741,8 @@ unsafe extern "C" fn on_device_matched(
     crate::remote_voice::on_remote_connected();
     // 已授权辅助功能时预先建立媒体键抑制 tap，避免首次按键漏吞系统音量。
     crate::media_key_suppressor::ensure_started_if_trusted();
+    // 抑制竞速等待窗口按「遥控器在位」门禁（同一遥控器多个 HID 节点计数）。
+    crate::media_key_suppressor::remote_device_matched();
     // 节点级监听打开：SayAll 的生产路径。键盘页(1)与消费者页(12)是两个节点，
     // 消费者节点的报文（音量/返回）可能只有节点级打开后才投递。
     if let Some(ctx) = context_ref(context) {
@@ -764,6 +766,7 @@ unsafe extern "C" fn on_device_removed(
             state.voice_active = false;
         }
         crate::media_key_suppressor::set_volume_keys(false, false);
+        crate::media_key_suppressor::remote_device_removed();
         cancel_pending_voice_press();
         if let Ok(mut nodes) = ctx.nodes.lock() {
             if let Some(node) = nodes.remove(&(device as usize)) {

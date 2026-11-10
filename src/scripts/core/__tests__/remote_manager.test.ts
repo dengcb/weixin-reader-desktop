@@ -402,17 +402,21 @@ describe('RemoteManager HID button contract', () => {
     manager.destroy();
   });
 
-  it('电源键短按摸鱼（松开生效），长按退出应用', async () => {
+  it('电源键短按摸鱼（按下即触发）；长按不绑定动作（macOS 系统层息屏，2026-11-10 实证）', async () => {
     const { manager } = createManager();
     (manager as any).siteContext.isReaderPage = false;
     emitHid('power', 'press');
     emitHid('power', 'release');
     expect(tauriInvoke).toHaveBeenCalledWith('toggle_stealth', undefined);
 
+    // 长按：不再退出（按住交给系统息屏），只多一次按下触发
+    tauriInvoke.mockClear();
     emitHid('power', 'press');
     await new Promise((resolve) => setTimeout(resolve, 600));
     emitHid('power', 'release');
-    expect(tauriInvoke).toHaveBeenCalledWith('quit_app', undefined);
+    expect(tauriInvoke).toHaveBeenCalledTimes(1);
+    expect(tauriInvoke).toHaveBeenCalledWith('toggle_stealth', undefined);
+    expect(tauriInvoke).not.toHaveBeenCalledWith('quit_app', undefined);
     manager.destroy();
   });
 

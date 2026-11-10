@@ -6,6 +6,7 @@ import { invoke, listen, logToFile, waitForTauri } from '../scripts/core/tauri';
 import type { Chapter, PluginAPI } from '../scripts/core/plugin_types';
 import { EPUB_DOCUMENT_TYPES, chapterBreakCss as buildChapterBreakCss, sanitizeEpubMarkup, wrapSvgSpineDocument } from './epub_security';
 import { resolveLocalKeyboardAction, shouldHandleLocalKeyboardAction } from './keyboard';
+import { computeBookFraction } from './progress';
 import { PositionHistory } from './position_history';
 import { RangedFile } from './ranged_file';
 import { PDF_CHAPTER_HEADING, splitTxtChapters, txtChapterToXHTML, type TxtChapter } from './txt';
@@ -273,6 +274,9 @@ class LocalReader implements LocalReaderController {
   private lastProgressUpdatedAt = 0;
   private toc: FlatTocItem[] = [];
   private tocTree: TocTreeNode[] = [];
+  /** 各 spine 文档自带的 <title>（如「版权信息」「作者序（美国版）」）：
+   * 目录未覆盖的文档用它做导航栏章节名的诚实兜底。 */
+  private sectionTitles = new Map<number, string>();
   private tocRendered = false;
   /** 当前 section 内各目录项的锚点节点，用于区分同文件内的多个章节。 */
   private sectionAnchors: Array<{ position: number; node: Node }> | null = null;
@@ -666,6 +670,16 @@ class LocalReader implements LocalReaderController {
     const { doc, index } = event.detail;
     localReaderLog('section_loaded', { bookId: this.bookId, index });
     doc.querySelectorAll('script').forEach(script => script.remove());
+    const docTitle = doc.title?.trim();
+    if (docTitle) this.sectionTitles.set(index, docTitle);
+    // EPUB3 注脚正文块（epub:type="footnote" 的 aside）：规范要求默认阅读
+    // 视图不渲染（配合正文 noteref 徽章的弹层交互），书内样式缺失时会带着
+    // 注脚正文裸露在段落之间（马斯克传实证）。按规范隐藏，保留 #锚点。
+    doc.querySelectorAll('aside').forEach(aside => {
+      const type = aside.getAttributeNS('http://www.idpf.org/2007/ops', 'type')
+        ?? aside.getAttribute('epub:type');
+      if (type === 'footnote') aside.style.display = 'none';
+    });
     // 焦点随鼠标点击/划选进入章节 iframe 后，方向键 keydown 会被 WKWebView 原生层
     // 吞掉（不派发 DOM 事件，顶层与 iframe 文档都收不到，issue #5）。划选结束
     // （pointerup）即把焦点归还顶层窗口：选区保留（变灰），右键复制不受影响。
@@ -795,8 +809,13 @@ class LocalReader implements LocalReaderController {
       cfi: this.metadata!.format === 'epub' ? this.currentCFI : undefined,
       sectionIndex: this.currentSection,
       sectionFraction: this.currentFraction,
-      bookFraction: (this.currentSection + this.currentFraction)
-        / Math.max(1, this.book?.sections.length ?? 1),
+      // 书级真实进度：按 section 篇幅（字节/字符数）加权，见 progress.ts。
+      // 旧「章节序号/总章数」计数法在章节长短不均时严重偏离真实进度。
+      bookFraction: computeBookFraction(
+        this.book?.sections ?? [],
+        this.currentSection,
+        this.currentFraction,
+      ),
       chapterId: this.book?.sections[this.currentSection]?.id ?? String(this.currentSection),
       characterOffset: this.metadata!.format === 'txt' || this.metadata!.format === 'pdf'
         ? this.currentCharacterOffset
@@ -911,16 +930,22 @@ class LocalReader implements LocalReaderController {
 
   private async resolveTocIndices(): Promise<void> {
     if (!this.book) return;
-    // MOBI/KF8 的 splitTOCHref 是纯计算（字节偏移→节下标，零 I/O）；resolveHref
-    // 则要对每个目录项现场解压 raw 节（实测 KF8 每项 150~500ms，目录越多越慢），
-    // 现场解压只在真正需要锚点的导航时发生。EPUB 无 splitTOCHref，走原路径。
+    // MOBI/KF8 的 splitTOCHref 返回 [节下标, 锚点]（字节偏移纯计算，零 I/O）；
+    // resolveHref 则要对每个目录项现场解压 raw 节（实测 KF8 每项 150~500ms，
+    // 目录越多越慢），现场解压只在真正需要锚点的导航时发生。
+    // 注意：EPUB 也有同名 splitTOCHref，但上游语义是 [路径字符串, 锚点]，
+    // 与 MOBI 完全不同——曾不加区分地把路径字符串写入 index，目录条目全部
+    // 失配，导航栏永远显示假的「第 N 章」（2026-11-10 用户实证）；EPUB 走
+    // resolveHref（manifest 纯查表，开销可忽略）。
     const book = this.book as FoliateBook & {
       splitTOCHref?(href: string): [number, string] | null;
     };
+    const useSplit = this.metadata?.format === 'mobi'
+      && typeof book.splitTOCHref === 'function';
     await Promise.all(this.toc.map(async (item) => {
-      if (book.splitTOCHref) {
-        const [index] = book.splitTOCHref(item.href) ?? [-1, ''];
-        item.index = index ?? -1;
+      if (useSplit) {
+        const [index] = book.splitTOCHref!(item.href) ?? [-1, ''];
+        item.index = typeof index === 'number' ? index : -1;
         return;
       }
       item.index = (await this.resolveBookHref(item.href))?.index ?? -1;
@@ -984,7 +1009,12 @@ class LocalReader implements LocalReaderController {
     // 平铺书或正停在一级分组自身锚点时保持书名。
     const position = this.currentTocPosition();
     element('bookTitle').textContent = findTopLevelGroup(this.tocTree, position) ?? this.metadata.title;
-    element('chapterTitle').textContent = this.toc[position]?.label.trim() || `第 ${this.currentSection + 1} 章`;
+    // 章节名兜底链：目录标签 → 文档自带 <title> → 空。曾用「第 N 章」
+    // （N=spine 序号）兜底——封面/前言/版权页全被计成“章”，与书的真实
+    // 章节毫无关系（2026-11-10 用户实证），废弃。
+    element('chapterTitle').textContent = this.toc[position]?.label.trim()
+      || this.sectionTitles.get(this.currentSection)
+      || '';
     document.title = `《${this.metadata.title}》 - 艾特阅读`;
   }
 
@@ -1106,6 +1136,18 @@ class LocalReader implements LocalReaderController {
         p { margin-block: 0 ${this.typography.paragraphSpacing}em !important; text-align: justify; }
         h1, h2, h3 { break-after: avoid; line-height: 1.45; }
         img, svg, video { max-width: 100% !important; max-height: 100% !important; object-fit: contain; }
+        /* 注脚标记图归一：多看（duokan-footnote）、Calibre（epub-footnote*）等
+           事实标准类，以及 alt 带“注”的行内小图。必须直接定宽——不能用
+           max-width/max-height 封顶：foliate 的 setImageSize 会给每张图内联
+           写入 !important 的 max-*（行内 important 压过样式表 important），
+           封顶会被掀翻回原始尺寸（2026-11-10 双书复现实证）；而 width 它
+           从不设置，直接定宽稳定生效（首版 duokan 规则即此机制）。 */
+        p img[class*="footnote"], p img[class*="note" i], p img[alt*="注"],
+        a[class*="footnote"] img, a[class*="note" i] img, a[href*="footnote"] img {
+          width: 0.9em !important;
+          height: auto !important;
+          vertical-align: -0.15em !important;
+        }
         a { color: ${dark ? '#60c38e' : '#349f66'}; }
       `;
       this.renderer.setStyles?.(style);
@@ -1452,19 +1494,27 @@ class LocalReader implements LocalReaderController {
           });
         return;
       case 'home':
-        // 长按回本地书架（不再跳第一页）；短按的导航栏开关仍走系统键盘路径
+        // 长按回本地书架（不再跳第一页）；短按显隐导航栏也由这里裁决——
+        // 系统键盘路径只拦截，否则长按 0.5 秒内会先误触发一次导航栏开关
         this.handleButtonHold(button, phase, true,
           () => {
             this.closePanels();
             window.location.href = `${window.location.origin}/local-shelf`;
           },
-          () => {});
+          () => {
+            localReaderLog('system_action', { action: 'toggle-navbar' });
+            const site = settingsStore.getSite('local');
+            void settingsStore.updateSite('local', { hideNavbar: !site.hideNavbar });
+          });
         return;
       case 'power':
-        // 与站点侧同语义：短按摸鱼，长按 0.5s 退出应用
-        this.handleButtonHold(button, phase, true,
-          () => void invoke('quit_app').catch(() => {}),
-          () => invoke('toggle_stealth').catch(() => {}));
+        // 摸鱼（短按即触发）。长按电源与 macOS 系统息屏语义冲突：loginwindow
+        // 在 HID 系统层直接按住计时息屏，应用层（含 CGEventTap）拦不住
+        // （2026-11-10 真机实证），故不绑定任何长按动作，按住交给系统息屏。
+        if (phase === 'press') {
+          localReaderLog('remote_action', { button, kind: 'short' });
+          void invoke('toggle_stealth').catch(() => {});
+        }
         return;
     }
   }
@@ -1514,6 +1564,13 @@ class LocalReader implements LocalReaderController {
       const target = event.target as HTMLElement;
       if (target.matches('input, select, textarea') || target.isContentEditable) return;
       if (event.key === 'Escape') { this.closePanels(); return; }
+      // 主页键：系统键盘路径只拦截（防默认滚动与短按双触发）；短按显隐
+      // 导航栏、长按开书架统一由 HID 长按分流裁决（与站点侧 Home 处理一致）
+      if (event.code === 'Home' || event.key === 'Home') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       const localAction = resolveLocalKeyboardAction(event.key, isWindows, event.code);
       const readingShortcutsEnabled = settingsStore.get().enableRemoteController !== false;
       if (localAction && shouldHandleLocalKeyboardAction(localAction, readingShortcutsEnabled)) {
@@ -1531,12 +1588,6 @@ class LocalReader implements LocalReaderController {
           case 'next-page': void this.nextPage(); break;
           case 'previous-chapter': void this.prevChapter(); break;
           case 'next-chapter': void this.nextChapter(); break;
-          case 'toggle-navbar': {
-            localReaderLog('system_action', { action: 'toggle-navbar' });
-            const site = settingsStore.getSite('local');
-            void settingsStore.updateSite('local', { hideNavbar: !site.hideNavbar });
-            break;
-          }
           case 'toggle-fullscreen':
             void invoke('simulate_menu_click', { action: 'toggle_fullscreen' });
             break;
@@ -1676,7 +1727,28 @@ const main = async (): Promise<void> => {
   const bookId = new URLSearchParams(location.search).get('book');
   if (!bookId || !/^[a-f0-9]{64}$/i.test(bookId)) throw new Error('无效的本地图书地址');
   const reader = new LocalReader(bookId);
-  window.addEventListener('pagehide', () => reader.destroy(), { once: true });
+  // persisted=true 表示页面进了 Back-Forward Cache：Esc 返回时会原样恢复，
+  // 此时销毁会让恢复出的页面变成「僵尸」（事件全拆、foliate 悬空回调报错，
+  // 2026-11-09 真机日志实证）。真正卸载（persisted=false）才销毁。
+  window.addEventListener('pagehide', (event: Event) => {
+    if ((event as PageTransitionEvent).persisted) return;
+    reader.destroy();
+  });
+  // 僵尸自愈（2026-11-10 实证）：WKWebView 进缓存时 pagehide 的 persisted
+  // 可能为 falsy，destroy 照样执行——Esc 返回恢复出的页面监听/订阅全拆，
+  // 但 invoke 仍通（工具栏/导航栏/宽屏/⌘L 全失效，设置却写入成功）。二次
+  // pageshow 且运行时已摘除即僵尸恢复，整页刷新拿回干净实例。
+  let firstShow = true;
+  window.addEventListener('pageshow', () => {
+    if (firstShow) {
+      firstShow = false;
+      return;
+    }
+    if (!window.__ATREADER_RUNTIME__) {
+      localReaderLog('bfcache_zombie_reload', { bookId });
+      window.location.reload();
+    }
+  });
   try {
     await reader.initialize();
   } catch (error) {

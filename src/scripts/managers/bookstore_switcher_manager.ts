@@ -40,13 +40,19 @@ export class BookstoreSwitcherManager extends BaseManager {
   private tvCycleActive = false;
   /** 最近一次列表里「当前站」的下标（0-based，-1 = 无当前站）。 */
   private lastCurrentIndex = -1;
+  /** 最近一次列表里「当前站」的 id：同站提交（松手停在原地）必须短路，
+   * 否则会给 Rust 侧发一次无效切换，预铺的 sticky 过场层无人接管。
+   * 不能用序号算术（entry.index - 1）判同站：本地书城序号为 0 会错位。 */
+  private lastCurrentId: string | null = null;
 
   constructor() {
     super();
     // 切换前预铺过场层前必须用它短路同站提交：switch_to_site 对同站直接
     // return，不发生导航——预铺的 sticky 过场没有新文档来接管，只能不铺。
+    // 同站判等按 id：序号算术（entry.index - 1）在本地书城（序号 0）加入后
+    // 会错位，把「本地→微信读书」误判为同站而吞掉切换。
     this.commitEntry = (entry) => {
-      if (this.lastCurrentIndex >= 0 && entry.index - 1 === this.lastCurrentIndex) return;
+      if (this.lastCurrentId !== null && entry.id === this.lastCurrentId) return;
       // 启动窗口期内不预铺过场（与 documentStart 侧判定一致，避免
       // 预铺了过场而新文档不铺的半截状态）
       if (startupWindowFromGlobal()) {
@@ -62,6 +68,9 @@ export class BookstoreSwitcherManager extends BaseManager {
         loadEntries: async (): Promise<BookstoreListModel> => {
           const list = await this.fetchList();
           this.lastCurrentIndex = list.findIndex((item) => item.current);
+          this.lastCurrentId = this.lastCurrentIndex >= 0
+            ? (list[this.lastCurrentIndex]?.id ?? null)
+            : null;
           return {
             entries: list.map((item) => this.toEntry(item)),
             currentIndex: this.lastCurrentIndex,
@@ -134,6 +143,9 @@ export class BookstoreSwitcherManager extends BaseManager {
       const list = await this.fetchList();
       if (list.length === 0) return;
       this.lastCurrentIndex = list.findIndex((item) => item.current);
+      this.lastCurrentId = this.lastCurrentIndex >= 0
+        ? (list[this.lastCurrentIndex]?.id ?? null)
+        : null;
       const nextIndex = this.lastCurrentIndex < 0 ? 0 : (this.lastCurrentIndex + 1) % list.length;
       const target = list[nextIndex];
       if (target) this.commitEntry(this.toEntry(target));

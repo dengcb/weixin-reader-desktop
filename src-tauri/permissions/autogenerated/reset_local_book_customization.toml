@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-local-book-customization"
+description = "Enables the reset_local_book_customization command without any pre-configured scope."
+commands.allow = ["reset_local_book_customization"]
+
+[[permission]]
+identifier = "deny-reset-local-book-customization"
+description = "Denies the reset_local_book_customization command without any pre-configured scope."
+commands.deny = ["reset_local_book_customization"]

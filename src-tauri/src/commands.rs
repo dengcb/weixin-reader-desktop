@@ -440,11 +440,13 @@ pub fn switch_bookstore_by_index<R: Runtime>(
     .into_iter()
     .map(|site| site.id)
     .collect();
-    // index 从 1 开始，转为 0-based
-    if index >= 1 {
-        if let Some(site_id) = site_ids.get((index - 1) as usize) {
-            crate::menu::switch_to_site(&app, site_id);
-        }
+    // 0 = 本地图书（书架页/上次图书）；1 起对应有序在线站点
+    if index == 0 {
+        crate::menu::switch_to_local(&app);
+        return Ok(());
+    }
+    if let Some(site_id) = site_ids.get((index - 1) as usize) {
+        crate::menu::switch_to_site(&app, site_id);
     }
     Ok(())
 }
@@ -455,13 +457,30 @@ pub struct BookstoreListItem {
     pub id: String,
     pub name: String,
     pub icon: Option<String>,
-    /// 1-based 序号，与 ⌘1~7 快捷键一致；仅前 7 项在前端渲染角标
+    /// 0=本地图书；1~7 与 ⌘1~7 快捷键一致。前端为 0~7 渲染角标
     pub index: usize,
     pub current: bool,
 }
 
-/// 书城切换浮层的数据源：有序启用站点（菜单/⌘1~7 同一份序列）。
-/// 只暴露 id/name/icon/index/current 低敏字段，不含插件代码与本地路径。
+/// 本地书城条目图标：应用主图标 256×256 无留白版（128 版外圈有 macOS
+/// 图标规范的透明留白，与各书城图标视觉不一致），内嵌避免运行时读盘。
+fn local_bookstore_icon() -> String {
+    use base64::Engine as _;
+    use std::sync::OnceLock;
+    static ICON: OnceLock<String> = OnceLock::new();
+    ICON.get_or_init(|| {
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD
+                .encode(include_bytes!("../icons/256x256.png"))
+        )
+    })
+    .clone()
+}
+
+/// 书城切换浮层的数据源：本地图书（序号 0）+ 有序启用站点（菜单/⌘1~7 同
+/// 一份序列）。只暴露 id/name/icon/index/current 低敏字段，不含插件代码
+/// 与本地路径。
 #[tauri::command]
 pub fn get_bookstore_list<R: Runtime>(
     app: AppHandle<R>,
@@ -472,8 +491,8 @@ pub fn get_bookstore_list<R: Runtime>(
     }
     let settings = crate::settings::read_settings(&app)
         .unwrap_or_else(|_| crate::settings::default_settings());
-    // 与菜单对勾同语义：未记录过站点时视为微信读书；指向 "local" 或已禁用
-    // 站点时匹配不到任何条目，浮层按「无当前站」处理（首按高亮第一项）。
+    // 与菜单对勾同语义：未记录过站点时视为微信读书；指向已禁用站点时
+    // 匹配不到任何条目，浮层按「无当前站」处理（首按高亮第一项）。
     let current = settings
         .get("global")
         .and_then(|global| global.get("lastSiteId"))
@@ -484,17 +503,24 @@ pub fn get_bookstore_list<R: Runtime>(
         Ok(mut plugins) => crate::sites::ordered_enabled_sites(&settings, &mut plugins),
         Err(_) => crate::sites::ordered_enabled_sites(&settings, &mut []),
     };
-    Ok(entries
-        .into_iter()
-        .enumerate()
-        .map(|(offset, site)| BookstoreListItem {
+    let mut items = Vec::with_capacity(entries.len() + 1);
+    items.push(BookstoreListItem {
+        id: "local".to_string(),
+        name: "本地图书".to_string(),
+        icon: crate::plugin_installer::safe_icon_url(Some(&local_bookstore_icon())),
+        index: 0,
+        current: current == "local",
+    });
+    items.extend(entries.into_iter().enumerate().map(|(offset, site)| {
+        BookstoreListItem {
             icon: crate::plugin_installer::safe_icon_url(site.icon.as_deref()),
             index: offset + 1,
             current: site.id == current,
             id: site.id,
             name: site.name,
-        })
-        .collect())
+        }
+    }));
+    Ok(items)
 }
 
 /// 前端注入脚本初始化完成时调用，通知 Rust 端按当前站点应用缩放
@@ -1328,7 +1354,7 @@ mod tests {
     }
 
     #[test]
-    fn bookstore_list_is_main_window_only_and_starts_with_weread() {
+    fn bookstore_list_is_main_window_only_and_starts_with_local_then_weread() {
         let app = tauri::test::mock_app();
         let settings_window =
             tauri::WebviewWindowBuilder::new(&app, "settings", Default::default())
@@ -1340,16 +1366,28 @@ mod tests {
             .build()
             .unwrap();
         let entries = get_bookstore_list(app.handle().clone(), main).unwrap();
+        // 序号 0 固定为本地图书（应用主图标内嵌）
         assert_eq!(
             entries.first().map(|entry| entry.id.as_str()),
-            Some("weread")
+            Some("local")
         );
-        assert_eq!(entries.first().map(|entry| entry.name.as_str()), Some("微信读书"));
-        assert_eq!(entries.first().map(|entry| entry.index), Some(1));
+        assert_eq!(
+            entries.first().map(|entry| entry.name.as_str()),
+            Some("本地图书")
+        );
+        assert_eq!(entries.first().map(|entry| entry.index), Some(0));
+        assert!(entries
+            .first()
+            .and_then(|entry| entry.icon.as_deref())
+            .is_some_and(|icon| icon.starts_with("data:image/png;base64,")));
         // mock 环境无 lastSiteId 记录，按菜单语义视为微信读书
-        assert_eq!(entries.first().map(|entry| entry.current), Some(true));
-        for (offset, entry) in entries.iter().enumerate() {
-            assert_eq!(entry.index, offset + 1);
+        let weread = entries.get(1).expect("weread follows local");
+        assert_eq!(weread.id, "weread");
+        assert_eq!(weread.name, "微信读书");
+        assert_eq!(weread.index, 1);
+        assert_eq!(weread.current, true);
+        for (offset, entry) in entries.iter().enumerate().skip(1) {
+            assert_eq!(entry.index, offset);
         }
     }
 

@@ -25,7 +25,7 @@ export interface BookstoreEntry {
   name: string;
   /** 已过 safe_icon_url 白名单的 data URI / http(s) URL；缺失时渲染字母兜底块 */
   icon: string | null;
-  /** 1-based 序号，与 ⌘1~7 快捷键一致；仅前 7 项渲染角标 */
+  /** 0=本地图书；1~7 与 ⌘1~7 快捷键一致；0~7 渲染角标 */
   index: number;
 }
 
@@ -503,7 +503,7 @@ export class BookstoreSwitcherController {
       fallback.textContent = Array.from(entry.name)[0] ?? '·';
       iconWrap.appendChild(fallback);
     }
-    if (entry.index >= 1 && entry.index <= 7) {
+    if (entry.index >= 0 && entry.index <= 7) {
       const badge = this.doc.createElement('span');
       badge.className = 'wxrd-switcher-badge';
       badge.textContent = String(entry.index);

@@ -5,6 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../src/scripts/inject.js");
     println!("cargo:rerun-if-changed=../src/scripts/local_reader.js");
     println!("cargo:rerun-if-changed=../src/scripts/local_reader_bootstrap.js");
+    println!("cargo:rerun-if-changed=../src/scripts/local_page_overlay.js");
     println!("cargo:rerun-if-changed=../src/windows/local-reader.html");
     println!("cargo:rerun-if-changed=../src/windows/local-reader.css");
     // include_bytes! 进二进制的页面必须登记，否则改文件不会触发壳重编译
@@ -58,6 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "get_local_books",
             "open_local_book_by_id",
             "remove_local_books",
+            "rename_local_book",
+            "set_local_book_cover",
+            "reset_local_book_customization",
             "save_local_book_cover",
             "get_local_reading_progress",
             "save_local_reading_progress",

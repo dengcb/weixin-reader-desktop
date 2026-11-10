@@ -8,7 +8,8 @@ describe('本地阅读键盘回退控制', () => {
     expect(resolveLocalKeyboardAction('ArrowUp', false)).toBe('previous-chapter');
     expect(resolveLocalKeyboardAction('ArrowDown', false)).toBe('next-chapter');
     expect(resolveLocalKeyboardAction('Enter', false)).toBe('toggle-fullscreen');
-    expect(resolveLocalKeyboardAction('Home', false)).toBe('toggle-navbar');
+    // 主页键不再映射动作：短按/长按由 HID 长按分流裁决，键盘路径只拦截
+    expect(resolveLocalKeyboardAction('Home', false)).toBeNull();
   });
 
   it('空格向前翻页，与书店层语义对齐（issue #5）', () => {

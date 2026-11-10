@@ -27,6 +27,9 @@
     "allow-save-local-book-cover",
     "allow-get-local-reading-progress",
     "allow-save-local-reading-progress",
-    "allow-local-sha1"
+    "allow-local-sha1",
+    "allow-rename-local-book",
+    "allow-set-local-book-cover",
+    "allow-reset-local-book-customization"
   ]
 }

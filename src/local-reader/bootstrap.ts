@@ -13,11 +13,18 @@ const report = (stage: DiagnosticStage, detail?: string): void => {
 };
 
 report('bootstrap_started');
+// 排障关键：只报 message 拿不到调用方，堆栈一并截断上报（240 字符内）
+const describeError = (value: unknown, fallback: string): string => {
+  const stack = (value as { stack?: string } | null)?.stack;
+  const message = value instanceof Error ? value.message : String(value ?? fallback);
+  return stack ? `${message}\n${stack}` : message;
+};
 window.addEventListener('error', (event) => {
-  report('runtime_error', event.message || '未知脚本错误');
+  const source = event.error ?? event.message;
+  report('runtime_error', describeError(source, '未知脚本错误'));
 });
 window.addEventListener('unhandledrejection', (event) => {
-  report('unhandled_rejection', String(event.reason ?? '未知 Promise 错误'));
+  report('unhandled_rejection', describeError(event.reason, '未知 Promise 错误'));
 });
 
 const script = document.createElement('script');
