@@ -22,6 +22,7 @@
       --topbar-bg: rgba(247, 247, 245, .86);
       --cover-shadow: 0 4px 14px rgba(0, 0, 0, .16);
       --cover-shadow-hover: 0 12px 26px rgba(0, 0, 0, .2);
+      --scroll-thumb: rgba(31, 35, 41, .28);
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -38,6 +39,7 @@
         --topbar-bg: rgba(23, 24, 26, .86);
         --cover-shadow: 0 4px 14px rgba(0, 0, 0, .5);
         --cover-shadow-hover: 0 12px 26px rgba(0, 0, 0, .6);
+        --scroll-thumb: rgba(232, 234, 236, .3);
       }
     }
     * { box-sizing: border-box; }
@@ -53,6 +55,17 @@
       user-select: none;
       -webkit-user-select: none;
     }
+
+    /* 滚动条静止时隐形、滚动期间显形（与设置页同款 is-scrolling 模式） */
+    body::-webkit-scrollbar { width: 12px; height: 12px; }
+    body::-webkit-scrollbar-track, body::-webkit-scrollbar-corner { background: transparent; }
+    body::-webkit-scrollbar-thumb {
+      background-color: transparent;
+      border: 3px solid transparent;
+      border-radius: 8px;
+      background-clip: content-box;
+    }
+    body.is-scrolling::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
 
     /* ---- 顶栏：品牌 / 居中搜索 / 导入入口（同微信读书书架布局） ---- */
     .topbar {
@@ -600,6 +613,16 @@
     void load();
     // 阅读期间导入的新书在回到书架时补齐
     window.addEventListener('focus', () => { void load(); });
+
+    // 滚动条静止 2 秒后自动隐没（与设置页同款 is-scrolling 模式）
+    (() => {
+      let hideTimer = 0;
+      document.body.addEventListener('scroll', () => {
+        document.body.classList.add('is-scrolling');
+        window.clearTimeout(hideTimer);
+        hideTimer = window.setTimeout(() => document.body.classList.remove('is-scrolling'), 2000);
+      }, { passive: true });
+    })();
     // Rust 侧后台补齐历史封面完成后通知刷新（EPUB/MOBI 免重开即出封面）
     window.__TAURI__?.event?.listen?.('local-book-covers-updated', () => { void load(); });
 

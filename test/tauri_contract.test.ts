@@ -231,7 +231,9 @@ describe('Tauri application contracts', () => {
     expect(menu).toContain('open_local_book_');
     expect(settings).toContain('本地阅读数据');
     expect(settings).toContain('清除本地阅读记录');
-    expect(settings).toContain('原始 TXT/EPUB/MOBI 文件不会被删除');
+    // 书架与历史分离契约：清除历史保留书架/封面/缓存，仅动进度与打开痕迹
+    expect(settings).toContain('书架图书、封面与图书缓存全部保留');
+    expect(settings).toContain('原始 TXT/EPUB/MOBI 文件不受影响');
     expect(settings).toContain('id="clearLocalHistoryBtn"');
     expect(localPage.match(/class="tool-button"/g)).toHaveLength(4);
     expect(localPage).toContain('id="pageProgress"');
