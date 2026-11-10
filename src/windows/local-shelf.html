@@ -457,7 +457,8 @@
         title.className = 'title';
         title.textContent = book.title;
         title.title = book.title;
-        // 「格式 · 大概百分比 · 最后阅读时间」；无进度时维持原两段式
+        // 「格式 · 大概百分比 · 最后阅读时间」；无进度时维持原两段式；
+        // 清除阅读历史后 lastOpenedAt=0，relativeTime 返回空串，时间自然不显示
         const readAt = relativeTime(book.lastOpenedAt);
         const sub = document.createElement('div');
         sub.className = 'sub';

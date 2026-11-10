@@ -672,13 +672,14 @@ class LocalReader implements LocalReaderController {
     doc.querySelectorAll('script').forEach(script => script.remove());
     const docTitle = doc.title?.trim();
     if (docTitle) this.sectionTitles.set(index, docTitle);
-    // EPUB3 注脚正文块（epub:type="footnote" 的 aside）：规范要求默认阅读
-    // 视图不渲染（配合正文 noteref 徽章的弹层交互），书内样式缺失时会带着
-    // 注脚正文裸露在段落之间（马斯克传实证）。按规范隐藏，保留 #锚点。
+    // EPUB3 注脚正文块（epub:type 含 footnote/rearnote 的 aside）：规范要求
+    // 默认阅读视图不渲染（配合正文 noteref 徽章的弹层交互），书内样式缺失时
+    // 会带着注脚正文裸露在段落之间（马斯克传实证）。按规范隐藏，保留 #锚点；
+    // 值可为空格分隔的多 token，按 token 匹配。
     doc.querySelectorAll('aside').forEach(aside => {
-      const type = aside.getAttributeNS('http://www.idpf.org/2007/ops', 'type')
-        ?? aside.getAttribute('epub:type');
-      if (type === 'footnote') aside.style.display = 'none';
+      const type = (aside.getAttributeNS('http://www.idpf.org/2007/ops', 'type')
+        ?? aside.getAttribute('epub:type') ?? '').split(/\s+/);
+      if (type.includes('footnote') || type.includes('rearnote')) aside.style.display = 'none';
     });
     // 焦点随鼠标点击/划选进入章节 iframe 后，方向键 keydown 会被 WKWebView 原生层
     // 吞掉（不派发 DOM 事件，顶层与 iframe 文档都收不到，issue #5）。划选结束

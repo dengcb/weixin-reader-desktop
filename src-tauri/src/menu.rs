@@ -343,7 +343,12 @@ fn build_recent_books_menu<R: Runtime>(
     manage_history: &MenuItem<R>,
 ) -> tauri::Result<Submenu<R>> {
     let menu = Submenu::with_id(manager, menu_id::RECENT, "最近打开", true)?;
-    let recent = crate::local_books::list_recent(manager);
+    // 清除阅读历史后各书 last_opened_at 归零（书架保留）——零时间戳的书
+    // 不算“最近打开”，过滤后自然落入下方空态。
+    let recent: Vec<_> = crate::local_books::list_recent(manager)
+        .into_iter()
+        .filter(|book| book.last_opened_at > 0)
+        .collect();
     if recent.is_empty() {
         menu.append(&MenuItem::with_id(
             manager,

@@ -8,8 +8,8 @@
 //!
 //! 生命周期：一书一文件（`local-book-covers/<book_id>`，无扩展名，按魔数
 //! 回 content-type）；写入经 `local_books::store_cover_if_book_known` 在
-//! 仓储锁内复查书记录仍在，删除/驱逐/清空历史同步清理，封面永不脱离
-//! 书记录单独累积。
+//! 仓储锁内复查书记录仍在，书架移除图书时同步清理，封面永不脱离
+//! 书记录单独累积（清除阅读历史不清理封面——书架保留）。
 
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
@@ -74,21 +74,12 @@ pub(crate) fn remove_custom_cover<R: Runtime>(app: &AppHandle<R>, book_id: &str)
     }
 }
 
-/// 书记录删除（含最近列表驱逐）时同步删除封面。
+/// 书记录删除（书架移除图书）时同步删除封面。
 pub(crate) fn remove_cover<R: Runtime>(app: &AppHandle<R>, book_id: &str) {
     if let Ok(path) = cover_file(app, book_id) {
         let _ = fs::remove_file(path);
     }
     remove_custom_cover(app, book_id);
-}
-
-/// 清空本地阅读记录时整目录删除封面。
-pub(crate) fn purge_all_covers<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let dir = covers_dir(app)?;
-    if dir.exists() {
-        fs::remove_dir_all(dir).map_err(|error| format!("无法清除本地书封面：{error}"))?;
-    }
-    Ok(())
 }
 
 /// 落盘封面（调用方须已持仓储锁并校验书记录存在）。已存在即跳过：封面

@@ -14,7 +14,6 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 const HISTORY_VERSION: u64 = 1;
-const MAX_RECENT_BOOKS: usize = 10;
 const MAX_PROTOCOL_ENTRY_SIZE: u64 = 128 * 1024 * 1024;
 const MAX_TXT_FILE_SIZE: u64 = 256 * 1024 * 1024;
 const MAX_MOBI_FILE_SIZE: u64 = 128 * 1024 * 1024;
@@ -104,8 +103,8 @@ pub struct LocalBookProgressInfo {
     pub fraction: f64,
 }
 
-/// 读取单本书的进度摘要（书架 ≤10 本，逐文件小 JSON，开销可忽略）。
-/// 只取大概章节比例，不追求精确（用户拍板：有个百分之多少即可）。
+/// 读取单本书的进度摘要（书架无上限，逐文件小 JSON；开销随书架线性增长，
+/// 几百本内可忽略）。只取大概章节比例，不追求精确（用户拍板：有个百分之多少即可）。
 fn book_progress_summary<R: Runtime>(
     app: &AppHandle<R>,
     book_id: &str,
@@ -290,23 +289,18 @@ fn with_document<R: Runtime, T>(
     let mut document = read_document(&path);
     let (result, changed) = operation(&mut document)?;
     if changed {
-        let evicted = sort_and_truncate(&mut document);
+        sort_recent(&mut document);
         atomic_write_json(&path, &document)?;
-        for record in evicted {
-            remove_book_data(app, &record.book_id);
-        }
     }
     Ok(result)
 }
 
-fn sort_and_truncate(document: &mut LocalBooksDocument) -> Vec<LocalBookRecord> {
+/// 书架排序：最近阅读在前。书架与历史已分离——书架无上限、不驱逐，
+/// 只有显式移除（remove_local_books / forget_book）才会下架并清理数据。
+fn sort_recent(document: &mut LocalBooksDocument) {
     document
         .books
         .sort_by_key(|book| std::cmp::Reverse(book.last_opened_at));
-    if document.books.len() <= MAX_RECENT_BOOKS {
-        return Vec::new();
-    }
-    document.books.split_off(MAX_RECENT_BOOKS)
 }
 
 pub fn list_recent<R: Runtime>(app: &AppHandle<R>) -> Vec<LocalBookRecord> {
@@ -766,7 +760,7 @@ fn extract_pdf_text<R: Runtime>(
         return Err("PDF 没有可提取的文字，可能是扫描版或纯图片 PDF".to_string());
     }
     let temporary = cache.with_extension("txt.part");
-    // clear_local_history 会整个删除缓存目录，写入前先确保存在
+    // remove_local_books 会删除单书缓存目录，写入前先确保父目录存在
     if let Some(parent) = cache.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建 PDF 缓存目录：{error}"))?;
     }
@@ -1633,7 +1627,15 @@ pub fn save_local_reading_progress<R: Runtime>(
         let _guard = LOCAL_BOOKS_LOCK
             .lock()
             .map_err(|_| "本地图书仓储锁已损坏".to_string())?;
-        find_record_locked(&app, &book_id)?;
+        let record = find_record_locked(&app, &book_id)?;
+        // 清除阅读历史后（last_opened_at 归零）拒绝进度回写：清历史会导航
+        // 离开阅读页，pagehide 的退出保存、bfcache 返回继续翻页都可能把已
+        // 删除的进度原样写回，违背「进度归零」承诺。正常阅读必经
+        // open_book_by_id / inspect_path 盖时间戳，零值只可能来自清历史；
+        // 静默跳过（重开该书后时间戳恢复，进度即可正常保存）。
+        if record.last_opened_at == 0 {
+            return Ok(());
+        }
         write_progress_if_newer(
             &progress_dir(&app)?.join(format!("{book_id}.json")),
             &progress,
@@ -1816,7 +1818,7 @@ pub(crate) fn book_record_exists<R: Runtime>(app: &AppHandle<R>, book_id: &str) 
 }
 
 /// 封面落盘（含阅读器前端路径与后台补齐路径）：必须在仓储锁内做「记录仍在」
-/// 校验，与删除/驱逐/清空历史竞态时不会留下孤儿封面文件。
+/// 校验，与书架移除图书竞态时不会留下孤儿封面文件。
 pub(crate) fn store_cover_if_book_known<R: Runtime>(
     app: &AppHandle<R>,
     book_id: &str,
@@ -1864,11 +1866,8 @@ pub fn remove_local_books<R: Runtime>(
             }
         }
         if !removed_ids.is_empty() {
-            let evicted = sort_and_truncate(&mut document);
+            sort_recent(&mut document);
             atomic_write_json(&path, &document)?;
-            for record in evicted {
-                remove_book_data(&app, &record.book_id);
-            }
         }
         drop(_guard);
         removed_ids
@@ -1907,6 +1906,12 @@ pub fn local_sha1<R: Runtime>(window: WebviewWindow<R>, value: String) -> Result
     Ok(sha1::Sha1::digest(value.as_bytes()).to_vec())
 }
 
+/// 清除历史痕迹（书架保留）：阅读进度全删、各书 last_opened_at 归零；
+/// 书架记录、封面（含自定义）、渲染缓存不动——书架是主体，历史只是阅读
+/// 行为痕迹。移除书架书才走 remove_local_books 的全量清理。
+/// 契约：归零的时间戳同时是「进度回写禁令」——save_local_reading_progress
+/// 对 last_opened_at==0 的记录拒绝落盘，防止清历史时阅读页退出保存把
+/// 进度复活。
 #[tauri::command]
 pub fn clear_local_history(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     if window.label() != "settings" {
@@ -1915,21 +1920,29 @@ pub fn clear_local_history(app: AppHandle, window: WebviewWindow) -> Result<(), 
     let _guard = LOCAL_BOOKS_LOCK
         .lock()
         .map_err(|_| "本地图书仓储锁已损坏".to_string())?;
-    atomic_write_json(&history_path(&app)?, &LocalBooksDocument::default())?;
+    let path = history_path(&app)?;
+    let mut document = read_document(&path);
+    if reset_history_timestamps(&mut document) > 0 {
+        atomic_write_json(&path, &document)?;
+    }
     let progress = progress_dir(&app)?;
     if progress.exists() {
         fs::remove_dir_all(progress).map_err(|error| format!("无法清除本地阅读进度：{error}"))?;
     }
-    let cache = cache_dir(&app)?;
-    if cache.exists() {
-        fs::remove_dir_all(cache).map_err(|error| format!("无法清除本地图书缓存：{error}"))?;
-    }
-    crate::local_covers::purge_all_covers(&app)?;
     drop(_guard);
     crate::settings::update_setting(&app, "sites.local.lastReaderUrl", Value::Null)?;
     crate::commands::refresh_app_menu(&app);
     crate::navigate_away_after_local_history_clear(&app);
     Ok(())
+}
+
+/// 清历史纯函数：全部记录的阅读时间归零，返回书架图书数量（供测试断言
+/// 记录未随清理消失）。
+fn reset_history_timestamps(document: &mut LocalBooksDocument) -> usize {
+    for book in &mut document.books {
+        book.last_opened_at = 0;
+    }
+    document.books.len()
 }
 
 fn response(
@@ -2587,7 +2600,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_recent_history_bounded() {
+    fn shelf_keeps_all_books_and_sorts_recent_first() {
         let mut document = LocalBooksDocument::default();
         for index in 0..12 {
             document.books.push(LocalBookRecord {
@@ -2602,12 +2615,15 @@ mod tests {
                 original_title: None,
             });
         }
-        let evicted = sort_and_truncate(&mut document);
-        assert_eq!(document.books.len(), 10);
+        // 书架与历史分离：不截断、不驱逐，仅按最近阅读排前
+        sort_recent(&mut document);
+        assert_eq!(document.books.len(), 12);
         assert_eq!(document.books[0].title, "Book 11");
-        assert_eq!(evicted.len(), 2);
-        assert_eq!(evicted[0].title, "Book 1");
-        assert_eq!(evicted[1].title, "Book 0");
+        assert_eq!(document.books[11].title, "Book 0");
+        // 清除历史：阅读时间全部归零，书架记录一本不少
+        assert_eq!(reset_history_timestamps(&mut document), 12);
+        assert!(document.books.iter().all(|book| book.last_opened_at == 0));
+        assert_eq!(document.books.len(), 12);
     }
 
     #[test]
