@@ -67,6 +67,13 @@
     }
     body.is-scrolling::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
 
+    /* 沉浸滚动：向下滚动藏上下栏（顶栏上移、内容上提 60px、管理状态栏沉底），
+       向上滚动或回到顶部时出栏。transform 动画走合成器，不触发布局重排。 */
+    .topbar, main, .manage-bar { transition: transform .25s ease; }
+    body.bars-hidden .topbar { transform: translateY(-100%); }
+    body.bars-hidden main { transform: translateY(-60px); }
+    body.bars-hidden .manage-bar { transform: translateY(100%); }
+
     /* ---- 顶栏：品牌 / 居中搜索 / 导入入口（同微信读书书架布局） ---- */
     .topbar {
       position: sticky;
@@ -143,6 +150,7 @@
     .pill:hover { background: var(--pill-hover); }
     .pill:active { transform: scale(.97); }
     .pill:focus-visible { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
+    .pill.focused { outline: 3px solid var(--accent); outline-offset: 2px; }
     .pill.danger { background: var(--danger); color: #fff; }
     .pill.danger:disabled { opacity: .35; cursor: default; }
     .pill.danger.armed { filter: brightness(.85); }
@@ -228,6 +236,8 @@
     }
     .book:active .cover { transform: translateY(-2px) scale(.985); }
     .book:focus-visible .cover { outline: 3px solid rgba(52, 159, 102, .45); outline-offset: 3px; }
+    /* 遥控焦点环：程序 focus() 在 WebKit 不触发 :focus-visible，.focused 类双轨保可见 */
+    .book.focused .cover { outline: 3px solid var(--accent); outline-offset: 3px; transform: scale(1.04); }
     .meta { padding: 10px 2px 0; }
     .title {
       font-size: 13.5px;
@@ -329,6 +339,9 @@
       backdrop-filter: blur(14px);
       border-top: 1px solid var(--line);
     }
+    /* display:flex 会掀翻 UA 的 [hidden]{display:none}：没有这条，管理栏在
+       普通模式常驻底部（曾表现为「底部状态栏」遮住最后一行的信息行） */
+    .manage-bar[hidden] { display: none; }
     .bar-select {
       border: 0;
       padding: 6px 2px;
@@ -340,6 +353,7 @@
       cursor: pointer;
     }
     .bar-select:focus-visible { outline: 3px solid rgba(52, 159, 102, .4); outline-offset: 2px; }
+    .bar-select.focused { outline: 3px solid var(--accent); outline-offset: 2px; }
     .bar-count { flex: 1; color: var(--muted); font-size: 12.5px; }
     body.managing main { padding-bottom: 112px; }
 
@@ -434,6 +448,155 @@
 
     let books = [];
 
+    // ---- 遥控/键盘焦点管理：卡片网格的电视式导航 ----
+    // render() 用 replaceChildren 整体重建，焦点必丢；按 bookId 跨渲染找回。
+    // 程序 focus() 在 WebKit 不触发 :focus-visible，.focused 类双轨保环可见。
+    let focusedBookId = null;
+    const getCards = () => [...document.querySelectorAll('#shelf .book')];
+    // 元素在滚动内容里的布局位置（offsetTop 链，不受 transform/过渡影响）
+    const layoutY = (el) => {
+      let y = 0;
+      for (let node = el; node && node !== document.body; node = node.offsetParent) y += node.offsetTop;
+      return y;
+    };
+    const setFocus = (el) => {
+      document.querySelectorAll('.focused').forEach((node) => node.classList.remove('focused'));
+      if (!el) return;
+      el.classList.add('focused');
+      el.focus();
+      // 焦点进底部管理栏（管理模式 ↓ 到底）：栏可能正被沉浸滚动收起，强制出栏
+      if (el === selectAllBtn || el === removeBtn) {
+        document.body.classList.remove('bars-hidden');
+        return;
+      }
+      // 滚动跟随只对网格卡片；底栏是 fixed 定位，不做滚动目标
+      if (el.classList.contains('book')) {
+        focusedBookId = el.dataset.bookId ?? null;
+        // 不用 scrollIntoView：它只认滚动视口边界，看不见 sticky 顶栏/管理底栏
+        // 这类悬浮层；且沉浸模式的 main transform 让实时 rect 在过渡期不可信。
+        // 直接按布局位置算目标 scrollTop（最小让位：焦点卡片刚进屏即停）
+        const y = layoutY(el);
+        const topH = document.querySelector('.topbar')?.offsetHeight ?? 0;
+        const bottomEdge = manageBar.hidden
+          ? window.innerHeight
+          : window.innerHeight - manageBar.offsetHeight;
+        const top = document.body.scrollTop;
+        if (y < top + topH) document.body.scrollTop = Math.max(0, y - topH);
+        else if (y + el.offsetHeight > top + bottomEdge) {
+          document.body.scrollTop = y + el.offsetHeight - bottomEdge;
+        }
+      }
+    };
+    const restoreFocus = () => {
+      // 搜索/改名输入中不抢焦点（applyFilter 每次击键都会重建网格）
+      if (document.activeElement instanceof HTMLInputElement) return;
+      const cards = getCards();
+      if (!cards.length) {
+        setFocus(document.getElementById('emptyImportBtn'));
+        return;
+      }
+      setFocus(cards.find((card) => card.dataset.bookId === focusedBookId) ?? cards[0]);
+    };
+    // 鼠标点击获得焦点的卡片（WebView2 会聚焦按钮）同步进遥控焦点状态
+    document.addEventListener('focusin', (event) => {
+      const card = event.target?.closest?.('.book');
+      if (!card?.dataset?.bookId) return;
+      focusedBookId = card.dataset.bookId;
+      document.querySelectorAll('.book.focused').forEach((node) => node.classList.remove('focused'));
+      card.classList.add('focused');
+    });
+    // auto-fill 网格每行等列：与首卡同一 offsetTop（±4px 容差）的卡片数即列数
+    const gridColumns = (cards) => {
+      const first = cards[0]?.offsetTop ?? 0;
+      let cols = 0;
+      for (const card of cards) {
+        if (Math.abs(card.offsetTop - first) <= 4) cols += 1;
+        else break;
+      }
+      return Math.max(1, cols);
+    };
+    const rowHeight = (cards, cols) =>
+      cards.length > cols ? Math.max(1, cards[cols].offsetTop - cards[0].offsetTop) : 1;
+    // 遥控 ↑↓ 经系统映射是 PageUp/PageDown（HID 键盘页翻页键），与物理方向键同义
+    const navigateGrid = (key) => {
+      const active = document.activeElement;
+      if (active === selectAllBtn || active === removeBtn) {
+        // 底部管理栏：←→在两钮间切换、↑回网格（已是最后一层，↓不前进）；
+        // 遥控 ↑↓ 即 PageUp/PageDown，两种键名同认
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          setFocus(active === selectAllBtn ? removeBtn : selectAllBtn);
+          return true;
+        }
+        if (key === 'ArrowUp' || key === 'PageUp') {
+          const cards = getCards();
+          const from = cards.find((card) => card.dataset.bookId === focusedBookId) ?? cards[cards.length - 1];
+          if (from) setFocus(from);
+          return true;
+        }
+        return key === 'ArrowDown' || key === 'PageDown';
+      }
+      const cards = getCards();
+      if (!cards.length) return false;
+      const cols = gridColumns(cards);
+      const current = cards.findIndex((card) => card.dataset.bookId === focusedBookId);
+      const i = current >= 0 ? current : 0;
+      let target = i;
+      if (key === 'ArrowLeft') target = i - 1;
+      else if (key === 'ArrowRight') target = i + 1;
+      else if (key === 'ArrowUp' || key === 'PageUp') target = i - cols;
+      else if (key === 'ArrowDown' || key === 'PageDown') {
+        target = i + cols;
+        // 管理模式最后一行再 ↓：进底栏（全选/移除）
+        if (manageMode && target > cards.length - 1) {
+          setFocus(selectAllBtn);
+          return true;
+        }
+      }
+      // 纵向移动即沉浸：向下藏栏、向上出栏——焦点在首屏内移动时页面不滚动、
+      // 没有滚动事件可依，必须由焦点方向驱动（曾致顶栏要等首屏滚尽才消失）
+      if (key === 'ArrowDown' || key === 'PageDown') document.body.classList.add('bars-hidden');
+      else if (key === 'ArrowUp' || key === 'PageUp') document.body.classList.remove('bars-hidden');
+      // 越界即停在原地（clamp），仍拦掉原生滚动
+      if (target < 0 || target > cards.length - 1) return true;
+      if (target !== i) setFocus(cards[target]);
+      return true;
+    };
+    // 音量±：整屏翻页——步长 = 当前视口可见的行数（顶栏实测高度；四舍五入，
+    // 半行以上即算一行）。一屏 3 行就跳 3 行，不留重叠行
+    const navScreen = (dir) => {
+      const cards = getCards();
+      if (!cards.length) return;
+      const cols = gridColumns(cards);
+      const rowH = rowHeight(cards, cols);
+      const topH = document.querySelector('.topbar')?.offsetHeight ?? 0;
+      const rows = Math.max(1, Math.round((window.innerHeight - topH) / rowH));
+      const current = cards.findIndex((card) => card.dataset.bookId === focusedBookId);
+      const i = current >= 0 ? current : 0;
+      const target = Math.min(cards.length - 1, Math.max(0, i + dir * cols * rows));
+      if (target === i) return;
+      const card = cards[target];
+      setFocus(card);
+      // 整页对位：视口与焦点同步翻一整页，而非 setFocus 的最小让位（最小让位
+      // 只把焦点行滚进屏底，旧行仍占大半屏）。向前翻目标行对齐顶栏下沿（新页
+      // 从焦点行开始），向后翻目标行压底（连续回翻）；书架首尾自然截断
+      const y = layoutY(card);
+      if (dir > 0) document.body.scrollTop = Math.max(0, y - topH);
+      else {
+        const bottomEdge = manageBar.hidden
+          ? window.innerHeight
+          : window.innerHeight - manageBar.offsetHeight;
+        document.body.scrollTop = Math.max(0, y + card.offsetHeight - bottomEdge);
+      }
+      // 整页翻同样由方向驱动沉浸（滚动被首尾截断时不产生滚动事件）
+      document.body.classList.toggle('bars-hidden', dir > 0);
+    };
+    // 主页键：回顶部并聚焦第一张
+    const goTop = () => {
+      document.body.scrollTop = 0;
+      const cards = getCards();
+      if (cards.length) setFocus(cards[0]);
+    };
+
     const render = (list, keyword) => {
       const shelf = document.getElementById('shelf');
       const empty = document.getElementById('empty');
@@ -505,6 +668,7 @@
         });
         shelf.append(card);
       }
+      restoreFocus();
     };
 
     const applyFilter = () => {
@@ -562,6 +726,8 @@
       selected.clear();
       resetConfirm();
       manageBar.hidden = !on;
+      // 进管理模式强制出栏：状态栏（全选/移除）必须立即可见
+      if (on) document.body.classList.remove('bars-hidden');
       document.getElementById('manageBtn').textContent = on ? '完成' : '管理';
       document.body.classList.toggle('managing', on);
       updateManageBar();
@@ -614,13 +780,16 @@
     // 阅读期间导入的新书在回到书架时补齐
     window.addEventListener('focus', () => { void load(); });
 
-    // 滚动条静止 2 秒后自动隐没（与设置页同款 is-scrolling 模式）
+    // 滚动条静止 2 秒后自动隐没（与设置页同款 is-scrolling 模式）；
+    // 回到顶部时出栏（主页键/焦点回顶的兜底）。沉浸藏栏/出栏只由焦点移动
+    // 方向驱动（navigateGrid/navScreen），不响应鼠标滚动。
     (() => {
       let hideTimer = 0;
       document.body.addEventListener('scroll', () => {
         document.body.classList.add('is-scrolling');
         window.clearTimeout(hideTimer);
         hideTimer = window.setTimeout(() => document.body.classList.remove('is-scrolling'), 2000);
+        if (document.body.scrollTop <= 10) document.body.classList.remove('bars-hidden');
       }, { passive: true });
     })();
     // Rust 侧后台补齐历史封面完成后通知刷新（EPUB/MOBI 免重开即出封面）
@@ -729,13 +898,76 @@
       ctxMenu = menu;
       document.addEventListener('pointerdown', onCtxDismiss, true);
     };
+    // ---- 菜单键：HID press 为唯一触发信号 ----
+    // macOS 把遥控菜单键合成为「鼠标指针位置」的幻影右键 contextmenu（真机指纹
+    // 2026-11-10：btn=2 buttons=0 detail=0，坐标随指针走、并非注入层记载的固定
+    // (1,1)）。它先于 HID press 2~3ms 到达，一旦落入卡片分支会打开卡片菜单、
+    // 吃掉紧随的 HID press——因此在 contextmenu 里按「无实体按键 + 无点击计数」
+    // 签名识别并整个忽略；真实右键 buttons=2（mousedown 期）或 detail≥1，不受影响。
+    const menuAction = () => {
+      // 等同顶栏「管理/完成」按钮：进出管理模式（右键菜单开着则先关）
+      if (ctxMenu) { closeCtxMenu(); return; }
+      setManageMode(!manageMode);
+    };
     document.addEventListener('contextmenu', (event) => {
+      // 页面级屏蔽 WebKit 原生菜单（返回/重新载入/检查元素）：遥控器菜单键的
+      // 幻影右键与空白处右键都不弹系统菜单；卡片右键走下方自研菜单。
+      // 同款拦截见 local-reader index.ts 的 contextMenuGuard。
+      event.preventDefault();
+      // 菜单键幻影右键签名（坐标无关）：整个忽略，不触发也不开卡片菜单
+      if (event.button === 2 && event.buttons === 0 && event.detail === 0) return;
+      // Windows 菜单键（0x5D）会在聚焦卡片上触发 contextmenu，与「菜单键=管理模式」
+      // 语义冲突；键盘触发 button=0，右键与 macOS ctrl+点击放行
+      if (event.button !== 2 && !event.ctrlKey) return;
       const card = event.target?.closest?.('.book');
       if (!card || !card.dataset.bookId) return;
       if (manageMode) return;
       openCtxMenu(event, card);
     });
+    // ---- 遥控器（电视式）：菜单/返回/主页/音量走 HID 事件通道 ----
+    // 方向与 OK 由系统映射为 keydown（PageUp/PageDown/Arrow*/Enter）在下方键盘
+    // 处理器消费，此处再认必双触发；故只消费这五键的 press 相位。
+    window.__TAURI__?.event?.listen?.('remote-hid-button', (event) => {
+      const { button, phase } = event.payload ?? {};
+      if (phase !== 'press') return;
+      if (button === 'menu') {
+        menuAction();
+        return;
+      }
+      if (button === 'back') {
+        // 层层退出：右键菜单 → 管理模式 → 搜索词；书架无「离开」概念，到底即止
+        if (ctxMenu) { closeCtxMenu(); return; }
+        if (manageMode) { setManageMode(false); return; }
+        const search = document.getElementById('search');
+        if (search.value) {
+          search.value = '';
+          search.blur();
+          applyFilter();
+        }
+        return;
+      }
+      if (button === 'home') { goTop(); return; }
+      if (button === 'volume_up') { navScreen(-1); return; }
+      if (button === 'volume_down') { navScreen(1); }
+    });
     window.addEventListener('keydown', (event) => {
+      // 搜索框/改名框中方向键归输入框（Escape 仍走下方清搜索分支）
+      const inField = event.target instanceof HTMLInputElement;
+      if (!ctxMenu && !inField && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) {
+        if (navigateGrid(event.key)) event.preventDefault();
+        return;
+      }
+      // OK/Enter 连发只认第一次：连发 click 会连环开书/连选
+      if (event.key === 'Enter' && event.repeat && !inField) {
+        event.preventDefault();
+        return;
+      }
+      // 主页键：回顶部聚焦第一张（拦掉 body 原生滚动，HID home 事件同途）
+      if (event.key === 'Home' && !inField) {
+        event.preventDefault();
+        goTop();
+        return;
+      }
       if (event.key === 'Escape') {
         // 管理模式下先退出管理；搜索有关键词时先清搜索
         if (manageMode) {
