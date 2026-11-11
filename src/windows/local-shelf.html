@@ -481,7 +481,12 @@
           ? window.innerHeight
           : window.innerHeight - manageBar.offsetHeight;
         const top = document.body.scrollTop;
-        if (y < top + topH) document.body.scrollTop = Math.max(0, y - topH);
+        if (y < top + topH) {
+          // 第一行 = 文档起点：直接回顶（问候标题完整露出），不停在
+          // 「顶栏高让位」的半吊子位置——那会留一段差距且首行贴边
+          const first = getCards()[0];
+          document.body.scrollTop = el === first ? 0 : Math.max(0, y - topH);
+        }
         else if (y + el.offsetHeight > top + bottomEdge) {
           document.body.scrollTop = y + el.offsetHeight - bottomEdge;
         }

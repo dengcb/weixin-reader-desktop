@@ -278,6 +278,8 @@ class LocalReader implements LocalReaderController {
    * 目录未覆盖的文档用它做导航栏章节名的诚实兜底。 */
   private sectionTitles = new Map<number, string>();
   private tocRendered = false;
+  /** 章节面板打开时的遥控/键盘光标行（null＝面板未开或无可见行）。 */
+  private panelCursor: HTMLButtonElement | null = null;
   /** 当前 section 内各目录项的锚点节点，用于区分同文件内的多个章节。 */
   private sectionAnchors: Array<{ position: number; node: Node }> | null = null;
   private currentRange: Range | null = null;
@@ -1142,12 +1144,16 @@ class LocalReader implements LocalReaderController {
            max-width/max-height 封顶：foliate 的 setImageSize 会给每张图内联
            写入 !important 的 max-*（行内 important 压过样式表 important），
            封顶会被掀翻回原始尺寸（2026-11-10 双书复现实证）；而 width 它
-           从不设置，直接定宽稳定生效（首版 duokan 规则即此机制）。 */
+           从不设置，直接定宽稳定生效（首版 duokan 规则即此机制）。
+           宽度取绝对像素而非 em：标记落在大字号语境（如《科技想要什么》
+           第一章注标嵌在 <h4> 标题里）时 0.9em 随标题字号膨胀到与正文等大
+           （2026-11-11 实证），像素宽与正文字号挂钩、不随语境缩放。 */
         p img[class*="footnote"], p img[class*="note" i], p img[alt*="注"],
         a[class*="footnote"] img, a[class*="note" i] img, a[href*="footnote"] img {
-          width: 0.9em !important;
+          width: ${Math.round(this.typography.fontSize * 0.7)}px !important;
           height: auto !important;
           vertical-align: -0.15em !important;
+          margin-inline: 0.15em !important;
         }
         a { color: ${dark ? '#60c38e' : '#349f66'}; }
       `;
@@ -1186,6 +1192,7 @@ class LocalReader implements LocalReaderController {
         }
         this.expandActivePath();
         this.updateActiveChapter();
+        this.initPanelCursor();
       }
       document.getElementById('panelOverlay')?.classList.add('show');
     }
@@ -1207,6 +1214,8 @@ class LocalReader implements LocalReaderController {
     element('chapterButton').classList.remove('active');
     element('styleButton').classList.remove('active');
     document.getElementById('panelOverlay')?.classList.remove('show');
+    this.panelCursor?.classList.remove('kbd-cursor');
+    this.panelCursor = null;
     // 关闭面板时把焦点收回外层文档：正文 iframe 一旦持有焦点，键盘事件只进入
     // iframe，window 级翻页处理收不到；仅在确实关闭了面板时收回，避免正文
     // 划选等常规交互被抢焦点。
@@ -1301,6 +1310,43 @@ class LocalReader implements LocalReaderController {
     });
     buttons.find(button => button.classList.contains('active'))
       ?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** 面板内可见的章节行：折叠分组的头行自身可见，只藏其子级容器内的行
+   * （若把头行也判为不可见，光标会被困在当前展开组内跨不出大章）。 */
+  private visibleChapterItems(): HTMLButtonElement[] {
+    return Array.from(
+      element('chapterList').querySelectorAll<HTMLButtonElement>('.chapter-item'),
+    ).filter(item => {
+      for (let node = item.parentElement; node; node = node.parentElement) {
+        if (node.classList.contains('chapter-children')
+          && node.parentElement?.classList.contains('collapsed')) return false;
+      }
+      return true;
+    });
+  }
+
+  /** 面板打开时光标落在当前章节行（无则首行）。 */
+  private initPanelCursor(): void {
+    const items = this.visibleChapterItems();
+    this.setPanelCursor(items.find(item => item.classList.contains('active')) ?? items[0] ?? null);
+  }
+
+  private setPanelCursor(item: HTMLButtonElement | null): void {
+    this.panelCursor?.classList.remove('kbd-cursor');
+    this.panelCursor = item;
+    if (item) {
+      item.classList.add('kbd-cursor');
+      item.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  private movePanelCursor(delta: number): void {
+    const items = this.visibleChapterItems();
+    if (!items.length) return;
+    const current = this.panelCursor ? items.indexOf(this.panelCursor) : 0;
+    const target = Math.min(items.length - 1, Math.max(0, current + delta));
+    this.setPanelCursor(items[target]);
   }
 
   /** 展开当前章节的祖先分组：先全部折叠，再沿激活行向上展开，保证确定性。 */
@@ -1571,6 +1617,25 @@ class LocalReader implements LocalReaderController {
         event.preventDefault();
         event.stopImmediatePropagation();
         return;
+      }
+      // 章节面板打开时，↑↓（遥控 ↑↓ 的系统键值是 PageUp/PageDown）与
+      // Enter（遥控 OK）归目录列表：移动光标/跳章，不触发翻页、切章或全屏
+      if (element('chapterPanel').classList.contains('open')) {
+        const cursorUp = event.key === 'ArrowUp' || event.code === 'PageUp';
+        const cursorDown = event.key === 'ArrowDown' || event.code === 'PageDown';
+        if (cursorUp || cursorDown) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          this.movePanelCursor(cursorUp ? -1 : 1);
+          return;
+        }
+        if (event.key === 'Enter') {
+          // 连发只认第一次：首次跳章即关面板，后续连发不得变成全屏切换
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!event.repeat) this.panelCursor?.click();
+          return;
+        }
       }
       const localAction = resolveLocalKeyboardAction(event.key, isWindows, event.code);
       const readingShortcutsEnabled = settingsStore.get().enableRemoteController !== false;

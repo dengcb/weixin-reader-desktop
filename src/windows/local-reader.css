@@ -175,6 +175,8 @@ body:not([data-theme="dark"]) .tool-button #themeIconDark, body[data-theme="dark
   font: 13px/1.45 "Songti SC", STSong, serif;
 }
 .chapter-item:hover, .chapter-item.active { color: var(--accent); background: var(--accent-soft); }
+/* 遥控/键盘目录光标：面板内 ↑↓ 移动、OK 跳章；描边与当前章高亮区分 */
+.chapter-item.kbd-cursor { color: var(--accent); background: var(--accent-soft); outline: 2px solid var(--accent); outline-offset: -2px; }
 .chapter-index { min-width: 26px; color: var(--muted); font: 10px/1 ui-monospace, monospace; }
 .chapter-group.collapsed > .chapter-children { display: none; }
 .chapter-children { padding-left: 14px; }
