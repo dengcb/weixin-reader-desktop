@@ -46,6 +46,21 @@ pub struct PluginInfo {
     pub enabled: bool,
 }
 
+/// 首绘主题引导：站点 SSR 固定渲染默认主题、其 JS 启动后才把存储偏好写到
+/// 主题宿主属性（七猫 .reader-layout-theme[data-theme] 实证），首绘会闪一帧
+/// 默认浅色主题。声明此配置后，壳层引导在 documentStart 读站点自身
+/// localStorage 并提前写同一属性——与站点 JS 稍后做的完全同一件事。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginBootThemeConfig {
+    #[serde(rename = "hostSelector")]
+    pub host_selector: String,
+    #[serde(rename = "storageKey")]
+    pub storage_key: String,
+    pub attr: String,
+    #[serde(rename = "valuePath")]
+    pub value_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginSiteConfig {
     pub domain: Value,
@@ -56,6 +71,8 @@ pub struct PluginSiteConfig {
     pub shelf: Option<String>,
     #[serde(rename = "readerPattern")]
     pub reader_pattern: String,
+    #[serde(rename = "bootTheme", default)]
+    pub boot_theme: Option<PluginBootThemeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -747,6 +764,7 @@ mod tests {
                 home_url: "https://example.com/".to_string(),
                 shelf: None,
                 reader_pattern: "/reader/".to_string(),
+                boot_theme: None,
             }),
             capabilities: None,
             config_schema: None,

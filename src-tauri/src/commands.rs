@@ -773,12 +773,20 @@ fn manifest_matches_host(plugin: &plugin_manager::PluginInfo, host: &str) -> boo
     plugin_manager::manifest_matches_host(plugin, host)
 }
 
+/// reader 引导允许列表：仅整页导航（MPA）型分栏站点需要把 reader.css 提前到
+/// 首绘——它们切章即整页导航（起点实证；七猫经日志反证：章节切换无任何
+/// content-disconnected 异常、断线换绑无效果，确认为每章重载），每章都会
+/// 重放「原生单栏首绘 → 插件就绪坍缩成双栏」闪烁。SPA 型分栏插件
+/// （fanqie/ireader）切章不换文档，由各自的过渡机制管理，不进此表。
+const READER_BOOT_PLUGINS: &[&str] = &["qidian", "qimao"];
+
 /// 首绘样式引导快照（纯函数，便于测试）：把已启用站点插件的
 /// hideNavbar/hideToolbar CSS 与站点设置打包成初始化脚本用的 JSON。
 /// 前端在 documentStart 同步套用、插件系统就绪后移除（见 boot_styles 模块），
 /// 让 zread 这类整页改造型站点不必等插件 IPC 加载完才塌陷成沉浸模式。
-/// 只嵌导航/工具栏两类（与菜单开关一一对应）；reader/progress 等运行态
-/// 样式由插件偏好驱动，不进快照。
+/// 导航/工具栏两类与菜单开关一一对应；reader/wide 仅对允许列表内的 MPA
+/// 分栏站点携带（双栏偏好由前端在 documentStart 实时读 localStorage 判定，
+/// 不进快照）。progress 等运行态样式不进快照。
 pub fn build_boot_snapshot_json(
     plugins: &[(plugin_manager::PluginInfo, std::collections::BTreeMap<String, String>)],
     settings: &serde_json::Value,
@@ -804,6 +812,7 @@ pub fn build_boot_snapshot_json(
                 json!({
                     "hideNavbar": value.get("hideNavbar"),
                     "hideToolbar": value.get("hideToolbar"),
+                    "readerWide": value.get("readerWide"),
                 }),
             )
         })
@@ -822,7 +831,9 @@ pub fn build_boot_snapshot_json(
             caps.get("hideNavbar").and_then(serde_json::Value::as_bool) == Some(true);
         let want_toolbar =
             caps.get("hideToolbar").and_then(serde_json::Value::as_bool) == Some(true);
-        if !want_navbar && !want_toolbar {
+        let want_reader = READER_BOOT_PLUGINS.contains(&plugin.id.as_str())
+            && caps.get("doubleColumn").and_then(serde_json::Value::as_bool) == Some(true);
+        if !want_navbar && !want_toolbar && !want_reader {
             continue;
         }
         let pick = |suffix: &str| -> Option<String> {
@@ -832,13 +843,26 @@ pub fn build_boot_snapshot_json(
                 .find(|(name, _)| name.ends_with(suffix))
                 .map(|(_, content)| content.clone())
         };
+        // pagedClass 对齐共享分页器各插件的命名约定 atreader-{id}-paged。
         entries.push(json!({
             "id": plugin.id,
             "domains": site.domain.clone(),
             "capabilities": caps,
+            // 首绘主题引导：站点 SSR 渲染默认主题、JS 启动后才写存储主题，
+            // 首帧会闪默认浅色。前端在 documentStart 读站点存储提前写同一属性。
+            "bootTheme": site.boot_theme,
+            "pagedClass": if want_reader { Some(format!("atreader-{}-paged", plugin.id)) } else { None },
+            "readerPattern": if want_reader { Some(site.reader_pattern.clone()) } else { None },
             "styles": {
                 "navbar": if want_navbar { pick("navbar.css") } else { None },
                 "toolbar": if want_toolbar { pick("toolbar.css") } else { None },
+                "reader": if want_reader { pick("reader.css") } else { None },
+                "wide": if want_reader { pick("wide.css") } else { None },
+                // 深色加深覆盖（如七猫 theme-night.css 把原生 #242121 调到
+                // #0b0c0d）：不进快照的话，首绘是站点原生色、插件加载后才
+                // 变黑，深色用户每章经历「黑→灰→黑」。规则全部锚定
+                // [data-theme=dark]，其他主题天然惰性，存在即携带。
+                "night": pick("theme-night.css"),
             },
         }));
     }
@@ -1234,6 +1258,7 @@ mod tests {
                 home_url: "https://example.com".to_string(),
                 shelf: None,
                 reader_pattern: "/reader/".to_string(),
+                boot_theme: None,
             }),
             capabilities: None,
             config_schema: None,
@@ -1287,6 +1312,66 @@ mod tests {
         // 无导航/工具栏能力的插件 → 不进快照。
         let mut bare = web_plugin(json!("zread.ai"));
         bare.id = "bare".to_string();
+        bare.capabilities = Some(json!({ "hideCursor": true }));
+        assert!(build_boot_snapshot_json(&[(bare, styles)], &settings).is_none());
+    }
+
+    #[test]
+    fn boot_snapshot_embeds_reader_boot_only_for_mpa_allowlist() {
+        let mut styles = std::collections::BTreeMap::new();
+        styles.insert("reader.css".to_string(), ".paged{column-count:2}".to_string());
+        styles.insert("wide.css".to_string(), ".paged{--ratio:90%}".to_string());
+        styles.insert(
+            "theme-night.css".to_string(),
+            ".reader-layout-theme[data-theme=dark]{background-color: #0b0c0d !important;}"
+                .to_string(),
+        );
+
+        let mut qidian = web_plugin(json!("qidian.com"));
+        qidian.id = "qidian".to_string();
+        qidian.capabilities = Some(json!({ "doubleColumn": true }));
+
+        let settings = json!({
+            "global": { "enabledPlugins": ["qidian", "qimao", "fanqie"] },
+            "sites": { "qidian": { "readerWide": true } }
+        });
+        let snapshot =
+            build_boot_snapshot_json(&[(qidian, styles.clone())], &settings).expect("snapshot");
+        assert!(snapshot.contains("atreader-qidian-paged"));
+        assert!(snapshot.contains("/reader/"));
+        assert!(snapshot.contains("column-count:2"));
+        assert!(snapshot.contains("--ratio:90%"));
+        assert!(snapshot.contains("\"readerWide\":true"));
+
+        // 七猫同为整页导航型分栏站点，一样进 reader 引导；并声明首绘主题
+        // 引导（SSR 硬编码 data-theme="default" 的站点在快照里带上描述符）。
+        let mut qimao = web_plugin(json!("qimao.com"));
+        qimao.id = "qimao".to_string();
+        qimao.capabilities = Some(json!({ "doubleColumn": true }));
+        qimao.site.as_mut().unwrap().boot_theme = Some(plugin_manager::PluginBootThemeConfig {
+            host_selector: ".reader-layout-theme".to_string(),
+            storage_key: "qimao_reader_setting_data".to_string(),
+            attr: "data-theme".to_string(),
+            value_path: "theme".to_string(),
+        });
+        let snapshot =
+            build_boot_snapshot_json(&[(qimao, styles.clone())], &settings).expect("snapshot");
+        assert!(snapshot.contains("atreader-qimao-paged"));
+        assert!(snapshot.contains(".reader-layout-theme"));
+        assert!(snapshot.contains("qimao_reader_setting_data"));
+        // 深色加深覆盖随快照携带，首绘不再是站点原生灰。
+        assert!(snapshot.contains("background-color: #0b0c0d"));
+
+        // SPA 分栏插件（fanqie/qimao/ireader）不在允许列表：双栏能力
+        // 再齐全也不带 reader 引导，且没有任何其他引导时整条目不生成。
+        let mut fanqie = web_plugin(json!("fanqie.com"));
+        fanqie.id = "fanqie".to_string();
+        fanqie.capabilities = Some(json!({ "doubleColumn": true }));
+        assert!(build_boot_snapshot_json(&[(fanqie, styles.clone())], &settings).is_none());
+
+        // 允许列表命中但 doubleColumn 能力未声明 → 同样无 reader 引导。
+        let mut bare = web_plugin(json!("qidian.com"));
+        bare.id = "qidian".to_string();
         bare.capabilities = Some(json!({ "hideCursor": true }));
         assert!(build_boot_snapshot_json(&[(bare, styles)], &settings).is_none());
     }

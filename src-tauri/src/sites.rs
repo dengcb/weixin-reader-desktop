@@ -317,6 +317,7 @@ mod tests {
                 home_url: home_url.to_string(),
                 shelf: None,
                 reader_pattern: "/reader/".to_string(),
+                boot_theme: None,
             }),
             capabilities: None,
             config_schema: None,

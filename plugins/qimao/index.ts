@@ -78,7 +78,14 @@ const BOOT_GUARD_MAX_TICKS = 40;
 /// 兜底上限：信号始终不出现（站点改版/非 Nuxt 页）时 9s 后照常绑定。
 const HYDRATION_POLL_MS = 100;
 const HYDRATION_WAIT_MAX_MS = 9_000;
-const POST_HYDRATION_SETTLE_MS = 400;
+/// 主题门（2026-11-16）：水合完成后站点还有一波「把存储主题写到
+/// .reader-layout-theme[data-theme]」的补渲染；固定 150ms 收尾抢在它前面
+/// 绑定会让主题宿主瞬间回白（真机实证），等属性落地再绑。无站点阅读偏好
+/// 时不设门；超限放行，由开机守卫代写主题兜底。
+const THEME_GATE_POLL_MS = 50;
+const THEME_GATE_MAX_MS = 400;
+/// 主题落地（或超限）后的一小段收尾。
+const POST_THEME_SETTLE_MS = 100;
 
 const SINGLE_COLUMN_ICON = `
   <svg width="24" height="24" viewBox="0 0 24 24"
@@ -110,6 +117,15 @@ const QIMAO_RUNTIME_MANIFEST: PluginManifest = {
     domain: ['qimao.com'],
     homeUrl: 'https://www.qimao.com/',
     readerPattern: '/(reader/index/\\d+|shuku/\\d+-\\d+)',
+    // SSR 硬编码 data-theme="default"（2026-11-16 curl 实证），站点 JS 启动
+    // 后才写存储主题——首绘主题引导据此在 documentStart 提前写同一属性，
+    // 消除深色用户切章「黑→白→黑」。与 manifest.json 双处同步。
+    bootTheme: {
+      hostSelector: '.reader-layout-theme',
+      storageKey: 'qimao_reader_setting_data',
+      attr: 'data-theme',
+      valuePath: 'theme',
+    },
   },
   capabilities: {
     wideMode: true,
@@ -167,6 +183,9 @@ export class QimaoPlugin implements ReaderPlugin {
       viewportClass: 'atreader-qimao-page-viewport',
       indicatorClass: 'atreader-qimao-page-indicator',
       contentSelector: QIMAO_CONTENT_SELECTOR,
+      // SPA 切章时站点整体替换正文节点，去抖窗口里新章会以原生单栏裸奔
+      // 一帧再坍缩成双栏；断线瞬间同步换绑让中间态不进绘制。
+      immediateRebindOnDisconnect: true,
       getChapterKey: () => this.getChapterKey(),
       onChapterChange: chapterKey => this.restoreChapterPosition(chapterKey),
       onAnomaly: detail => {
@@ -544,17 +563,46 @@ export class QimaoPlugin implements ReaderPlugin {
       this.paginatorBindArmed = true;
       if (this.desiredDoubleColumn) this.paginator?.enable();
     };
+    const storedTheme = this.storedReaderTheme();
+    const themeReady = (): boolean => {
+      if (storedTheme === null) return true;
+      const host = document.querySelector<HTMLElement>('.reader-layout-theme');
+      return host?.getAttribute('data-theme') === storedTheme;
+    };
+    const settleThemeGate = (gateStartedAt: number): void => {
+      if (this.api === null) return; // 已卸载
+      if (themeReady() || Date.now() - gateStartedAt >= THEME_GATE_MAX_MS) {
+        this.paginatorBindTimer = setTimeout(arm, POST_THEME_SETTLE_MS);
+        return;
+      }
+      this.paginatorBindTimer = setTimeout(
+        () => settleThemeGate(gateStartedAt),
+        THEME_GATE_POLL_MS,
+      );
+    };
     const poll = (): void => {
       if (this.api === null) return; // 已卸载
       const root = document.getElementById('__nuxt');
       const hydrated = !root || !root.hasAttribute('data-server-rendered');
       if (hydrated || Date.now() - startedAt >= HYDRATION_WAIT_MAX_MS) {
-        this.paginatorBindTimer = setTimeout(arm, POST_HYDRATION_SETTLE_MS);
+        settleThemeGate(Date.now());
         return;
       }
       this.paginatorBindTimer = setTimeout(poll, HYDRATION_POLL_MS);
     };
     poll();
+  }
+
+  /** 站点自身存储里的阅读主题；无偏好/不可读时返回 null（主题门直通）。 */
+  private storedReaderTheme(): string | null {
+    try {
+      const raw = localStorage.getItem(QIMAO_READER_SETTING_KEY);
+      if (!raw) return null;
+      const theme = JSON.parse(raw)?.theme;
+      return typeof theme === 'string' && theme.length > 0 ? theme : null;
+    } catch {
+      return null;
+    }
   }
 
   private async restoreLayoutPreference(api: PluginAPI): Promise<void> {

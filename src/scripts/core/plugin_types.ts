@@ -72,6 +72,14 @@ export interface WebSiteConfig {
   readerPattern: string;
   /** 书架页 URL（可选）：遥控器主页键长按「回书架」目标，缺省回退首页 */
   shelf?: string;
+  /** 首绘主题引导（可选）：站点 SSR 渲染默认主题、JS 启动后才写存储主题时，
+   * 壳层引导在 documentStart 读站点自身存储并提前写同一属性 */
+  bootTheme?: {
+    hostSelector: string;
+    storageKey: string;
+    attr: string;
+    valuePath: string;
+  };
 }
 
 /**

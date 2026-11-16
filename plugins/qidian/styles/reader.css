@@ -33,11 +33,11 @@ body.atreader-qidian-paged #reader-content {
 }
 
 /*
- * 站点正文是 SSR 直出（.print > main.content），Vue 水合在 DOMContentLoaded
- * 之后才完成；水合前分页器已把正文包进视口（2026-11-05 时序实证：水合重建
- * 后 class/作用域属性完整，分页器断连自愈可兜底）。这条规则消除水合前后
- * 「原生单栏短暂上屏 → 双栏」的闪烁：正文未进视口前一律隐藏，绑定后规则
- * 自动失效（正文父节点变成视口）。
+ * 站点正文是客户端延迟插入（.print > main.content），Vue 水合还会再替换
+ * 一次节点。这条规则消除插入/替换间隙「原生单栏短暂上屏」的闪烁：正文
+ * 未进视口前一律隐藏，绑定后规则自动失效（正文父节点变成视口）。替换
+ * 引发的断线由分页器微任务内同步换绑兜底（immediateRebindOnDisconnect），
+ * 重绑间隙不会进绘制。
  */
 body.atreader-qidian-paged .chapter-wrapper :is(.print, .enable-review) > main.content {
   visibility: hidden !important;

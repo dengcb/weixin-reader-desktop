@@ -4,9 +4,10 @@ import { QimaoPlugin } from './index';
 
 const READER_URL = '/shuku/222767-16480917400002/';
 
-/** 等分页器绑定：插件在 hydration 信号后留 400ms settle 再包裹正文，
- * happy-dom 没有 #__nuxt（按已完成 hydration 处理），仍需等这个窗口。 */
-const settlePagination = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 460));
+/** 等分页器绑定：happy-dom 没有 #__nuxt（按已完成 hydration 处理），
+ * 随后是主题门（无站点偏好直通；有偏好最多等 400ms 上限）+ 100ms 收尾，
+ * 取最坏路径再留余量。 */
+const settlePagination = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 650));
 
 const readerMarkup = () => {
   document.body.innerHTML = `
@@ -646,6 +647,51 @@ describe('Qimao site boot guard: article class re-assertion', () => {
 
     await new Promise(resolve => setTimeout(resolve, 450));
     expect(document.querySelector('.chapter-detail-wrap-content > div')).toBeNull();
+    plugin.onUnload();
+  });
+});
+
+describe('Qimao theme gate before pagination binding', () => {
+  afterEach(() => {
+    history.replaceState({}, '', '/');
+    document.body.replaceChildren();
+    document.body.className = '';
+    localStorage.clear();
+  });
+
+  it('主题未落地时按住绑定（不抢补渲染窗口），过门上限后才包裹正文', async () => {
+    history.replaceState({}, '', READER_URL);
+    readerMarkup();
+    localStorage.setItem('qimao_reader_setting_data', JSON.stringify({ theme: 'dark' }));
+    const plugin = new QimaoPlugin();
+    const { api } = createApi();
+    plugin.onLoad(api);
+
+    // 主题宿主不存在：门不放行，正文保持未绑（避免 150ms 抢跑白闪的同类窗口）
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(document.body.classList.contains('atreader-qimao-paged')).toBe(false);
+
+    // 超过门上限 + 收尾后照常绑定
+    await settlePagination();
+    expect(document.body.classList.contains('atreader-qimao-paged')).toBe(true);
+    plugin.onUnload();
+  });
+
+  it('主题已自行落地时门即时放行，不必等满上限', async () => {
+    history.replaceState({}, '', READER_URL);
+    readerMarkup();
+    localStorage.setItem('qimao_reader_setting_data', JSON.stringify({ theme: 'dark' }));
+    const host = document.createElement('div');
+    host.className = 'reader-layout-theme';
+    host.setAttribute('data-theme', 'dark');
+    document.body.prepend(host);
+    const plugin = new QimaoPlugin();
+    const { api } = createApi();
+    plugin.onLoad(api);
+
+    // 门直通 + 100ms 收尾：远早于上限窗口
+    await new Promise(resolve => setTimeout(resolve, 250));
+    expect(document.body.classList.contains('atreader-qimao-paged')).toBe(true);
     plugin.onUnload();
   });
 });

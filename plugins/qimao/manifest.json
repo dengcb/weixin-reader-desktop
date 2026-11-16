@@ -13,6 +13,12 @@
     ],
     "homeUrl": "https://www.qimao.com/",
     "readerPattern": "/(reader/index/\\d+|shuku/\\d+-\\d+)",
+    "bootTheme": {
+      "hostSelector": ".reader-layout-theme",
+      "storageKey": "qimao_reader_setting_data",
+      "attr": "data-theme",
+      "valuePath": "theme"
+    },
     "shelf": "https://www.qimao.com/user/bookshelf"
   },
   "capabilities": {

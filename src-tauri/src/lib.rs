@@ -595,7 +595,10 @@ pub fn run() {
                 .title(&app_name)
                 .inner_size(1280.0, 800.0)
                 .center()
-                .background_color(Color::from((26, 26, 26))) // #1a1a1a 深灰色，减少启动时白屏闪烁
+                // #1a1a1a 深灰色：减少启动白屏，也接管 MPA 站点（起点/七猫）
+                // 切章换文档间隙的底色（macOSPrivateApi 生效后 WKWebView
+                // 不再画自己的默认白底，见 Cargo.toml macos-private-api）。
+                .background_color(Color::from((26, 26, 26)))
                 .visible(false)
                 // .initialization_script(console_filter_script)  <-- DISABLED
                 .initialization_script(inject_script)
@@ -637,6 +640,14 @@ pub fn run() {
                 builder = builder.user_agent(ua);
             }
             let win = builder.build()?;
+            // wry 创建期只把 drawsBackground=false 写在 WKWebViewConfiguration
+            // 上（该私有键在 WKWebView 实例上才可靠生效），换文档间隙仍可能
+            // 画默认白底。显式走一次运行时 setter 落到实例：drawsBackground
+            // 关闭 + underPageBackgroundColor 染成窗口底色，MPA 站点切章的
+            // 间隙帧（黑→白→黑的「白」）由此消除。
+            if let Err(error) = win.set_background_color(Some(Color::from((26, 26, 26)))) {
+                eprintln!("[Init] 主窗口底色运行时设置失败: {error}");
+            }
             menu_model::set_focused_window(None);
 
             // 应用初始缩放（Tauri 2.11/wry 0.55 需要在窗口创建后主动设置）

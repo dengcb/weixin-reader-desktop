@@ -146,6 +146,9 @@ export class QidianPlugin implements ReaderPlugin {
       viewportClass: 'atreader-qidian-page-viewport',
       indicatorClass: 'atreader-qidian-page-indicator',
       contentSelector: QIDIAN_CONTENT_SELECTOR,
+      // 正文由站点客户端延迟插入、水合再替换一次；断线瞬间同步换绑，
+      // 否则「插入→绑定显示→替换空白→再绑定」会闪现两次正文。
+      immediateRebindOnDisconnect: true,
       getChapterKey: () => this.getChapterKey(),
       onChapterChange: chapterKey => this.restoreChapterPosition(chapterKey),
       onPositionChange: (pageIndex, pageCount) => {

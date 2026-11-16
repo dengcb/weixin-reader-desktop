@@ -72,6 +72,20 @@ body.atreader-qimao-paged .qm-fixed-right {
   margin-left: 0 !important;
 }
 
+/*
+ * 切章是整页导航：首绘引导在 documentStart 就挂上分栏类，但分页器要等
+ * 站点水合收尾才绑定正文。未进视口的正文一律隐藏，绑定后由更高特异性的
+ * 视口子级规则恢复显示——首帧即最终版式，正文只出现一次。水合若整体替换
+ * 正文节点，由分页器微任务同步换绑兜底（immediateRebindOnDisconnect）。
+ */
+body.atreader-qimao-paged .chapter-detail-article {
+  visibility: hidden !important;
+}
+
+body.atreader-qimao-paged .atreader-qimao-page-viewport > .chapter-detail-article {
+  visibility: visible !important;
+}
+
 body.atreader-qimao-paged .atreader-qimao-page-viewport {
   --atreader-column-gap: clamp(56px, 7vw, 96px);
   box-sizing: border-box !important;

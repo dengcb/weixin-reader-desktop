@@ -53,6 +53,14 @@ export interface ColumnPaginatorOptions {
    * 正文由站点框架异步重建的站点（掌阅等）应使用 self。
    */
   bindMode?: 'wrap' | 'self';
+  /**
+   * 正文断线（站点水合/重渲染替换正文节点）时跳过 80ms 去抖，在变异微任务
+   * 内同步换绑。中间态不进绘制，用户看不到替换间隙的原生单栏或「文字闪现
+   * 两次」。起点（水合整体替换）与七猫（SPA 切章替换正文节点）已启用；
+   * 番茄有 prepareChapterTransition 过渡机制、掌阅走 self 绑定 + 轮询自愈，
+   * 保持默认。
+   */
+  immediateRebindOnDisconnect?: boolean;
   onPositionChange?: (pageIndex: number, pageCount: number) => void;
   onChapterChange?: (chapterKey: string) => void;
   /** 故障取证：正文节点被站点渲染抛弃（content-disconnected）与自愈重绑（rebound）时触发。 */
@@ -67,6 +75,7 @@ export class ColumnPaginator {
   private readonly indicatorClass: string;
   private readonly contentSelector: string;
   private readonly bindMode: 'wrap' | 'self';
+  private readonly immediateRebindOnDisconnect: boolean;
   private readonly onPositionChange?: ColumnPaginatorOptions['onPositionChange'];
   private readonly onChapterChange?: ColumnPaginatorOptions['onChapterChange'];
   private readonly onAnomaly?: ColumnPaginatorOptions['onAnomaly'];
@@ -104,6 +113,7 @@ export class ColumnPaginator {
     this.indicatorClass = options.indicatorClass;
     this.contentSelector = options.contentSelector;
     this.bindMode = options.bindMode ?? 'wrap';
+    this.immediateRebindOnDisconnect = options.immediateRebindOnDisconnect ?? false;
     this.onPositionChange = options.onPositionChange;
     this.onChapterChange = options.onChapterChange;
     this.onAnomaly = options.onAnomaly;
@@ -181,6 +191,13 @@ export class ColumnPaginator {
   }
 
   disable(): void {
+    // 分栏类移除放在早退之前：首绘引导可能已把类挂上 body，而插件随后
+    // 依据偏好选择单栏（enable 从未执行），此时 disable 也要负责摘掉
+    // 引导残留类，否则 wide.css 的 body:not() 规则会一直失配。
+    document.body?.classList.remove(
+      this.pagedClass,
+      this.noTransitionClass,
+    );
     if (!this.enabled) return;
     const ratio = this.getPositionRatio();
     this.enabled = false;
@@ -196,10 +213,6 @@ export class ColumnPaginator {
       this.domReadyHandler = null;
     }
     window.removeEventListener('resize', this.handleResize);
-    document.body?.classList.remove(
-      this.pagedClass,
-      this.noTransitionClass,
-    );
     this.resetContent();
     this.indicator?.remove();
     this.indicator = null;
@@ -283,6 +296,23 @@ export class ColumnPaginator {
     window.addEventListener('resize', this.handleResize);
     if (this.progressVisible) this.ensureIndicator();
     this.bodyObserver = new MutationObserver(records => {
+      // 正文已被站点替换（断线）：同步换绑抢在绘制前完成，隐藏守卫的
+      // 空白窗口不可感知。站点删除正文后尚未插入新节点时，refreshContent
+      // 只做清理，等下一次变异再绑。
+      if (
+        this.immediateRebindOnDisconnect
+        && this.enabled
+        && this.content
+        && !this.content.isConnected
+      ) {
+        this.pendingMutations = [];
+        if (this.mutationTimer) {
+          clearTimeout(this.mutationTimer);
+          this.mutationTimer = null;
+        }
+        this.refreshContent(records);
+        return;
+      }
       this.pendingMutations.push(...records);
       if (this.mutationTimer) clearTimeout(this.mutationTimer);
       this.mutationTimer = setTimeout(() => {

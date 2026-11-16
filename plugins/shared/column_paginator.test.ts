@@ -99,4 +99,57 @@ describe('ColumnPaginator self-mode viewport class integrity', () => {
 
     paginator.destroy();
   });
+
+  it('disable removes the paged class even when never enabled (boot stale class)', () => {
+    document.body.classList.add(PAGED);
+    const { paginator } = buildPaginator();
+
+    // 首绘引导可能先挂上分栏类；插件随后选择单栏（enable 从未执行），
+    // disable 也要摘掉这个残留类，wide.css 的 body:not() 才能正确匹配。
+    paginator.disable();
+
+    expect(document.body.classList.contains(PAGED)).toBe(false);
+  });
+
+  it('immediateRebindOnDisconnect 在正文被站点替换的微任务内同步换绑（wrap 模式，起点现场）', async () => {
+    const content = mountContent();
+    const { paginator } = buildPaginator({
+      bindMode: 'wrap',
+      immediateRebindOnDisconnect: true,
+    });
+    paginator.enable();
+    const wrapper = content.parentElement as HTMLElement;
+    expect(wrapper.classList.contains(VIEWPORT)).toBe(true);
+
+    // 站点水合重建：视口包装层连同正文被整体换成全新 main.content
+    const replacement = document.createElement('div');
+    replacement.className = 'reader-content';
+    replacement.innerHTML = '<p>水合重建的正文</p>';
+    wrapper.replaceWith(replacement);
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    // 不等 80ms 去抖就已换绑：中间态不进绘制，正文不会闪现两次
+    expect(replacement.parentElement?.classList.contains(VIEWPORT)).toBe(true);
+    expect(paginator.getStats().contentConnected).toBe(true);
+
+    paginator.destroy();
+  });
+
+  it('未开启同步换绑时保持 80ms 去抖换绑路径', async () => {
+    const content = mountContent();
+    const { paginator } = buildPaginator();
+    paginator.enable();
+
+    const replacement = document.createElement('div');
+    replacement.className = 'reader-content';
+    replacement.innerHTML = '<p>重建正文</p>';
+    content.replaceWith(replacement);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(replacement.classList.contains(VIEWPORT)).toBe(false);
+
+    await new Promise(resolve => setTimeout(resolve, 140));
+    expect(replacement.classList.contains(VIEWPORT)).toBe(true);
+
+    paginator.destroy();
+  });
 });
