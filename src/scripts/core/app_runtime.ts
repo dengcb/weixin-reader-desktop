@@ -9,6 +9,7 @@ import { MenuManager } from '../managers/menu_manager';
 import { RemoteManager } from '../managers/remote_manager';
 import { StyleManager } from '../managers/style_manager';
 import { ThemeManager } from '../managers/theme_manager';
+import { TitleBarManager } from '../managers/title_bar_manager';
 import { TurnerManager } from '../managers/turner_manager';
 import { log } from './logger';
 import { EventBus } from './event_bus';
@@ -90,6 +91,8 @@ export class AppRuntime {
     create('RemoteManager', () => new RemoteManager());
     // 书城切换浮层（macOS Cmd+Tab 语义）：远程站点页与本地阅读页共用
     create('BookstoreSwitcherManager', () => new BookstoreSwitcherManager());
+    // 沉浸标题栏：全局开关跟随站点 hideNavbar，在线与本地阅读页共用。
+    create('TitleBarManager', () => new TitleBarManager());
     // 反色滤镜是给首页不支持深浅自适应的站点（微信读书、番茄小说）兜底的；
     // 站点在 manifest 声明 nativeTheme 时交给站点自身机制，不注入。
     const active = getPluginLoader().getActivePlugin();

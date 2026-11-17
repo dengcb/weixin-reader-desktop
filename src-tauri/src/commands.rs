@@ -9,6 +9,13 @@ use tauri::{menu::MenuItemKind, AppHandle, Emitter, Manager, Runtime, WebviewWin
 /// 摸鱼模式状态：true = 当前隐藏中
 static STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// 沉浸标题栏隐藏态（仅 macOS 置位）：Overlay 只把标题栏变透明，书名文字
+/// 仍会渲染浮在正文上，需置空标题；隐藏期间 set_title 只记录不应用，恢复时
+/// 回放，避免 IPCManager 更新书名后文字又回来。Windows 去装饰后标题仍用于
+/// 任务栏，不置位、不拦截 set_title。
+static IMMERSIVE_TITLE_HIDDEN: AtomicBool = AtomicBool::new(false);
+static LAST_WINDOW_TITLE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 static EDITOR_INSTALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[tauri::command]
@@ -161,7 +168,12 @@ pub fn set_active_bookstore<R: Runtime>(app: AppHandle<R>, site_id: String) {
 
 #[tauri::command]
 pub fn set_title(window: WebviewWindow, title: String) {
-    let _ = window.set_title(&title);
+    if let Ok(mut last) = LAST_WINDOW_TITLE.lock() {
+        *last = title.clone();
+    }
+    if !IMMERSIVE_TITLE_HIDDEN.load(Ordering::Relaxed) {
+        let _ = window.set_title(&title);
+    }
 }
 
 /// 摸鱼键：切换窗口可见性
@@ -550,6 +562,39 @@ pub fn apply_site_zoom<R: Runtime>(app: AppHandle<R>, site_id: String) {
         .unwrap_or(1.0);
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_zoom(zoom);
+    }
+}
+
+/// 沉浸标题栏：隐藏/恢复主窗口原生标题栏。全局开关 immersiveTitleBar 跟随
+/// 当前站点 hideNavbar，有效态由注入层 TitleBarManager 合成后调用本命令。
+/// macOS：Overlay 让内容顶到窗口上沿、红绿灯悬浮（fullSizeContentView）；
+/// Windows/Linux：去装饰，窗口控件由注入层碰顶悬浮条承接。
+#[tauri::command]
+pub fn set_immersive_title_bar<R: Runtime>(app: AppHandle<R>, hidden: bool) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::TitleBarStyle;
+        IMMERSIVE_TITLE_HIDDEN.store(hidden, Ordering::Relaxed);
+        let style = if hidden { TitleBarStyle::Overlay } else { TitleBarStyle::Visible };
+        let _ = win.set_title_bar_style(style);
+        if hidden {
+            let _ = win.set_title("");
+        } else {
+            let last = LAST_WINDOW_TITLE.lock().map(|t| t.clone()).unwrap_or_default();
+            let title = if last.is_empty() {
+                app.config().product_name.clone().unwrap_or_else(|| "艾特阅读".to_string())
+            } else {
+                last
+            };
+            let _ = win.set_title(&title);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = win.set_decorations(!hidden);
     }
 }
 

@@ -21,6 +21,8 @@ export interface GlobalSettings {
   defaultPage?: 'home' | 'shelf';
   lastSiteId?: string;
   hideCursor?: boolean;
+  /** 沉浸标题栏：开启后跟随当前站点 hideNavbar 隐藏原生标题栏（默认关）。 */
+  immersiveTitleBar?: boolean;
   enableRemoteController?: boolean;
   enabledPlugins?: string[];
   autoFlip?: {
@@ -60,6 +62,7 @@ const defaultDocument = (): AppSettings => ({
     lastPage: true,
     rememberSite: true,
     hideCursor: false,
+    immersiveTitleBar: false,
     autoFlip: { active: false, interval: 15, keepAwake: true },
   },
   sites: {},
@@ -210,6 +213,7 @@ private async initialize(generation: number): Promise<void> {
       'rememberSite',
       'lastSiteId',
       'hideCursor',
+      'immersiveTitleBar',
       'enableRemoteController',
       'enabledPlugins',
       'autoFlip',

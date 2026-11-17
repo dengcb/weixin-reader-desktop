@@ -862,6 +862,7 @@ pub fn run() {
             commands::switch_bookstore_by_index,
             commands::get_bookstore_list,
             commands::apply_site_zoom,
+            commands::set_immersive_title_bar,
             font_cache::ensure_font_cache,
             commands::get_app_name,
             commands::get_app_version,

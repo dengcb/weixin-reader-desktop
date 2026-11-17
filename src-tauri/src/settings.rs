@@ -44,6 +44,7 @@ pub fn default_settings() -> Value {
             "rememberSite": true,
             "defaultPage": "home",
             "hideCursor": false,
+            "immersiveTitleBar": false,
             "voicePageTurn": false,
             "voicePageTurnPhrase": "翻页",
             "autoFlip": {
@@ -389,6 +390,7 @@ mod tests {
     fn default_document_has_current_schema() {
         assert!(is_current_schema(&default_settings()));
         assert_eq!(default_settings()["global"]["autoUpdate"], true);
+        assert_eq!(default_settings()["global"]["immersiveTitleBar"], false);
         assert_eq!(default_settings()["global"]["autoFlip"]["active"], false);
         assert_eq!(default_settings()["global"]["voicePageTurn"], false);
         assert_eq!(default_settings()["global"]["voicePageTurnPhrase"], "翻页");

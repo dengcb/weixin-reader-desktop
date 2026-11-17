@@ -17,6 +17,7 @@
     "allow-switch-bookstore-by-index",
     "allow-get-bookstore-list",
     "allow-apply-site-zoom",
+    "allow-set-immersive-title-bar",
     "allow-get-app-name",
     "allow-get-settings",
     "allow-patch-settings",
