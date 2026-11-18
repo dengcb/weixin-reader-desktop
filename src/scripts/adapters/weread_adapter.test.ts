@@ -89,4 +89,25 @@ describe('WeReadAdapter 宽屏宽度', () => {
   it('保留宽屏模式菜单作为恢复默认布局的入口', () => {
     expect(createAdapter().getReaderMenuItems()).toContain('reader_wide');
   });
+
+  it('隐藏导航栏（双栏）只压 preRenderContent 内联底边距，外框几何保持原样不贴底', () => {
+    const css = createAdapter().getNavbarCSS(true);
+
+    // 外框预留不变：上 24 / 下 24（书页离窗底 24px，用户明确要求不贴底）
+    expect(css).toContain('margin-top: 24px !important');
+    expect(css).toContain('height: calc(100% - 48px) !important');
+    // 真源是 weread JS 写的内联 padding-bottom:70px（wkcap 实测），必须 !important；
+    // 32px 为真机逐档试值（8 太贴 → 24 → 32）
+    expect(css).toContain('.preRenderContent');
+    expect(css).toContain('padding-bottom: 32px !important');
+    expect(css).not.toContain('.renderTargetContainer');
+  });
+
+  it('显示导航栏时底部预留保持原值，不受回收改动影响', () => {
+    const css = createAdapter().getNavbarCSS(false);
+
+    expect(css).toContain('margin-top: 72px !important');
+    expect(css).toContain('height: calc(100% - 132px) !important');
+    expect(css).not.toContain('padding-bottom');
+  });
 });

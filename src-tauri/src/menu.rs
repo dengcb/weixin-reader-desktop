@@ -63,7 +63,7 @@ pub fn watch_fullscreen_exit<R: Runtime>(app: &AppHandle<R>) {
 /// 遍历 main 窗口 contentView 子视图找到 WKWebView，调 makeFirstResponder。
 /// 等价于 wry WebView::focus()（Tauri 2.11 未暴露）。
 #[cfg(target_os = "macos")]
-fn make_webview_first_responder<R: Runtime>(win: &tauri::WebviewWindow<R>) {
+pub(crate) fn make_webview_first_responder<R: Runtime>(win: &tauri::WebviewWindow<R>) {
     #![allow(non_camel_case_types)]
     use objc::runtime::Object;
     use objc::{class, msg_send, sel, sel_impl};
@@ -97,6 +97,21 @@ fn make_webview_first_responder<R: Runtime>(win: &tauri::WebviewWindow<R>) {
             }
         }
     }
+}
+
+/// 守住焦点不变量：主窗口只要激活，WKWebView 必须是 firstResponder。
+///
+/// 否则遥控单键（Enter/方向键/PageUp）走 responder chain 无人消费 → NSBeep，
+/// 而 ⌘ 组合键走 key equivalents 仍可用（「单键死、组合键活」指纹）。失焦触发点
+/// 众多（菜单跟踪、跨站导航、全屏退出、应用切回……），逐个补会反复发作；统一在
+/// 导航/激活漏斗调用本函数兜底。幂等：已是 firstResponder 时为无操作。
+pub(crate) fn focus_main_webview<R: Runtime>(app: &AppHandle<R>) {
+    #[cfg(target_os = "macos")]
+    if let Some(win) = app.get_webview_window("main") {
+        make_webview_first_responder(&win);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Chrome 风格的缩放级别

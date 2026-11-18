@@ -358,6 +358,12 @@ macOS 上小米遥控器的音量键、返回键、语音键不可用，是 macO
   - 合成点击要点：真实点击事件序列（pointerdown → mousedown → pointerup → mouseup → click）+ 坐标/`detail` 字段；`isTrusted` 在实例上 `defineProperty` 伪装为 true（原型 getter 可被实例覆盖）——番茄/起点/得到/多看均吃这套；微信读书防护更深（`isTrusted` 伪装也无效），只有 React 直调或 CSS 强制两条路。
   - 得到原生支持 ←/→ 翻页：插件 `nextPage/prevPage` 合成方向键桥接遥控音量键翻页（`defineProperty` 注入 keyCode，同多看）。
   - 菜单键幻影右键指纹定案（2026-11-10，本地书架页排查）：macOS 合成的 contextmenu **跟随鼠标指针位置**（实测坐标即指针停留点、目标为指针下元素——指针停在书卡上时目标即书卡），并非旧记载的固定 (1,1)；`remote_manager.ts` 的 `isRemoteMenuContextEvent` 按 (1,1) 判定在此环境永不命中（阅读页菜单键实际由 HID 路径承载，无行为影响，但该系统路径检测实为死代码，改动前须知）。坐标无关的可靠签名：`button=2 && buttons=0 && detail=0`（无实体按键按住、无点击计数；真实右键 mousedown 期 `buttons=2`、`detail≥1`）。幻影右键先于 HID press 2~3ms 到达：页面若有自己的右键菜单（如书架卡片菜单），幻影右键落入会先开菜单、吃掉紧随的 HID press——本地书架页按坐标无关签名整个忽略幻影右键 + 页面级 `preventDefault` 屏蔽 WebKit 原生菜单，菜单键动作仅由 HID press 承载。
+
+### 遥控单键失焦（NSBeep）的不变量根治（2026-11-11）
+
+- 机制：OK/方向键/PageUp 等**单键**经 macOS 映射成键盘事件，投递给 key window 的 **firstResponder**。firstResponder 是 WKWebView 时进网页被消费（全屏/翻页，无声）；不是时沿 responder chain 无人消费 → **NSBeep**（用户听到的「嘟」）。**⌘ 组合键走 key equivalents，在 responder chain 之前被菜单截走**，故失焦时「单键全死、⌘1-7 仍能切书城」是确诊指纹。鼠标点窗口内部＝让 WKWebView 重当 firstResponder 即恢复。
+- 病灶：firstResponder 会被多种事件夺走——原生菜单跟踪（点「书城」菜单切站）、跨站导航、全屏退出、应用切回等。历次修复只补单个触发点（全屏退出用 Resized 计数 `watch_fullscreen_exit`、阅读页 iframe 用 pointerup 抢焦点），新触发点不断冒出，**反复发作**。
+- 根治＝守不变量「主窗口只要激活，WKWebView 必须是 firstResponder」，而非再补触发点：`menu.rs` 新增幂等原语 `focus_main_webview`（内部 `make_webview_first_responder`，objc 遍历 contentView 子视图找 WKWebView 调 `makeFirstResponder`），在正确时机统一调用——①`lib.rs` 主窗口 `on_page_load` 的 `PageLoadEvent::Finished`：**导航刚发起时恢复太早**，跨站导航换 web 进程、文档加载完成会再次夺走 firstResponder（TV 键长按切站后 OK 失效实证），必须以加载完成为准（事件驱动，非固定延迟），覆盖菜单/TV/⌘/浮层一切导航；②`WindowEvent::Focused(true)` 且 label==main（应用切回/点窗口，无页面加载也兜底）；③全屏退出钩子保留。新增失焦触发点只要走这些漏斗即自动覆盖。DOM `focus()`/`set_focus()` 都改不了 firstResponder（实证无效），必须 NSWindow 层 `makeFirstResponder`。
 - 已知副作用（2026-10-31 已解决）：监听模式下按音量键，系统音量仍会真实变化——音量以 NX_SYSDEFINED 进入会话级事件流。现在 `media_key_suppressor.rs` 在遥控器音量键按住期间用会话级 CGEventTap 吞掉**全部 NX_SYSDEFINED**（系统事件里的键码与到达顺序不可靠，整类吞掉最稳），松开即恢复；30 秒兜底有效期防止 release 丢失。物理键盘音量键只在遥控器音量键按住的那一瞬间被一并吞掉。
 - 抑制器约束：修改事件需要「辅助功能」权限（未授权时只提示、不阻断翻页；已授权时遥控器连接即预启动 tap，避免首次按键漏吞）；tap 跑在专用线程 RunLoop 上（挂主线程 = 主线程一卡整机输入停摆）；系统超时/禁用后立即重新启用；进程退出由系统回收。
 - 抑制竞速修复（2026-11-08）：HELD 标志原先由主 RunLoop 上的 HID 报文回调置位，应用刚切前台时主线程排队可达数百毫秒，系统 NX_SYSDEFINED 先到 tap，偶发**首次按音量键漏吞一次系统音量**（再按即正常，因主线程空闲后回调能及时置位）。HID 回调整体迁至专用线程 RunLoop（`hid-remote-report`），标志位微秒级落位稳定赢得竞速；配套把节点打开与设备移除的串行从「同在主线程」改为 nodes 锁互斥（`open_node_locked` 须持锁调用）。若再现首次漏吞，先查启动日志是否出现「主 RunLoop 降级」（专用线程创建失败的兜底路径）。

@@ -611,6 +611,11 @@ pub fn run() {
                     if payload.event() != PageLoadEvent::Finished {
                         return;
                     }
+                    // 页面加载完成（跨站导航会换 web 进程）会重置 firstResponder：
+                    // 在此召回 WKWebView，遥控单键（Enter/方向键/PageUp）才有人消费。
+                    // 导航刚发起时恢复太早，会被随后的文档加载再次夺走，故以加载
+                    // 完成为准（事件驱动，非固定延迟）。覆盖菜单/TV 键/⌘/浮层一切导航。
+                    menu::focus_main_webview(window.app_handle());
                     let finished_generation =
                         generation_on_load.load(std::sync::atomic::Ordering::Acquire);
                     let reveal = reveal_on_load.clone();
@@ -908,6 +913,11 @@ pub fn run() {
                                 app_handle,
                                 label == "plugin-editor" || label == "settings",
                             );
+                            // 主窗口重新激活（应用切回/点窗口/离开全屏）时召回
+                            // WKWebView firstResponder，防遥控单键失焦（NSBeep）
+                            if label == "main" {
+                                menu::focus_main_webview(app_handle);
+                            }
                         } else {
                             menu_model::clear_focused_window_if(&label);
                         }

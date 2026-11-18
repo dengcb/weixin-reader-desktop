@@ -122,6 +122,15 @@ export class WeReadAdapter extends BaseSiteAdapter {
           margin-top: 24px !important;
           height: calc(100% - 48px) !important;
         }
+        /* 底部空带真源（2026-11-17 wkcap 真机实测）：微信读书 JS 分页时给
+           .preRenderContent（canvas 取字的隐藏多栏排版源）写内联
+           padding-bottom:70px——不在任何样式表里，只有 !important 能压过。
+           压到 32px（真机逐档试值：8 太贴 → 24 → 32）。
+           外框几何（上 24 / 下 24 预留）保持原样，书页不贴底。
+           配合 resize 重新分页回收正文底边空带。 */
+        body:has(.readerControls[is-horizontal="true"]) .preRenderContent {
+          padding-bottom: 32px !important;
+        }
       `;
     } else {
       return `
