@@ -1541,8 +1541,9 @@ class LocalReader implements LocalReaderController {
           });
         return;
       case 'home':
-        // 长按回本地书架（不再跳第一页）；短按显隐导航栏也由这里裁决——
-        // 系统键盘路径只拦截，否则长按 0.5 秒内会先误触发一次导航栏开关
+        // 长按回本地书架：本地书屋无首页，书架即首页，「默认页面」设置只
+        // 对在线书城生效。短按显隐导航栏也由这里裁决——系统键盘路径只拦截，
+        // 否则长按 0.5 秒内会先误触发一次导航栏开关
         this.handleButtonHold(button, phase, true,
           () => {
             this.closePanels();

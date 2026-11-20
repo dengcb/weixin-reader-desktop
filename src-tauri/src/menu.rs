@@ -846,19 +846,18 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
                 let _ = win.emit("show-toast", "100%");
             }
         }
-        // 遥控器主页键长按：回到当前书城首页（本地书由 local-reader 前端
-        // 跳书籍开头，不经过这里）。与「记住页」无关，永远去 home_url。
+        // 遥控器主页键长按：按全局「默认页面」设置回书城首页或书架（书架
+        // 未配置回退首页）。本地书由 local-reader 前端直接回本地书架——
+        // 本地书屋无首页，书架即首页，不经过这里也不受设置影响。
         "bookstore_shelf" => {
             let site_id = current_site_id(app);
             log::info!(target: "bookstore", "bookstore_shelf: site={site_id}");
             if site_id == "local" {
                 return Ok(());
             }
-            // 书架优先（manifest.site.shelf / 内置微信读书书架），未配置回退首页
-            let url = crate::sites::resolve_shelf_url(app, &site_id)
-                .or_else(|| crate::sites::resolve_home_url(app, &site_id));
+            let url = crate::sites::resolve_default_page_url(app, &site_id);
             let Some(url) = url else {
-                log::warn!(target: "bookstore", "bookstore_shelf: 未解析到 {site_id} 的书架/首页 URL");
+                log::warn!(target: "bookstore", "bookstore_shelf: 未解析到 {site_id} 的首页/书架 URL");
                 return Ok(());
             };
             log::info!(target: "bookstore", "bookstore_shelf: navigate {url}");

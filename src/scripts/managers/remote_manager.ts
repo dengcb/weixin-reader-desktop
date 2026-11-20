@@ -443,7 +443,7 @@ export class RemoteManager {
           () => void invoke('simulate_menu_click', { action: 'reader_wide' }).catch(() => {}));
         return;
       // 主页：短按显隐顶部导航栏（仅阅读页，原系统键盘路径语义），
-      // 长按 0.5s 回书架（manifest.site.shelf，缺省回退首页；任意页面）
+      // 长按 0.5s 回默认页面（Rust 按全局「默认页面」设置裁决首页/书架；任意页面）
       case 'home':
         this.handleButtonHold(event.button, event.phase, true,
           () => {
