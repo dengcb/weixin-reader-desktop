@@ -1,0 +1,30 @@
+{
+  "dedao": {
+    "version": "1.0.0",
+    "atrd": "/plugins/dedao.atrd"
+  },
+  "duokan": {
+    "version": "1.0.1",
+    "atrd": "/plugins/duokan.atrd"
+  },
+  "fanqie": {
+    "version": "1.0.0",
+    "atrd": "/plugins/fanqie.atrd"
+  },
+  "ireader": {
+    "version": "1.0.1",
+    "atrd": "/plugins/ireader.atrd"
+  },
+  "qidian": {
+    "version": "1.0.0",
+    "atrd": "/plugins/qidian.atrd"
+  },
+  "qimao": {
+    "version": "1.0.1",
+    "atrd": "/plugins/qimao.atrd"
+  },
+  "zread": {
+    "version": "1.0.0",
+    "atrd": "/plugins/zread.atrd"
+  }
+}

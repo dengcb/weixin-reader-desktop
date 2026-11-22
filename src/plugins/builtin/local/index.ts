@@ -22,6 +22,7 @@ export class LocalSiteRuntime implements ReaderSiteRuntime {
   isDoubleColumn(): boolean { return getLocalReaderController()?.isDoubleColumn() ?? true; }
   isAtBottom(): boolean { return getLocalReaderController()?.isAtBottom() ?? false; }
   getChapterProgress(): number { return getLocalReaderController()?.getChapterProgress() ?? 0; }
+  async getBookProgress() { return getLocalReaderController()?.getBookProgress() ?? null; }
   getChapters() { return getLocalReaderController()?.getChapters() ?? Promise.resolve([]); }
   nextPage(): void | Promise<void> { return getLocalReaderController()?.nextPage(); }
   prevPage(): void | Promise<void> { return getLocalReaderController()?.prevPage(); }

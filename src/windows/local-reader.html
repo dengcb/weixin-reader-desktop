@@ -88,17 +88,34 @@
     </div>
     <div class="style-fields" id="styleFields">
       <label class="style-field"><span>字体</span>
-        <select id="fontFamily">
-          <option value="system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif">系统默认</option>
-          <option value="Songti SC, STSong, serif">宋体</option>
-          <option value="Kaiti SC, STKaiti, serif">楷体</option>
-          <option value="PingFang SC, Microsoft YaHei, sans-serif">黑体</option>
-        </select>
+        <div class="select-wrap">
+          <select id="fontFamily">
+            <option value="system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif">系统默认</option>
+            <option value="Songti SC, STSong, serif">宋体</option>
+            <option value="Kaiti SC, STKaiti, serif">楷体</option>
+            <option value="PingFang SC, Microsoft YaHei, sans-serif">黑体</option>
+          </select>
+        </div>
       </label>
       <label class="style-field"><span>字号 <output id="fontSizeValue"></output></span><input id="fontSize" type="range" min="20" max="36" step="1"></label>
       <label class="style-field"><span>行间距 <output id="lineHeightValue"></output></span><input id="lineHeight" type="range" min="1.3" max="2.5" step="0.05"></label>
       <label class="style-field"><span>段间距 <output id="paragraphSpacingValue"></output></span><input id="paragraphSpacing" type="range" min="0" max="2.5" step="0.05"></label>
       <label class="style-field"><span>左右间距 <output id="pagePaddingXValue"></output></span><input id="pagePaddingX" type="range" min="0" max="60" step="4"></label>
+      <div class="style-field segment-field"><span>文字亮度</span>
+        <div class="segment-group" id="textBrightness">
+          <button type="button" data-value="1.1">柔和</button>
+          <button type="button" data-value="1.35">标准</button>
+          <button type="button" data-value="2.2">高亮</button>
+        </div>
+      </div>
+      <div class="style-field segment-field"><span>背景黑度</span>
+        <div class="segment-group" id="backgroundBlackness">
+          <button type="button" data-value="#232428">柔黑</button>
+          <button type="button" data-value="#16171a">深黑</button>
+          <button type="button" data-value="#000000">纯黑</button>
+        </div>
+      </div>
+      <p class="dark-only-hint">文字亮度与背景黑度仅深色主题生效</p>
       <button class="reset-button" id="resetStyle" type="button">恢复默认</button>
       <p class="fixed-layout-hint" id="fixedLayoutHint">固定版式图书保留原始排版，字体与间距设置不可用。</p>
     </div>

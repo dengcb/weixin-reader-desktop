@@ -49,9 +49,12 @@ export class TitleBarManager {
   private apply(): void {
     if (this.destroyed) return;
     const settings = settingsStore.get();
+    // 本地阅读器没有独立外导航栏，其 hideNavbar 藏的是标题行本身；
+    // 标题行应常驻（对齐在线书城 canvas 标题行），故沉浸不跟随 hideNavbar。
+    const isLocal = this.siteContext.siteId === 'local';
     const hidden = computeImmersiveHidden(
       settings.immersiveTitleBar,
-      settings.hideNavbar,
+      isLocal ? true : settings.hideNavbar,
       this.isReader,
     );
     if (hidden === this.lastHidden) return;

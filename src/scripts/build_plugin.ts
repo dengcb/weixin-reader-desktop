@@ -6,7 +6,7 @@
  * 示例: bun src/scripts/build_plugin.ts weread
  */
 
-import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { $ } from 'bun';
 
@@ -39,6 +39,40 @@ function resolvePluginDir(pluginId: string): string | null {
     return builtinDir;
   }
   return null;
+}
+
+/**
+ * 生成 plugins/index.json：外部插件版本索引，应用内「检查更新」的唯一数据源。
+ * 版本取自 .atrd 内的 manifest（构建产物），不读源码 manifest——
+ * 保证索引与可下载产物严格一致，杜绝"源码已改、产物未打包"的误报。
+ * 本文件由构建脚本维护，禁止手工编辑。
+ */
+async function updatePluginIndex(): Promise<void> {
+  const entries: Record<string, { version: string; atrd: string }> = {};
+  for (const file of readdirSync(EXTERNAL_PLUGINS_DIR)) {
+    if (!file.endsWith('.atrd')) continue;
+    const id = file.slice(0, -'.atrd'.length);
+    let version: string | null = null;
+    try {
+      const manifestText = await $`unzip -p ${join(EXTERNAL_PLUGINS_DIR, file)} manifest.json`.text();
+      version = JSON.parse(manifestText).version ?? null;
+    } catch {
+      version = null;
+    }
+    if (typeof version !== 'string' || !version) {
+      console.warn(`  ⚠ 跳过 ${file}：无法读取包内 manifest 版本`);
+      continue;
+    }
+    entries[id] = { version, atrd: `/plugins/${file}` };
+  }
+  const sorted = Object.fromEntries(
+    Object.keys(entries).sort().map(key => [key, entries[key]])
+  );
+  writeFileSync(
+    join(EXTERNAL_PLUGINS_DIR, 'index.json'),
+    JSON.stringify(sorted, null, 2) + '\n'
+  );
+  console.log(`  ✓ 已生成 plugins/index.json（${Object.keys(sorted).length} 个插件）`);
 }
 
 async function buildPlugin(pluginId: string): Promise<void> {
@@ -143,6 +177,7 @@ async function buildPlugin(pluginId: string): Promise<void> {
   console.log(`   Size: ${(Bun.file(outputFile).size / 1024).toFixed(1)} KB`);
   if (isExternal) {
     console.log(`   📤 此文件会随 plugins 目录上传 GitHub，用户可直接下载安装\n`);
+    await updatePluginIndex();
   } else {
     console.log(`   📁 此文件在 release/ 目录（被 git 忽略），需手动分发\n`);
   }

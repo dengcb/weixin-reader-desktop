@@ -95,6 +95,7 @@ interface QidianPageData {
   bookInfo?: {
     bookId?: number | string;
     bookName?: string;
+    updChapterName?: string;
   };
   chapterInfo?: {
     chapterId?: number | string;
@@ -113,6 +114,7 @@ interface QidianChapterData {
   chapterId: string;
   chapterName: string;
   chapterIndex: number;
+  totalChapters: number;
   prevId: string;
   nextId: string;
 }
@@ -293,11 +295,12 @@ export class QidianPlugin implements ReaderPlugin {
     if (!chapter) return null;
     const position = this.getCatalogPosition();
     const chapterIdx = position ? position.index + 1 : chapter.chapterIndex;
+    const total = position ? position.total : chapter.totalChapters;
     const summary = [chapter.bookName, chapter.chapterName]
       .filter(part => part.length > 0)
       .join(' · ');
     return {
-      ...(position ? { progress: Math.round((chapterIdx / position.total) * 100) } : {}),
+      ...(total > 0 && chapterIdx > 0 ? { progress: Math.min(100, Math.round((chapterIdx / total) * 100)) } : {}),
       ...(chapterIdx > 0 ? { chapterIdx } : {}),
       ...(summary ? { summary } : {}),
     };
@@ -690,6 +693,7 @@ export class QidianPlugin implements ReaderPlugin {
     let chapterIndex = 0;
     let prevId = '';
     let nextId = '';
+    let totalChapters = 0;
 
     const contextElement = document.getElementById('vite-plugin-ssr_pageContext');
     if (contextElement?.textContent) {
@@ -709,6 +713,9 @@ export class QidianPlugin implements ReaderPlugin {
         const chapterInfo = pageData?.chapterInfo;
         if (bookInfo?.bookId) bookId = String(bookInfo.bookId);
         if (bookInfo?.bookName) bookName = bookInfo.bookName;
+        // 阅读页不加载目录 DOM，总章数取最新章节名「第N章」的序号（连载书≈全书章数）。
+        const updMatch = String(bookInfo?.updChapterName ?? '').match(/第\s*(\d+)\s*章/);
+        if (updMatch) totalChapters = Number(updMatch[1]);
         if (chapterInfo?.chapterId) chapterId = String(chapterInfo.chapterId);
         if (chapterInfo?.chapterName) chapterName = chapterInfo.chapterName;
         if (Number(chapterInfo?.seq) > 0) chapterIndex = Number(chapterInfo?.seq);
@@ -721,20 +728,27 @@ export class QidianPlugin implements ReaderPlugin {
 
     if (!chapterName) chapterName = this.getDomChapterTitle();
     if (!chapterIndex) {
-      const order = chapterName.match(/^(\d+)[.、\s]/);
+      const order = chapterName.match(/第\s*(\d+)\s*章/) ?? chapterName.match(/^(\d+)[.、\s]/);
       if (order) chapterIndex = Number(order[1]);
     }
+    if (!chapterIndex) {
+      const titleMatch = document.title.match(/第\s*(\d+)\s*章/);
+      if (titleMatch) chapterIndex = Number(titleMatch[1]);
+    }
 
-    this.chapterData = {
+    const data: QidianChapterData = {
       bookId,
       bookName,
       chapterId,
       chapterName,
       chapterIndex,
+      totalChapters,
       prevId,
       nextId,
     };
-    return this.chapterData;
+    // SPA 异步渲染：首次读取可能为空，不完整时不缓存，待重试重读就绪后再缓存。
+    if (chapterIndex > 0 || chapterName) this.chapterData = data;
+    return data;
   }
 
   private getDomChapterTitle(): string {

@@ -23,6 +23,8 @@ export interface GlobalSettings {
   hideCursor?: boolean;
   /** 沉浸标题栏：开启后跟随当前站点 hideNavbar 隐藏原生标题栏（默认关）。 */
   immersiveTitleBar?: boolean;
+  /** 显示阅读比例：在阅读页标题行右端显示全书大概进度百分比（默认关）。 */
+  showReadingPercent?: boolean;
   enableRemoteController?: boolean;
   enabledPlugins?: string[];
   autoFlip?: {
@@ -63,6 +65,7 @@ const defaultDocument = (): AppSettings => ({
     rememberSite: true,
     hideCursor: false,
     immersiveTitleBar: false,
+    showReadingPercent: false,
     autoFlip: { active: false, interval: 15, keepAwake: true },
   },
   sites: {},
@@ -214,6 +217,7 @@ private async initialize(generation: number): Promise<void> {
       'lastSiteId',
       'hideCursor',
       'immersiveTitleBar',
+      'showReadingPercent',
       'enableRemoteController',
       'enabledPlugins',
       'autoFlip',

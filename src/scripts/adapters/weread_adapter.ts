@@ -214,6 +214,17 @@ export class WeReadAdapter extends BaseSiteAdapter {
     return this.progressTracker.getCurrentProgress();
   }
 
+  /**
+   * 获取全书大概进度（按章节字数加权，仅供显示）
+   */
+  async getBookProgress(): Promise<{ progress?: number } | null> {
+    const progress = this.progressTracker?.getBookPercent();
+    if (progress === null || progress === undefined) {
+      return null;
+    }
+    return { progress };
+  }
+
   // ==================== 章节导航 ====================
 
   getNextChapterSelector(): string {

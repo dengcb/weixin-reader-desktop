@@ -6,6 +6,7 @@ import { BookstoreSwitcherManager } from '../managers/bookstore_switcher_manager
 import { IPCManager } from '../managers/ipc_manager';
 import { LinkManager } from '../managers/link_manager';
 import { MenuManager } from '../managers/menu_manager';
+import { ReadingPercentManager } from '../managers/reading_percent_manager';
 import { RemoteManager } from '../managers/remote_manager';
 import { StyleManager } from '../managers/style_manager';
 import { ThemeManager } from '../managers/theme_manager';
@@ -99,6 +100,8 @@ export class AppRuntime {
     const nativeTheme = active?.manifest.capabilities.nativeTheme === true;
     if (!isReader && !nativeTheme) create('ThemeManager', () => new ThemeManager());
     create('StyleManager', () => new StyleManager());
+    // 阅读比例徽章：全局开关 showReadingPercent，在线与本地阅读页共用。
+    create('ReadingPercentManager', () => new ReadingPercentManager());
   }
 
   private schedulePluginReload(): void {

@@ -14,6 +14,7 @@ export interface LocalReaderController {
   forward(): void | Promise<void>;
   getChapters(): Promise<Chapter[]>;
   getChapterProgress(): number;
+  getBookProgress(): { progress?: number } | null;
   isAtBottom(): boolean;
 }
 

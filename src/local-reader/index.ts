@@ -106,11 +106,37 @@ interface LocalTypography {
   lineHeight: number;
   paragraphSpacing: number;
   pagePaddingX: number;
+  /** 文字亮度（深色主题生效）：柔和/标准/高亮，对齐微信读书样式面板档位。 */
+  textBrightness: number;
+  /** 背景黑度（深色主题生效）：柔黑/深黑/纯黑，对齐微信读书样式面板档位。 */
+  backgroundBlackness: string;
 }
 
 // 系统默认字体：macOS 解析为苹方，Windows 解析为 Segoe UI + 微软雅黑，
 // 无版权依赖，也无需缓存内置字体。
 const SYSTEM_FONT = 'system-ui, -apple-system, PingFang SC, Microsoft YaHei, sans-serif';
+
+// 文字亮度/背景黑度档位与微信读书样式面板（weread_style_panel.ts）完全一致。
+const TEXT_BRIGHTNESS_PRESETS = [
+  { label: '柔和', value: 1.1 },
+  { label: '标准', value: 1.35 },
+  { label: '高亮', value: 2.2 },
+] as const;
+const DEFAULT_TEXT_BRIGHTNESS = 1.35;
+// 文字亮度直接定色（不做 brightness 叠加，旧基色近白会饱和看不出差异）：
+// 柔和暗灰 / 标准暖白（原默认）/ 高亮纯白。键沿用亮度档位值。
+const TEXT_BRIGHTNESS_COLORS: Record<number, string> = {
+  1.1: '#a8a59d',
+  1.35: '#dedbd2',
+  2.2: '#ffffff',
+};
+
+const READING_BACKGROUND_PRESETS = [
+  { label: '柔黑', value: '#232428' },
+  { label: '深黑', value: '#16171a' },
+  { label: '纯黑', value: '#000000' },
+] as const;
+const DEFAULT_READING_BACKGROUND = '#16171a';
 
 const DEFAULT_TYPOGRAPHY: LocalTypography = {
   columnMode: 'double',
@@ -120,11 +146,22 @@ const DEFAULT_TYPOGRAPHY: LocalTypography = {
   lineHeight: 1.8,
   paragraphSpacing: 1,
   pagePaddingX: 20,
+  textBrightness: DEFAULT_TEXT_BRIGHTNESS,
+  backgroundBlackness: DEFAULT_READING_BACKGROUND,
 };
 
 // 正文默认细体：macOS 苹方/宋体、Windows 雅黑均有 Light 字重可用；
 // 个别无 Light 变体的字体会由浏览器回退到最接近字重，属可接受的降级。
 const CONTENT_FONT_WEIGHT = 300;
+
+// 滑杆已选进度填充：把当前值换算成百分比写入 --fill，驱动轨道渐变。
+const paintRangeFill = (input: HTMLInputElement): void => {
+  const min = Number(input.min || 0);
+  const max = Number(input.max || 100);
+  const value = Number(input.value);
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  input.style.setProperty('--fill', `${Math.min(100, Math.max(0, pct))}%`);
+};
 
 const LOCAL_FONTS = new Set([
   SYSTEM_FONT,
@@ -394,6 +431,12 @@ class LocalReader implements LocalReaderController {
       lineHeight: boundedNumber(config.lineHeight, 1.3, 2.5, DEFAULT_TYPOGRAPHY.lineHeight),
       paragraphSpacing: boundedNumber(config.paragraphSpacing, 0, 2.5, DEFAULT_TYPOGRAPHY.paragraphSpacing),
       pagePaddingX: boundedNumber(config.pagePaddingX, 0, 60, DEFAULT_TYPOGRAPHY.pagePaddingX),
+      textBrightness: TEXT_BRIGHTNESS_PRESETS.some(preset => preset.value === config.textBrightness)
+        ? (config.textBrightness as number)
+        : DEFAULT_TEXT_BRIGHTNESS,
+      backgroundBlackness: READING_BACKGROUND_PRESETS.some(preset => preset.value === config.backgroundBlackness)
+        ? (config.backgroundBlackness as string)
+        : DEFAULT_READING_BACKGROUND,
     };
   }
 
@@ -657,7 +700,7 @@ class LocalReader implements LocalReaderController {
     if (this.fixedLayout) renderer.setAttribute('zoom', 'fit-page');
     else {
       renderer.setAttribute('flow', 'paginated');
-      renderer.setAttribute('margin', '54px');
+      renderer.setAttribute('margin', '66px');
       renderer.setAttribute('gap', '3%');
       renderer.setAttribute('max-block-size', '1440px');
     }
@@ -1046,6 +1089,8 @@ class LocalReader implements LocalReaderController {
     this.bindStyleInput('lineHeight', 'lineHeight', Number);
     this.bindStyleInput('paragraphSpacing', 'paragraphSpacing', Number);
     this.bindStyleInput('pagePaddingX', 'pagePaddingX', Number);
+    this.bindStyleSegments('textBrightness', 'textBrightness', Number);
+    this.bindStyleSegments('backgroundBlackness', 'backgroundBlackness', value => value);
     if (this.fixedLayout) {
       element<HTMLButtonElement>('columnButton').disabled = true;
       element('styleFields').classList.add('fixed-layout');
@@ -1112,17 +1157,24 @@ class LocalReader implements LocalReaderController {
 
   private applyTypography(): void {
     document.body.dataset.theme = this.typography.theme;
-    element('themeLabel').textContent = this.typography.theme === 'light' ? '浅色' : '深色';
-    element('columnLabel').textContent = this.typography.columnMode === 'double' ? '双栏' : '单列';
+    element('themeLabel').textContent = this.typography.theme === 'light' ? '深色' : '浅色';
+    element('columnLabel').textContent = this.typography.columnMode === 'double' ? '单栏' : '双栏';
     element('columnButton').dataset.mode = this.typography.columnMode;
     if (!this.fixedLayout && this.renderer) {
       this.renderer.setAttribute('max-column-count', this.typography.columnMode === 'double' ? '2' : '1');
       this.applyPageSize();
       const dark = this.typography.theme === 'dark';
+      // 深色：背景黑度档换底色（放 html），文字亮度档用 brightness 提亮正文
+      // body（body 背景透明，底色不被提亮），与微信读书 canvas 提亮效果一致。
+      const bgColor = dark ? this.typography.backgroundBlackness : '#f5f1e8';
+      // 文字亮度直接定色：柔和暗灰 / 标准暖白 / 高亮纯白（深色生效）。
+      const textColor = dark
+        ? (TEXT_BRIGHTNESS_COLORS[this.typography.textBrightness] ?? '#dedbd2')
+        : '#2e2b26';
       const style = `
-        :root { color-scheme: ${dark ? 'dark' : 'light'}; background: ${dark ? '#262522' : '#f5f1e8'} !important; }
-        html, body { background: ${dark ? '#262522' : '#f5f1e8'} !important; color: ${dark ? '#dedbd2' : '#2e2b26'} !important; }
-        body { box-sizing: border-box; padding-inline: ${this.typography.pagePaddingX}px !important; font-family: ${this.typography.fontFamily} !important; font-weight: ${CONTENT_FONT_WEIGHT} !important; font-size: ${this.typography.fontSize}px !important; line-height: ${this.typography.lineHeight} !important; }
+        :root { color-scheme: ${dark ? 'dark' : 'light'}; background: ${bgColor} !important; }
+        html { background: ${bgColor} !important; }
+        body { background: ${dark ? 'transparent' : bgColor} !important; color: ${textColor} !important; box-sizing: border-box; padding-inline: ${this.typography.pagePaddingX}px !important; font-family: ${this.typography.fontFamily} !important; font-weight: ${CONTENT_FONT_WEIGHT} !important; font-size: ${this.typography.fontSize}px !important; line-height: ${this.typography.lineHeight} !important; }
         /* KindleGen 转制的书（MOBI7 常见）用 <font color> presentation hint
            或 inline style 钉死文字颜色：元素自身声明胜过继承的主题色，暗色
            主题下变成深底深字（「黑浮层」）。主题化阅读统一收回；链接例外，
@@ -1158,6 +1210,16 @@ class LocalReader implements LocalReaderController {
         a { color: ${dark ? '#60c38e' : '#349f66'}; }
       `;
       this.renderer.setStyles?.(style);
+      // 背景黑度铺满整个窗口（页面底 + 顶栏），与正文同色，不做留白层次。
+      const pageBg = document.getElementById('wxrd-local-page-bg') ?? (() => {
+        const node = document.createElement('style');
+        node.id = 'wxrd-local-page-bg';
+        document.head.appendChild(node);
+        return node;
+      })();
+      pageBg.textContent = dark
+        ? `body { background: ${this.typography.backgroundBlackness} !important; } .local-navbar { background: ${this.typography.backgroundBlackness} !important; } foliate-paginator::part(filter), foliate-fxl::part(filter) { background: ${this.typography.backgroundBlackness} !important; }`
+        : '';
     }
     const values: Array<[string, string | number]> = [
       ['fontFamily', this.typography.fontFamily],
@@ -1169,9 +1231,33 @@ class LocalReader implements LocalReaderController {
     for (const [id, value] of values) {
       const input = element<HTMLInputElement | HTMLSelectElement>(id);
       input.value = String(value);
+      if (input instanceof HTMLInputElement && input.type === 'range') paintRangeFill(input);
       const output = document.getElementById(`${id}Value`);
       if (output) output.textContent = id === 'fontSize' || id === 'pagePaddingX' ? `${value}px` : String(value);
     }
+    this.syncSegments('textBrightness', String(this.typography.textBrightness));
+    this.syncSegments('backgroundBlackness', this.typography.backgroundBlackness);
+  }
+
+  private bindStyleSegments<K extends keyof LocalTypography>(
+    id: string,
+    key: K,
+    convert: (value: string) => LocalTypography[K],
+  ): void {
+    element(id).querySelectorAll<HTMLButtonElement>('button[data-value]').forEach(button => {
+      button.addEventListener('click', () => {
+        void this.updateTypography({ [key]: convert(button.dataset.value ?? '') } as Pick<LocalTypography, K>);
+      });
+    });
+  }
+
+  private syncSegments(id: string, value: string): void {
+    const group = document.getElementById(id);
+    if (!group) return;
+    group.querySelectorAll<HTMLButtonElement>('button[data-value]').forEach(button => {
+      button.classList.toggle('selected', button.dataset.value === value);
+      button.disabled = this.fixedLayout;
+    });
   }
 
   private togglePanel(id: 'chapterPanel' | 'stylePanel'): void {
@@ -1699,6 +1785,11 @@ class LocalReader implements LocalReaderController {
     return this.currentSection >= (this.book?.sections.length ?? 1) - 1 && this.currentFraction >= .995;
   }
   getChapterProgress(): number { return Math.round(this.currentFraction * 1000) / 10; }
+  getBookProgress(): { progress?: number } | null {
+    if (!this.ready) return null;
+    const fraction = computeBookFraction(this.book?.sections ?? [], this.currentSection, this.currentFraction);
+    return { progress: Math.round(fraction * 100) };
+  }
   getChapters(): Promise<Chapter[]> {
     return Promise.resolve(this.toc.map((item, index) => ({
       id: item.href,

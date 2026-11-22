@@ -45,6 +45,7 @@ pub fn default_settings() -> Value {
             "defaultPage": "home",
             "hideCursor": false,
             "immersiveTitleBar": false,
+            "showReadingPercent": false,
             "voicePageTurn": false,
             "voicePageTurnPhrase": "翻页",
             "autoFlip": {

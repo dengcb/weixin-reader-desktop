@@ -154,7 +154,9 @@ class WeReadSiteRuntime implements ReaderSiteRuntime {
     return this.getAdapter().getChapterProgress?.() ?? 0;
   }
 
-  getBookProgress(): Promise<BookProgress | null> { return Promise.resolve(null); }
+  getBookProgress(): Promise<BookProgress | null> {
+    return this.getAdapter().getBookProgress?.() ?? Promise.resolve(null);
+  }
 
   clickNextChapter(): void {
     this.getAdapter().clickNextChapter?.();

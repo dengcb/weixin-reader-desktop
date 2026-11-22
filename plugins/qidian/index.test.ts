@@ -5,7 +5,7 @@ import { QidianPlugin } from './index';
 const READER_URL = '/chapter/1046978342/896610636/';
 const CHAPTER_ID = '896610636';
 
-const readerMarkup = (withCatalog = true) => {
+const readerMarkup = (withCatalog = true, updChapterName?: string) => {
   document.body.innerHTML = `
     <nav id="navbar"><a href="/">起点中文网</a></nav>
     <div id="reader">
@@ -44,7 +44,7 @@ const readerMarkup = (withCatalog = true) => {
       pageContext: {
         pageProps: {
           pageData: {
-            bookInfo: { bookId: 1046978342, bookName: '测试之书' },
+            bookInfo: { bookId: 1046978342, bookName: '测试之书', ...(updChapterName ? { updChapterName } : {}) },
             chapterInfo: {
               chapterId: 896610636,
               chapterName: '2.淬体术（新书求各种支持）',
@@ -180,6 +180,18 @@ describe('Qidian reading progress', () => {
 
     expect(plugin.getChapterProgress()).toBe(0);
     expect(await plugin.getBookProgress()).toEqual({
+      chapterIdx: 2,
+      summary: '测试之书 · 2.淬体术（新书求各种支持）',
+    });
+  });
+
+  it('derives book progress from the latest chapter name when catalog is absent', async () => {
+    history.replaceState({}, '', READER_URL);
+    readerMarkup(false, '第3章 大结局');
+    const plugin = new QidianPlugin();
+
+    expect(await plugin.getBookProgress()).toEqual({
+      progress: 67,
       chapterIdx: 2,
       summary: '测试之书 · 2.淬体术（新书求各种支持）',
     });

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::atomic::AtomicU64;
 use tauri::{menu::MenuItemKind, AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
+use crate::plugin_updates;
+
 /// 摸鱼模式状态：true = 当前隐藏中
 static STEALTH_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -796,6 +798,83 @@ pub async fn uninstall_plugin(app: AppHandle, plugin_id: String) -> Result<(), S
     refresh_app_menu(&app);
 
     Ok(())
+}
+
+/// 检查外部插件更新：拉取远端版本索引并与已安装版本比较
+#[tauri::command]
+pub async fn check_plugin_updates(
+    app: AppHandle,
+) -> Result<Vec<plugin_updates::PluginUpdateStatus>, String> {
+    plugin_updates::check_updates(&app)
+}
+
+/// 一键更新外部插件：下载远端 .atrd → 校验（包内 id 一致、版本更高）→ 走既有安装管线覆盖。
+/// 「更新」按钮的点击即为覆盖确认，不再弹替换确认框；任何校验失败都不会触碰已装版本。
+#[tauri::command]
+pub async fn update_plugin(
+    app: AppHandle,
+    plugin_id: String,
+) -> Result<plugin_manager::PluginInfo, String> {
+    use crate::plugin_updates::{download_package, fetch_update_index, is_newer_version};
+
+    let installed = plugin_manager::get_installed_plugins(&app)?
+        .into_iter()
+        .find(|plugin| plugin.id == plugin_id)
+        .ok_or_else(|| format!("未安装插件：{plugin_id}"))?;
+
+    let index = fetch_update_index()?;
+    let entry = index
+        .get(&plugin_id)
+        .ok_or_else(|| format!("更新索引中不存在「{plugin_id}」"))?;
+    let atrd_path = entry
+        .get("atrd")
+        .and_then(|value| value.as_str())
+        .ok_or("更新索引缺少 atrd 下载路径")?;
+    let remote_version = entry
+        .get("version")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if !is_newer_version(remote_version, &installed.version) {
+        return Err(format!(
+            "远端版本 {remote_version} 不高于已安装 {}，无需更新",
+            installed.version
+        ));
+    }
+
+    println!("[PluginUpdate] Downloading {atrd_path} for {plugin_id}");
+    let bytes = download_package(atrd_path)?;
+    let tmp = std::env::temp_dir().join(format!("atreader-update-{plugin_id}.atrd"));
+    std::fs::write(&tmp, &bytes).map_err(|e| format!("写入临时文件失败：{e}"))?;
+    let tmp_path = tmp.display().to_string();
+
+    let install = (|| {
+        // 包内 manifest 是权威：id 必须一致、版本必须更高，
+        // 防止索引与产物短暂不同步时装错包或降级。
+        let manifest = plugin_manager::inspect_plugin_package(&tmp_path)?;
+        if manifest.id != plugin_id {
+            return Err(format!("更新包 ID（{}）与目标插件不一致", manifest.id));
+        }
+        if !is_newer_version(&manifest.version, &installed.version) {
+            return Err(format!(
+                "更新包版本 {} 不高于已安装 {}",
+                manifest.version, installed.version
+            ));
+        }
+        let conflicts = plugin_manager::get_install_conflicts(&app, &manifest)?;
+        plugin_manager::reject_blocking_install_conflicts(&conflicts)?;
+        // 同 ID 覆盖属预期更新路径，不走 confirm_plugin_replacement 确认弹窗。
+        let result = plugin_manager::install_plugin_from_file(&app, &tmp_path)?;
+        enable_plugin_in_settings(&app, &result.id)?;
+        Ok(result)
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    let result = install?;
+
+    println!("[PluginUpdate] Updated {} -> v{}", result.id, result.version);
+    // 触发主窗口热更新（原地换插件实例）与书店菜单重建
+    let _ = app.emit("plugins-updated", ());
+    refresh_app_menu(&app);
+    Ok(result)
 }
 
 /// 获取已安装的插件列表

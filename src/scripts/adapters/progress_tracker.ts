@@ -737,6 +737,33 @@ export class ProgressTracker extends BaseManager {
     return this.currentProgress;
   }
 
+  /**
+   * 全书大概进度百分比（0-100）：按各章字数加权——前面章节字数全计
+   * + 当前章字数 × 章内进度。仅供显示，不参与进度算法。
+   * 未初始化或无章节数据时返回 null；全书字数缺失时降级为章节序号比例。
+   */
+  getBookPercent(): number | null {
+    if (!this.currentBookToken) return null;
+    const chapters = chapterManager.getChapters();
+    if (!chapters.length) return null;
+    const position = chapters.findIndex(ch => ch.chapterIdx === this.currentChapterIdx);
+    if (position < 0) return null;
+    const chapterPercent = Math.min(100, Math.max(0, this.currentProgress));
+    let total = 0;
+    let before = 0;
+    for (let i = 0; i < chapters.length; i++) {
+      const weight = Math.max(0, chapters[i].wordCount);
+      total += weight;
+      if (i < position) before += weight;
+    }
+    if (total <= 0) {
+      return Math.min(100, Math.max(0, Math.round(((position + 1) / chapters.length) * 100)));
+    }
+    const currentWeight = Math.max(0, chapters[position].wordCount);
+    const fraction = (before + currentWeight * (chapterPercent / 100)) / total;
+    return Math.min(100, Math.max(0, Math.round(fraction * 100)));
+  }
+
   // =====================================================
   // 清理
   // =====================================================

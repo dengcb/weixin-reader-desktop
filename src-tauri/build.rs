@@ -43,6 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "install_plugin",
             "uninstall_plugin",
             "get_installed_plugins",
+            "check_plugin_updates",
+            "update_plugin",
             "get_runtime_plugin",
             "load_plugin_for_edit",
             "save_plugin",

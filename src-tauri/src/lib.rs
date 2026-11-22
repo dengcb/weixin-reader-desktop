@@ -14,6 +14,7 @@ mod menu_model;
 pub mod monitor;
 mod plugin_installer;
 pub mod plugin_manager;
+mod plugin_updates;
 mod reading_progress;
 #[cfg(target_os = "macos")]
 mod media_key_suppressor;
@@ -874,6 +875,8 @@ pub fn run() {
             commands::install_plugin,
             commands::uninstall_plugin,
             commands::get_installed_plugins,
+            commands::check_plugin_updates,
+            commands::update_plugin,
             commands::get_runtime_plugin,
             commands::load_plugin_for_edit,
             commands::save_plugin,

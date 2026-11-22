@@ -6,8 +6,8 @@
 
 | 层级 | 结果 | 说明 |
 |---|---:|---|
-| Bun DOM/契约测试 | 544 通过 | 57 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
-| Rust 单元测试 | 141 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新、语音翻页触发判定、遥控器 HID/语音与 Tauri mock |
+| Bun DOM/契约测试 | 611 通过 | 63 个 TypeScript 测试文件，happy-dom + Tauri 静态契约 |
+| Rust 单元测试 | 145 通过 | 设置、阅读位置、插件安全、命令边界、启动/菜单/更新、语音翻页触发判定、遥控器 HID/语音、插件更新版本比较与 Tauri mock |
 | Rust 集成测试 | 6 通过 | `src-tauri/tests/plugin_test.rs` |
 | 真机硬件测试 | 1 忽略 | 需要真实 macOS 显示会话 |
 | 模拟 E2E | 6 通过 | Python Playwright + 临时 Chromium，本地 `test-page.html` |
