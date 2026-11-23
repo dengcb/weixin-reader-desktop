@@ -221,6 +221,23 @@ pub fn is_menu_bar_visible() -> bool {
     !MENU_HIDDEN.load(Ordering::SeqCst)
 }
 
+/// 解除菜单栏隐藏（持久）：显示菜单栏并把 Ctrl+H 持久意愿复位为可见。
+/// 供「阅读样式」等需要菜单可见的动作调用——隐藏态下先解除隐藏再执行，
+/// 否则用户无从操作菜单。与 toggle 的显示路径同构（含 is_menu_visible 自愈）。
+#[cfg(target_os = "windows")]
+pub fn show_menu_bar_persistent<R: Runtime>(app: &AppHandle<R>) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    if !MENU_HIDDEN.load(Ordering::SeqCst) {
+        return;
+    }
+    if set_menu_bar_hidden(app, &win, false) {
+        MENU_HIDDEN.store(false, Ordering::SeqCst);
+        crate::menu::set_menu_check_state(app, "toggle_menu", false);
+    }
+}
+
 /// 跨层教训（用户两轮真机反馈驱动）：tauri 2.11 的 hide_menu/show_menu 把
 /// muda 层错误（Err(NotInitialized) 等）在内部 let _ 吞掉、永远返回 Ok——
 /// Rust 侧无法通过 Result 察觉物理失败。菜单栏切换的真实状态必须用

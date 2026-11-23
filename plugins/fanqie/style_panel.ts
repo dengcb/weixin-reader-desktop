@@ -298,6 +298,16 @@ const mountPanel = (api: PluginAPI, host: Element): (() => void) => {
   };
 };
 
+/// 供菜单「阅读 → 阅读样式」调用：面板未开时点击工具栏样式按钮打开。
+/// 与微信读书 openReadingStyle 同构（按钮存在即返回 true，能力据此点亮菜单）。
+export const openFanqieStylePanel = (): boolean => {
+  const button = document.getElementById(STYLE_BUTTON_ID) as HTMLButtonElement | null;
+  if (!button) return false;
+  const panel = document.getElementById(STYLE_PANEL_ID) as HTMLElement | null;
+  if (!panel || panel.hidden) button.click();
+  return true;
+};
+
 // 面板样式：对照番茄原生工具栏取样（浅底 #fafafa / 深色 #262626、圆角 8px、
 // 文字浅 #252525 / 深 #b3b3b3、滑杆粗圆轨道 rgba(0,0,0,.05)）。
 const PANEL_CSS = `

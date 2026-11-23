@@ -810,9 +810,17 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
         "reader_prev_page"
         | "reader_next_page"
         | "reader_prev_chapter"
-        | "reader_next_chapter"
-        | "reader_style" => {
+        | "reader_next_chapter" => {
             if let Some(win) = app.get_webview_window("main") {
+                let _ = win.emit("menu-action", id);
+            }
+        }
+        "reader_style" => {
+            if let Some(win) = app.get_webview_window("main") {
+                // 菜单栏隐藏时先解除隐藏，再弹出阅读样式面板，
+                // 否则隐藏态下用户无从操作菜单、样式调不出来。
+                #[cfg(target_os = "windows")]
+                crate::commands::show_menu_bar_persistent(app);
                 let _ = win.emit("menu-action", id);
             }
         }

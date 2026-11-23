@@ -24,7 +24,7 @@ import {
   FANQIE_PAGED_CLASS,
   FanqiePaginator,
 } from './pagination';
-import { setupFanqieStylePanel } from './style_panel';
+import { setupFanqieStylePanel, openFanqieStylePanel } from './style_panel';
 
 const PREVIOUS_CHAPTER_FLAG = 'atreader-fanqie-open-previous-at-end';
 const CHAPTER_START_FLAG = 'atreader-fanqie-open-chapter-at-start';
@@ -55,7 +55,7 @@ const DOUBLE_COLUMN_ICON = `
 const FANQIE_RUNTIME_MANIFEST: PluginManifest = {
   id: 'fanqie',
   name: '番茄小说',
-  version: '1.0.1',
+  version: '1.0.2',
   description: '番茄小说网站支持插件（官方范例）',
   author: '艾特阅读团队',
   homepage: 'https://github.com/dengcb/weixin-reader-desktop',
@@ -271,6 +271,10 @@ export class FanqiePlugin implements ReaderPlugin {
 
   getReaderMenuItems(): string[] {
     return ['reader_wide', 'hide_toolbar', 'hide_navbar', 'auto_flip'];
+  }
+
+  openReadingStyle(): boolean {
+    return openFanqieStylePanel();
   }
 
   private readonly handleKeyboard = (event: KeyboardEvent): void => {
