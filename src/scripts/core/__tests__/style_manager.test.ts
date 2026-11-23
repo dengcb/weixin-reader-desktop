@@ -189,6 +189,29 @@ describe('StyleManager ownership and cleanup', () => {
     expect(runtime.getWideModeCSS).toHaveBeenLastCalledWith(true, 94);
   });
 
+  it('工具栏显隐不触发重新分页 resize，宽版切换才触发', () => {
+    const { runtime } = createRuntime('manager', 'weread');
+    const registry = PluginRegistry.getInstance();
+    registry.register(runtime);
+    registry.setActivePlugin(runtime.id);
+    settingsStore.get = () => baseSettings({ readerWide: true, hideToolbar: true, hideNavbar: true });
+    manager = new StyleManager();
+
+    const dispatchSpy = spyOn(window, 'dispatchEvent');
+    const resizeCount = () => dispatchSpy.mock.calls.filter(call => (call[0] as Event).type === 'resize').length;
+
+    // 仅工具栏显隐（浮层 display:none，正文尺寸不变）→ 不应重排
+    settingsStore.get = () => baseSettings({ readerWide: true, hideToolbar: false, hideNavbar: true });
+    settingsListener?.(settingsStore.get());
+    expect(resizeCount()).toBe(0);
+
+    // 宽版切换（正文宽度变化）→ 需要重新分页
+    dispatchSpy.mockClear();
+    settingsStore.get = () => baseSettings({ readerWide: false, hideToolbar: false, hideNavbar: true });
+    settingsListener?.(settingsStore.get());
+    expect(resizeCount()).toBeGreaterThanOrEqual(1);
+  });
+
   it('follows the WeRead page theme and restores the system theme on destroy', async () => {
     const { runtime } = createRuntime('manager', 'weread');
     const registry = PluginRegistry.getInstance();

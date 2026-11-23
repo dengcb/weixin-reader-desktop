@@ -133,7 +133,6 @@ const mountPanel = (api: PluginAPI): (() => void) => {
   const button = document.createElement('button');
   button.id = STYLE_BUTTON_ID;
   button.type = 'button';
-  button.title = '阅读样式';
   button.className = 'readerControls_item';
   button.setAttribute('aria-label', '阅读样式');
   button.innerHTML = `
@@ -148,6 +147,18 @@ const mountPanel = (api: PluginAPI): (() => void) => {
       <rect x="7" y="16" width="4" height="5" rx="1.5"/>
       <rect x="12" y="17.5" width="8" height="2" rx="1"/>
     </svg></span>`;
+
+  // 悬停提示学官方 wr_tooltip：按钮包进 .wr_tooltip_container，左侧平行灰字淡入，
+  // 替代原生 title 的系统 hint（与官方工具栏按钮一致）。
+  const tooltipWrap = document.createElement('div');
+  tooltipWrap.className = 'wr_tooltip_container';
+  tooltipWrap.id = 'wxrd-style-button-wrap';
+  tooltipWrap.style.setProperty('--offset', '6px');
+  const tooltip = document.createElement('div');
+  tooltip.className = 'wr_tooltip_item wr_tooltip_item--left';
+  tooltip.id = 'wxrd-style-tooltip';
+  tooltip.textContent = '阅读样式';
+  tooltipWrap.append(button, tooltip);
 
   const panel = document.createElement('div');
   panel.id = STYLE_PANEL_ID;
@@ -203,7 +214,7 @@ const mountPanel = (api: PluginAPI): (() => void) => {
     </div>`;
 
   const controls = document.querySelector('.readerControls');
-  controls?.append(button);
+  controls?.append(tooltipWrap);
   // 官方同构：字体弹窗 = .readerControls 内的 reader-font-control-panel-wrapper
   // > .font-panel-content，定位（absolute bottom/right）与视觉全部由微信读书
   // 自身 CSS 生效，随布局引擎自动同步（resize 不飘移）
@@ -456,7 +467,7 @@ const mountPanel = (api: PluginAPI): (() => void) => {
     unsubscribe();
     button.removeEventListener('click', toggleButton);
     document.removeEventListener('click', closeOnOutside, true);
-    button.remove();
+    tooltipWrap.remove();
     wrapper.remove();
     api.style.remove('wxrd-style-panel-ui');
     api.style.remove('wxrd-white-text');
@@ -494,6 +505,27 @@ const PANEL_UI_CSS = `
 .wr_whiteTheme #wxrd-style-button:hover .icon svg {
   fill: #212832;
 }
+
+/* 悬停提示：学官方 wr_tooltip_item--left——按钮左侧平行灰字，0.3s 淡入。
+   定位/配色对齐官方采样（右 calc(100%+6px)、top 50%、夜间 #8a8c90）。 */
+#wxrd-style-button-wrap { position: relative; display: inline-flex; }
+#wxrd-style-tooltip {
+  position: absolute;
+  display: block;
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  color: #8a8c90;
+  font-size: 12px;
+  line-height: 15px;
+  white-space: nowrap;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s;
+}
+.wr_whiteTheme #wxrd-style-tooltip { color: #858c96; }
+#wxrd-style-button-wrap:hover #wxrd-style-tooltip { opacity: 1; }
 
 /* 面板内容文字色对齐官方（title 官方已管：#eef0f4 / #212832） */
 #wxrd-style-panel {

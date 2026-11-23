@@ -208,15 +208,21 @@ export class StyleManager {
       || newIsHideToolbar !== this.isHideToolbar
       || newIsHideNavbar !== this.isHideNavbar
     ) {
+      // 工具栏只是浮层显隐（display:none），不改正文尺寸，无需重排；
+      // 宽版/宽度/导航栏（改正文高度）才触发微信读书重新分页。
+      const needsResize =
+        newIsWide !== this.isWide
+        || newWideWidthPercent !== this.wideWidthPercent
+        || newIsHideNavbar !== this.isHideNavbar;
       this.isWide = newIsWide;
       this.wideWidthPercent = newWideWidthPercent;
       this.isHideToolbar = newIsHideToolbar;
       this.isHideNavbar = newIsHideNavbar;
-      this.applyStyles();
+      this.applyStyles(needsResize);
     }
   }
 
-  private applyStyles() {
+  private applyStyles(notifyResize = true) {
     // Only apply reader-specific styles when on reader page
     if (!this.isReader) {
       return;
@@ -244,7 +250,7 @@ export class StyleManager {
       log.warn('[StyleManager] No site runtime found, styles not applied');
     }
 
-    window.dispatchEvent(new Event('resize'));
+    if (notifyResize) window.dispatchEvent(new Event('resize'));
   }
 
   private clearReaderStyles() {

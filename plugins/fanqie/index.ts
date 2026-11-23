@@ -24,6 +24,7 @@ import {
   FANQIE_PAGED_CLASS,
   FanqiePaginator,
 } from './pagination';
+import { setupFanqieStylePanel } from './style_panel';
 
 const PREVIOUS_CHAPTER_FLAG = 'atreader-fanqie-open-previous-at-end';
 const CHAPTER_START_FLAG = 'atreader-fanqie-open-chapter-at-start';
@@ -147,6 +148,7 @@ export class FanqiePlugin implements ReaderPlugin {
     const unsubscribe = api.settings.subscribe(settings => this.applySettings(settings));
     this.cleanupFunctions.push(unsubscribe);
     this.startToolbarEnhancement();
+    this.cleanupFunctions.push(setupFanqieStylePanel(api));
     this.applySettings(api.settings.getAll());
     void this.restoreLayoutPreference(api);
   }
