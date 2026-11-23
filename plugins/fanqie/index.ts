@@ -55,7 +55,7 @@ const DOUBLE_COLUMN_ICON = `
 const FANQIE_RUNTIME_MANIFEST: PluginManifest = {
   id: 'fanqie',
   name: '番茄小说',
-  version: '1.0.0',
+  version: '1.0.1',
   description: '番茄小说网站支持插件（官方范例）',
   author: '艾特阅读团队',
   homepage: 'https://github.com/dengcb/weixin-reader-desktop',
