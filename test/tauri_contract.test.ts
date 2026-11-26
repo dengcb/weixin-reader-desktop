@@ -156,27 +156,28 @@ describe('Tauri application contracts', () => {
   });
 
   it('keeps a static local default page for when every online plugin is disabled', async () => {
-    const [library, lib, inject, buildScript] = await Promise.all([
+    const [shelf, library, lib, inject, buildScript] = await Promise.all([
+      readText('src/windows/local-shelf.html'),
       readText('src/windows/library.html'),
       readText('src-tauri/src/lib.rs'),
       readText('src/scripts/inject.ts'),
       readText('src-tauri/build.rs'),
     ]);
 
+    // 无可用在线来源时落本地书架；旧 /library 仍由本地协议供应并迁到书架。
+    expect(shelf).toContain('brand-name');
+    expect(shelf).toContain('艾特阅读');
+    expect(shelf).toContain("invoke('has_online_sources')");
+    expect(shelf).toContain("open_plugin_catalog");
     expect(library).toContain('<h1>艾特阅读</h1>');
-    expect(library).toContain("url('/atrd-logo.svg')");
     expect(library).toContain('当前没有已启用的在线插件');
-    expect(library).not.toContain('即将');
-    expect(library).toContain('color-scheme: dark');
-    expect(library).not.toContain('prefers-color-scheme');
-    expect(library).toContain("invoke('simulate_menu_click', { action })");
-    expect(library).toContain("invoke('switch_bookstore_by_index', { index: Number(event.key) })");
     expect(lib).toContain('WebviewUrl::CustomProtocol(local_shelf_page_url())');
     expect(lib).toContain('register_uri_scheme_protocol(LIBRARY_SCHEME');
-    expect(lib).toContain('LIBRARY_PAGE_HTML.to_vec()');
-    expect(lib).toContain('return_to_shelf_if_source_unavailable');
+    expect(lib).toContain('LOCAL_SHELF_PAGE_HTML.to_vec()');
+    expect(lib).toContain('apply_plugin_update_navigation');
+    expect(lib).toContain('should_evacuate_remote_host');
     expect(inject).toContain("['http:', 'https:'].includes(window.location.protocol)");
-    expect(buildScript).toContain('cargo:rerun-if-changed=../dist/library.html');
+    expect(buildScript).toContain('cargo:rerun-if-changed=../src/windows/local-shelf.html');
     expect(buildScript).toContain('cargo:rerun-if-changed=../atrd-logo.svg');
   });
 

@@ -44,6 +44,9 @@ dist-ssr
 .github/*
 !.github/workflows/
 !.github/workflows/*.yml
+!.github/FUNDING.yml
+!.github/assets/
+!.github/assets/**
 release
 
 # Editor directories and files
