@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { CHAPTER_CACHE_LIMIT, chapterManager } from '../chapter_manager';
+import { CHAPTER_CACHE_LIMIT, chapterManager } from '../../../../plugins/weread/chapter_manager';
 
 const originalFetch = globalThis.fetch;
 

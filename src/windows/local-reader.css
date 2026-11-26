@@ -139,7 +139,7 @@ body:not([data-theme="dark"]) .tool-button #themeIconLight, body[data-theme="dar
   pointer-events: none;
   transition: opacity .22s cubic-bezier(.22, 1, .36, 1), transform .22s cubic-bezier(.22, 1, .36, 1);
 }
-/* 面板遮罩：压暗全文、点遮罩收面板（与微信读书目录遮罩同款语义） */
+/* 面板遮罩：压暗全文、点遮罩收面板 */
 #panelOverlay {
   position: fixed;
   inset: 0;

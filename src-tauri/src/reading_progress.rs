@@ -157,19 +157,13 @@ fn validate_runtime_scope<R: Runtime>(
     let current_host = current_url.host_str().ok_or("Current URL has no host")?;
     let requested_host = requested_url.host_str().ok_or("Reading URL has no host")?;
 
-    let allowed = if site_id == crate::sites::WEREAD.id {
-        [current_host, requested_host]
-            .into_iter()
-            .all(|host| host == "weread.qq.com" || host.ends_with(".weread.qq.com"))
-    } else {
-        crate::plugin_manager::get_installed_plugins(app)?
-            .into_iter()
-            .find(|plugin| plugin.id == site_id)
-            .is_some_and(|plugin| {
-                crate::plugin_manager::manifest_matches_host(&plugin, current_host)
-                    && crate::plugin_manager::manifest_matches_host(&plugin, requested_host)
-            })
-    };
+    let allowed = crate::plugin_manager::get_installed_plugins(app)?
+        .into_iter()
+        .find(|plugin| plugin.id == site_id)
+        .is_some_and(|plugin| {
+            crate::plugin_manager::manifest_matches_host(&plugin, current_host)
+                && crate::plugin_manager::manifest_matches_host(&plugin, requested_host)
+        });
     if !allowed {
         return Err("Reading position scope does not match the current site".to_string());
     }
@@ -341,8 +335,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_scope_accepts_weread_subdomains_and_rejects_cross_site_access() {
-        let app = tauri::test::mock_app();
+    fn installed_plugin_recovers_existing_progress_only_within_its_domains() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let root =
+            std::env::temp_dir().join(format!("atreader-progress-scope-{}", std::process::id()));
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = root.to_string_lossy().into_owned();
+        let app = mock_builder().build(context).unwrap();
         let main = tauri::WebviewWindowBuilder::new(
             &app,
             "main",
@@ -350,13 +349,29 @@ mod tests {
         )
         .build()
         .unwrap();
+        let url = "https://book.weread.qq.com/web/reader/other";
+        let path = position_path(app.handle(), "weread", url).unwrap();
+        write_position(&path, &ReadingPosition { position: 42.5 }).unwrap();
         assert!(validate_runtime_scope(
             app.handle(),
             &main,
             "weread",
             "https://weread.qq.com/web/reader/other"
         )
-        .is_ok());
+        .is_err());
+        let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/weread.atrd");
+        crate::plugin_manager::install_plugin_from_file(app.handle(), package.to_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            get_reading_position(
+                app.handle().clone(),
+                main.clone(),
+                "weread".into(),
+                url.into()
+            )
+            .unwrap(),
+            Some(42.5)
+        );
         assert!(validate_runtime_scope(
             app.handle(),
             &main,
@@ -379,5 +394,6 @@ mod tests {
             "https://weread.qq.com/web/reader/book"
         )
         .is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

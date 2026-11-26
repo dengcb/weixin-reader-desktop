@@ -1,6 +1,7 @@
+import { detectWereadTheme } from '../../../../plugins/weread/weread_theme';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { PluginRegistry } from '../plugin_registry';
-import { DEFAULT_WIDE_WIDTH_PERCENT } from '../reader_width';
+import { DEFAULT_WIDE_WIDTH_PERCENT } from '../../../plugins/shared/reader_width';
 import type { ReaderSiteRuntime } from '../reader_site_runtime';
 import { settingsStore, type MergedSettings } from '../settings_store';
 import { SiteContext } from '../site_context';
@@ -35,6 +36,7 @@ const createRuntime = (
   const runtime = {
     id,
     name: 'Style Reader',
+    getWindowTheme: id === 'weread' ? detectWereadTheme : undefined,
     styleOwner,
     manifest: {
       id,

@@ -86,19 +86,19 @@ export const createWindowsTitleBar = (doc: Document): WindowsTitleBar | null => 
     #${TITLE_BAR_ID} .wxrd-itb-btn svg { width: 12px; height: 12px; pointer-events: none; }
     #${TITLE_BAR_ID} .wxrd-itb-btn:hover { background: rgba(255,255,255,.14); }
     #${TITLE_BAR_ID} .wxrd-itb-close:hover { background: #c42b1c; color: #fff; }
-    /* 浅色页（微信读书 wr_whiteTheme 优先，系统偏好兜底）：深色图标 + 浅 scrim */
-    body.wr_whiteTheme #${TITLE_BAR_ID} {
+    /* 浅色页（插件主题优先，系统偏好兜底）：深色图标 + 浅 scrim */
+    body.atreader-light-theme #${TITLE_BAR_ID} {
       color: #1f2329;
       background: linear-gradient(to bottom, rgba(244,245,247,.7), rgba(244,245,247,0));
     }
-    body.wr_whiteTheme #${TITLE_BAR_ID} .wxrd-itb-btn:hover { background: rgba(0,0,0,.08); }
-    body.wr_whiteTheme #${TITLE_BAR_ID} .wxrd-itb-close:hover { background: #c42b1c; color: #fff; }
+    body.atreader-light-theme #${TITLE_BAR_ID} .wxrd-itb-btn:hover { background: rgba(0,0,0,.08); }
+    body.atreader-light-theme #${TITLE_BAR_ID} .wxrd-itb-close:hover { background: #c42b1c; color: #fff; }
     @media (prefers-color-scheme: light) {
-      body:not(.wr_whiteTheme) #${TITLE_BAR_ID} {
+      body:not(.atreader-light-theme) #${TITLE_BAR_ID} {
         color: #1f2329;
         background: linear-gradient(to bottom, rgba(244,245,247,.7), rgba(244,245,247,0));
       }
-      body:not(.wr_whiteTheme) #${TITLE_BAR_ID} .wxrd-itb-btn:hover { background: rgba(0,0,0,.08); }
+      body:not(.atreader-light-theme) #${TITLE_BAR_ID} .wxrd-itb-btn:hover { background: rgba(0,0,0,.08); }
     }`;
   doc.head?.appendChild(style);
   doc.body.appendChild(bar);

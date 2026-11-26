@@ -1,5 +1,6 @@
+import { openToc, closeToc, isCatalogTitleMatch } from '../../../../plugins/weread/toc';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { closeReaderToc, isCatalogTitleMatch, openReaderToc } from '../reader_toc';
+import { closeReaderToc, openReaderToc } from '../reader_toc';
 
 const mount = (html: string): void => {
   document.body.innerHTML = html;
@@ -27,13 +28,13 @@ describe('openReaderToc', () => {
     mount(
       '<div class="readerControls"><button class="readerControls_item catalog" title="目录"></button></div><div class="readerCatalog" style="display:none"></div>',
     );
-    expect(openReaderToc('weread')).toBe('opened');
+    expect(openToc()).toBe('opened');
     const style = Array.from(
       document.querySelectorAll<HTMLStyleElement>('style[data-atreader-toc-reveal]'),
     ).find((candidate) => candidate.textContent?.includes('.readerCatalog'));
     expect(style).toBeTruthy();
     expect(document.querySelector('[data-atreader-toc-overlay]')).toBeTruthy();
-    expect(closeReaderToc('weread')).toBe(true);
+    expect(closeToc()).toBe(true);
     expect(document.querySelector('[data-atreader-toc-overlay]')).toBeFalsy();
   });
 
@@ -125,7 +126,7 @@ describe('openReaderToc', () => {
       },
     };
     document.body.append(button);
-    expect(openReaderToc('weread')).toBe('opened');
+    expect(openToc()).toBe('opened');
     expect(clicked).toBe(1);
     expect(document.querySelector('style[data-atreader-toc-reveal]')).toBeFalsy();
     button.remove();
@@ -135,17 +136,17 @@ describe('openReaderToc', () => {
     mount(
       '<div class="readerControls"><button class="readerControls_item catalog" title="目录"></button></div><div class="readerCatalog" style="display:none"></div>',
     );
-    expect(openReaderToc('weread')).toBe('opened');
+    expect(openToc()).toBe('opened');
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(
       document.querySelector('style[data-atreader-toc-reveal]'),
     ).toBeTruthy();
-    expect(closeReaderToc('weread')).toBe(true);
+    expect(closeToc()).toBe(true);
     expect(
       document.querySelector('style[data-atreader-toc-reveal]'),
     ).toBeFalsy();
     // 目录已关，再次关闭为 false（调用方据此回退到切工具栏语义）
-    expect(closeReaderToc('weread')).toBe(false);
+    expect(closeToc()).toBe(false);
   });
 
   it('目录项标题匹配：带章号前缀/空白差异的后缀匹配', () => {

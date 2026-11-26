@@ -21,15 +21,23 @@ const permissionIdentifier = (permission: PermissionEntry): string =>
 
 describe('Tauri application contracts', () => {
   it('keeps updater artifacts, signed GitHub endpoints and the runtime updater plugin wired', async () => {
-    const [config, source] = await Promise.all([
+    const [config, github, source] = await Promise.all([
       readJson<{
         plugins: { updater: { endpoints: string[]; pubkey: string } };
-        bundle: { createUpdaterArtifacts: boolean };
+        bundle: { createUpdaterArtifacts: boolean; resources: Record<string, string> };
       }>('src-tauri/tauri.conf.json'),
+      readJson<{
+        plugins: { distribution: { channel: string } };
+        bundle: { createUpdaterArtifacts: boolean; resources: Record<string, string> };
+      }>('src-tauri/tauri.github.conf.json'),
       readText('src-tauri/src/lib.rs'),
     ]);
 
-    expect(config.bundle.createUpdaterArtifacts).toBe(true);
+    expect(config.bundle.createUpdaterArtifacts).toBe(false);
+    expect(Object.keys(config.bundle.resources)).not.toContain('../plugins/weread.atrd');
+    expect(github.plugins.distribution.channel).toBe('github');
+    expect(github.bundle.createUpdaterArtifacts).toBe(true);
+    expect(github.bundle.resources['../plugins/weread.atrd']).toBe('preinstalled/reader.atrd');
     expect(config.plugins.updater.pubkey.length).toBeGreaterThan(40);
     expect(config.plugins.updater.endpoints[0]).toBe(
       'https://github.com/dengcb/weixin-reader-desktop/releases/latest/download/latest.json',
@@ -163,23 +171,22 @@ describe('Tauri application contracts', () => {
     expect(library).not.toContain('prefers-color-scheme');
     expect(library).toContain("invoke('simulate_menu_click', { action })");
     expect(library).toContain("invoke('switch_bookstore_by_index', { index: Number(event.key) })");
-    expect(lib).toContain('WebviewUrl::CustomProtocol(library_page_url())');
+    expect(lib).toContain('WebviewUrl::CustomProtocol(local_shelf_page_url())');
     expect(lib).toContain('register_uri_scheme_protocol(LIBRARY_SCHEME');
     expect(lib).toContain('LIBRARY_PAGE_HTML.to_vec()');
-    expect(lib).toContain('navigate_to_library_when_no_online_site');
-    expect(lib).toContain('navigate_to_enabled_site_when_on_library');
-    expect(lib).toContain('is_library_page_url(&current)');
+    expect(lib).toContain('return_to_shelf_if_source_unavailable');
     expect(inject).toContain("['http:', 'https:'].includes(window.location.protocol)");
     expect(buildScript).toContain('cargo:rerun-if-changed=../dist/library.html');
     expect(buildScript).toContain('cargo:rerun-if-changed=../atrd-logo.svg');
   });
 
-  it('marks disabled built-in plugins as removable and restores them without an external package', async () => {
+  it('manages installed sources through the package installer and preserves per-source toggles', async () => {
     const settings = await readText('src/windows/settings.html');
 
-    expect(settings).toContain('const builtinPlugins');
-    expect(settings).toContain('enabled:isEnabled(plugin,ids)');
-    expect(settings).toContain('已停用');
+    expect(settings).not.toContain('const builtinPlugins');
+    expect(settings).toContain("invoke('prepare_plugin_install'");
+    expect(settings).toContain('enabled: isEnabled(plugin, ids)');
+    expect(settings).toContain("invoke('uninstall_plugin'");
     expect(settings).toContain('togglePlugin');
     expect(settings).toContain("invoke('set_content_source_enabled'");
     expect(settings).not.toContain('patchSettings({global:{enabledPlugins:next}})');

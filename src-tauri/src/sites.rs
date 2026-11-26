@@ -1,26 +1,6 @@
 use crate::plugin_manager;
-use base64::Engine as _;
 use regex::Regex;
 use tauri::{AppHandle, Runtime};
-
-/// 站点配置结构体
-/// 用于管理多个阅读网站的配置信息
-#[derive(Debug, Clone)]
-pub struct SiteConfig {
-    /// 站点 ID (用于内部识别)
-    pub id: &'static str,
-    /// 站点首页 URL
-    pub home_url: &'static str,
-    /// 书架页 URL（遥控器主页键长按目标）
-    pub shelf_url: &'static str,
-}
-
-/// 微信读书配置
-pub const WEREAD: SiteConfig = SiteConfig {
-    id: "weread",
-    home_url: "https://weread.qq.com/",
-    shelf_url: "https://weread.qq.com/web/shelf",
-};
 
 /// `enabledPlugins` 缺省表示全部启用，保持旧版设置文件的兼容性。
 /// 一旦该列表存在，只有显式列出的在线站点可以被打开或出现在书店菜单中。
@@ -45,7 +25,12 @@ pub fn sort_plugins_by_site_order(
         .get("global")
         .and_then(|global| global.get("siteOrder"))
         .and_then(serde_json::Value::as_array)
-        .map(|values| values.iter().filter_map(serde_json::Value::as_str).collect())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect()
+        })
         .unwrap_or_default();
     let rank: std::collections::HashMap<&str, usize> = order
         .iter()
@@ -55,7 +40,18 @@ pub fn sort_plugins_by_site_order(
     plugins.sort_by(|a, b| {
         let rank_a = rank.get(a.id.as_str()).copied().unwrap_or(usize::MAX);
         let rank_b = rank.get(b.id.as_str()).copied().unwrap_or(usize::MAX);
-        rank_a.cmp(&rank_b).then_with(|| a.id.cmp(&b.id))
+        let pinned = |plugin: &plugin_manager::PluginInfo| {
+            plugin
+                .capabilities
+                .as_ref()
+                .and_then(|caps| caps.get("fixedFirst"))
+                .and_then(|value| value.as_bool())
+                == Some(true)
+        };
+        pinned(b)
+            .cmp(&pinned(a))
+            .then_with(|| rank_a.cmp(&rank_b))
+            .then_with(|| a.id.cmp(&b.id))
     });
 }
 
@@ -68,43 +64,12 @@ pub struct EnabledSiteEntry {
     pub home_url: String,
 }
 
-/// 微信读书官方图标（App Store 当前版本 180px PNG，与官网 apple-touch-icon
-/// 同设计），编译期内嵌，书城切换浮层经 get_bookstore_list 下发。
-const WEREAD_ICON_PNG: &[u8] = include_bytes!("../../weread-icon.png");
-
-/// 内置站点（微信读书）条目；启用时排在在线来源第一位。
-fn builtin_enabled_site(settings: &serde_json::Value) -> Option<EnabledSiteEntry> {
-    if !is_site_enabled(settings, WEREAD.id) {
-        return None;
-    }
-    let name = plugin_manager::RESERVED_PLUGIN_IDS
-        .iter()
-        .find(|(id, _)| *id == WEREAD.id)
-        .map(|(_, name)| (*name).to_string())
-        .unwrap_or_else(|| WEREAD.id.to_string());
-    let icon = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(WEREAD_ICON_PNG)
-    );
-    Some(EnabledSiteEntry {
-        id: WEREAD.id.to_string(),
-        name,
-        icon: Some(icon),
-        home_url: WEREAD.home_url.to_string(),
-    })
-}
-
-/// 有序启用站点列表：weread 启用则排第一，其余插件经 siteOrder 排序后
-/// 过滤「有 site 配置且启用」。菜单、switch_bookstore_by_index 与
-/// get_bookstore_list 必须共用本函数，禁止各自重排。
+/// 所有入口共用同一份有序启用来源。
 pub fn ordered_enabled_sites(
     settings: &serde_json::Value,
     plugins: &mut [plugin_manager::PluginInfo],
 ) -> Vec<EnabledSiteEntry> {
     let mut entries = Vec::new();
-    if let Some(builtin) = builtin_enabled_site(settings) {
-        entries.push(builtin);
-    }
     sort_plugins_by_site_order(settings, plugins);
     for plugin in plugins.iter() {
         let Some(site) = plugin.site.as_ref() else {
@@ -134,25 +99,17 @@ fn resolve_plugin_home_url(
 }
 
 /// 根据 siteId 解析站点首页 URL
-/// - 内置站点 weread 直接返回常量
-/// - 其它 id 从已安装外部插件的 manifest.site.home_url 匹配获取
+/// 从已安装插件的 manifest.site.home_url 匹配获取
 ///
 /// 返回 None 表示未找到该站点
 pub fn resolve_home_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Option<String> {
-    if site_id == WEREAD.id {
-        return Some(WEREAD.home_url.to_string());
-    }
     plugin_manager::get_installed_plugins(app)
         .ok()
         .and_then(|plugins| resolve_plugin_home_url(plugins, site_id))
 }
 
-/// 根据 siteId 解析书架页 URL：插件 manifest.site.shelf 优先（微信读书用
-/// 内置常量），未配置时回退首页 URL，保证「回书架」永远有落点。
+/// 根据 siteId 解析书架页 URL：插件 manifest.site.shelf 优先，未配置时回退首页 URL，保证「回书架」永远有落点。
 pub fn resolve_shelf_url<R: Runtime>(app: &AppHandle<R>, site_id: &str) -> Option<String> {
-    if site_id == WEREAD.id {
-        return Some(WEREAD.shelf_url.to_string());
-    }
     plugin_manager::get_installed_plugins(app)
         .ok()
         .and_then(|plugins| {
@@ -219,9 +176,6 @@ pub fn is_reader_url<R: Runtime>(app: &AppHandle<R>, url: &tauri::Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    if host_matches_domain(host, "weread.qq.com") {
-        return url.path().contains("/web/reader/");
-    }
     plugin_manager::get_installed_plugins(app)
         .unwrap_or_default()
         .into_iter()
@@ -255,10 +209,7 @@ pub fn reader_action_supported<R: Runtime>(
     // 本地阅读页两种平台形态：Windows http://atreader.localhost、
     // macOS atreader://localhost（host 是 localhost 而非 None，不能落入
     // 下方按站点域名的查找——本地插件无 site 配置，会全部误判为不支持）。
-    if host == "atreader.localhost"
-        || (url.scheme() == "atreader" && host == "localhost")
-        || host_matches_domain(host, "weread.qq.com")
-    {
+    if host == "atreader.localhost" || (url.scheme() == "atreader" && host == "localhost") {
         return true;
     }
     let capability = match action {
@@ -327,12 +278,6 @@ mod tests {
     }
 
     #[test]
-    fn built_in_site_contract_is_stable() {
-        assert_eq!(WEREAD.id, "weread");
-        assert_eq!(WEREAD.home_url, "https://weread.qq.com/");
-    }
-
-    #[test]
     fn enabled_site_list_is_opt_in_only_when_present() {
         assert!(is_site_enabled(&json!({}), "weread"));
         let settings = json!({ "global": { "enabledPlugins": ["fanqie"] } });
@@ -389,17 +334,20 @@ mod tests {
             plugin("zread", "https://zread.example/", true),
             plugin("qimao", "https://qimao.example/", true),
         ];
+        let mut fixed = plugin("weread", "https://weread.qq.com/", true);
+        fixed.capabilities = Some(json!({"fixedFirst": true}));
+        fixed.name = "微信读书".into();
+        fixed.icon = Some("data:image/png;base64,abc".into());
+        plugins.push(fixed);
         let entries = ordered_enabled_sites(&settings, &mut plugins);
         let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
         assert_eq!(ids, vec!["weread", "zread", "qimao", "qidian"]);
         assert_eq!(entries[0].name, "微信读书");
         assert_eq!(entries[0].home_url, "https://weread.qq.com/");
-        assert!(
-            entries[0]
-                .icon
-                .as_deref()
-                .is_some_and(|icon| icon.starts_with("data:image/png;base64,"))
-        );
+        assert!(entries[0]
+            .icon
+            .as_deref()
+            .is_some_and(|icon| icon.starts_with("data:image/png;base64,")));
     }
 
     #[test]
@@ -416,10 +364,9 @@ mod tests {
     }
 
     #[test]
-    fn ordered_sites_yield_weread_even_when_plugin_enumeration_is_empty() {
+    fn ordered_sites_are_empty_without_plugins() {
         let entries = ordered_enabled_sites(&json!({}), &mut []);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].id, "weread");
+        assert!(entries.is_empty());
         let settings = json!({ "global": { "enabledPlugins": ["fanqie"] } });
         assert!(ordered_enabled_sites(&settings, &mut []).is_empty());
     }

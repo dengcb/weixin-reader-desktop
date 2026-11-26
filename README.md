@@ -122,12 +122,14 @@ CPU 占用低
 > 全新可插拔式插件系统，支持第三方适配器与自定义脚本
 
 ```
-✓ 支持 .atrd 插件包安装/卸载     ✓ 微信读书作为内置默认插件
+✓ 支持 .atrd 插件包安装/卸载     ✓ 微信读书支持安装、更新与卸载
 ✓ 标准化插件开发接口             ✓ 内置本地阅读(EPUB/TXT/MOBI/PDF)插件
 ✓ 插件级命名空间隔离             ✓ 配置命名空间与独立阅读位置
 ```
 
 ### 🛠 可视化插件编辑器 <sup>v0.9.0 新增</sup>
+
+GitHub 版首次启动预装微信读书。商店版可前往「设置 → 内容与扩展 → 获取插件」，在艾特阅读官网下载后双击安装。
 
 > 内置插件开发工具，无需外部 IDE 即可创建和编辑插件
 
@@ -243,11 +245,13 @@ CPU 占用低
 
 ```bash
 bun install --frozen-lockfile
-# x64（Intel/AMD）
-bun run tauri build --bundles nsis --target x86_64-pc-windows-msvc -- --locked
-# ARM64（Snapdragon X 等）
-bun run tauri build --bundles nsis --target aarch64-pc-windows-msvc -- --locked
+# GitHub 版（首次启动预装微信读书）
+bun run build:github --bundles nsis --target x86_64-pc-windows-msvc -- --locked
+# 商店纯净版（默认打开本地书架）
+bun run build:store --target x86_64-pc-windows-msvc -- --locked
 ```
+
+构建 Windows ARM64 包时，将目标改为 `aarch64-pc-windows-msvc`。
 
 ---
 
@@ -374,7 +378,7 @@ CI 在每次 push 时自动执行完整的质量门禁（typecheck + test + buil
 
 `inject.ts` 只负责防重复注入并创建 `AppRuntime`。`AppRuntime` 是注入层唯一生命周期所有者，依次初始化设置、注册/加载插件、应用站点缩放、创建 Managers、监听插件热重载；页面销毁时按逆序释放资源。
 
-站点能力统一为 `ReaderSiteRuntime`：微信读书通过桥接器委托给既有 `WeReadAdapter`，外部插件通过包装器接入。`PluginRegistry` / `PluginLoader` 是唯一站点来源，所有 Manager 只能经 `SiteContext` 获取当前运行时。
+站点能力统一为 `ReaderSiteRuntime`：微信读书与其他在线来源通过外部插件包装器接入。`PluginRegistry` / `PluginLoader` 是唯一站点来源，所有 Manager 只能经 `SiteContext` 获取当前运行时。
 
 位于 `src/scripts/managers/` 目录：
 
@@ -575,6 +579,18 @@ Windows 代码签名由 [SignPath Foundation](https://signpath.org/) 免费提�
 ## 📄 开源协议
 
 [MIT License](LICENSE) © 2026
+
+---
+
+## ☕ 赞赏支持
+
+本项目完全开源免费，打赏纯属自愿，不影响任何功能的使用。若它确实帮到了你，一杯咖啡的心意就足够了。
+
+<div align="center">
+  <img src=".github/assets/sponsor.png" alt="微信赞赏码" width="200">
+  <br>
+  <sub>微信扫码赞赏</sub>
+</div>
 
 ---
 

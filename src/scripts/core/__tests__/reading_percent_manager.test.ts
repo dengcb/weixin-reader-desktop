@@ -1,3 +1,4 @@
+import WeReadPlugin from '../../../../plugins/weread';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventBus, Events } from '../event_bus';
 
@@ -5,7 +6,7 @@ const getBookProgress = mock(async (): Promise<{ progress?: number } | null> => 
 const fakeSiteContext = {
   isReaderPage: true,
   siteId: 'weread',
-  currentRuntime: { getBookProgress },
+  currentRuntime: { getBookProgress, getProgressPanel: WeReadPlugin.prototype.getProgressPanel, getProgressInset: WeReadPlugin.prototype.getProgressInset },
 };
 let showReadingPercent = true;
 const subscribers: Array<() => void> = [];

@@ -12,15 +12,14 @@
  * 样式变化走「单一控制点」applyReadingStyles 统一注入/移除。
  */
 
-import type { PluginAPI } from '../core/plugin_types';
+import type { PluginAPI } from '../../src/scripts/core/plugin_types';
 import {
   DEFAULT_WIDE_WIDTH_PERCENT,
   MAX_WIDE_WIDTH_PERCENT,
   MIN_WIDE_WIDTH_PERCENT,
   normalizeWideWidthPercent,
-} from '../core/reader_width';
-import { invoke } from '../core/tauri';
-import { detectWereadTheme } from '../core/weread_theme';
+} from '../../src/plugins/shared/reader_width';
+import { detectWereadTheme } from './weread_theme';
 
 type LineHeightChoice = number | null;
 type SpacingChoice = number | null;
@@ -443,21 +442,17 @@ const mountPanel = (api: PluginAPI): (() => void) => {
   // 整个软件 UI 随微信读书亮暗联动（恢复 archived 679f58b 丢于 v1.8.3 重置的设计），
   // 并升级为 dev.17 的 cookie wr_theme 信号源。set_theme 生效范围：原生菜单栏/
   // 标题栏/上下文菜单等所有跟随系统深浅色的原生件。
-  const syncWindowTheme = (theme: 'dark' | 'light') => {
-    const label = (window as any).__TAURI__?.__currentWindow?.label;
-    if (!label) return;
-    void invoke('plugin:window|set_theme', { label, value: theme }).catch(() => undefined);
-  };
+  const syncWindowTheme = () => api.reader?.syncTheme();
   const themeWatcher = setInterval(() => {
     const next = detectWereadTheme();
     if (next !== lastTheme) {
       lastTheme = next;
       applyReadingStyles(settings.getAll());
-      syncWindowTheme(next);  // 亮→整个窗件亮化；暗→暗化
+      syncWindowTheme();  // 亮→整个窗件亮化；暗→暗化
     }
   }, 800);
   applyReadingStyles(settings.getAll());
-  syncWindowTheme(detectWereadTheme());  // 初始装配（冷启动即对齐当前主题）
+  syncWindowTheme();  // 初始装配（冷启动即对齐当前主题）
 
   // 面板样式（独立注入，随面板卸载移除）
   api.style.inject('wxrd-style-panel-ui', PANEL_UI_CSS);

@@ -121,19 +121,10 @@ export class ReadingPercentManager extends BaseManager {
       const navbar = document.querySelector<HTMLElement>('.local-navbar');
       return navbar ? { parent: navbar, mode: 'navbar' } : null;
     }
-    if (siteId === 'weread') {
-      // 顶层 frame 存在尺寸为 0 的隐藏面板副本，正文真面板在同源 iframe 内。
-      // 只接受有实际宽度的面板，避免徽章挂到隐藏副本上贴死窗口角落。
-      const candidates = [
-        document.querySelector<HTMLElement>('.renderTargetContainer'),
-        document.querySelector<HTMLElement>('.readerChapterContent'),
-      ];
-      for (const panel of candidates) {
-        if (panel && panel.getBoundingClientRect().width > 0) {
-          return { parent: panel, mode: 'panel' };
-        }
-      }
-      return null;
+    const runtime = this.siteContext.currentRuntime;
+    if (runtime?.getProgressPanel) {
+      const parent = runtime.getProgressPanel();
+      return parent ? { parent, mode: 'panel' } : null;
     }
     const selector = PLUGIN_HEADER_SELECTORS[siteId];
     const header = selector ? document.querySelector<HTMLElement>(selector) : null;
@@ -175,13 +166,7 @@ export class ReadingPercentManager extends BaseManager {
       // 微信读书标题行是 canvas 绘制、无 DOM 节点，面板 padding 为 0。
       // 用底部 pager 的左边距运行时测量正文水平内边距（即标题行左边距），
       // 徽章右边距与之镜像；上边距按实测比例推算，与标题行同水平线。
-      const panelRect = parent.getBoundingClientRect();
-      const pager = document.querySelector('.renderTarget_pager');
-      let inset = Math.round(panelRect.width * 0.045);
-      if (pager) {
-        const measured = pager.getBoundingClientRect().left - panelRect.left;
-        if (measured > 0) inset = Math.round(measured);
-      }
+      const inset = this.siteContext.currentRuntime?.getProgressInset?.(parent) ?? 0;
       const top = Math.round(inset * 2 / 3);
       badge.style.cssText = `${base}position:absolute;top:${top}px;right:${inset}px;z-index:9999;`;
     } else if (mode === 'header') {

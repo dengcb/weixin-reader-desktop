@@ -24,6 +24,7 @@
     "allow-prepare-plugin-install",
     "allow-uninstall-plugin",
     "allow-get-installed-plugins",
+    "allow-open-plugin-catalog",
     "allow-check-plugin-updates",
     "allow-update-plugin",
     "allow-load-plugin-for-edit",

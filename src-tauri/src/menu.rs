@@ -292,8 +292,6 @@ fn get_plugin_site_items<R: Runtime>(handle: &tauri::AppHandle<R>) -> Vec<Plugin
     match plugin_manager::get_installed_plugins(handle) {
         Ok(mut plugins) => sites::ordered_enabled_sites(&settings, &mut plugins)
             .into_iter()
-            // weread 由 build_sources_menu 单独置于首位，不进入插件菜单项
-            .filter(|site| site.id != sites::WEREAD.id)
             .map(|site| PluginSiteMenuItem {
                 id: format!("switch_site_{}", site.id),
                 name: site.name,
@@ -310,22 +308,8 @@ fn build_sources_menu<R: Runtime>(
     manager: &tauri::AppHandle<R>,
     plugin_sites: &[PluginSiteMenuItem],
     current_site_id: &str,
-    weread_enabled: bool,
 ) -> tauri::Result<Option<Submenu<R>>> {
     let menu = Submenu::with_id(manager, menu_id::SOURCES, "在线来源", true)?;
-    let mut online_count = 0usize;
-    if weread_enabled {
-        let weread_item = CheckMenuItem::with_id(
-            manager,
-            "switch_site_weread",
-            "微信读书",
-            true,
-            current_site_id == "weread",
-            None::<&str>,
-        )?;
-        menu.append(&weread_item)?;
-        online_count += 1;
-    }
     let target_id = format!("switch_site_{}", current_site_id);
     for site in plugin_sites {
         // site.id 形如 switch_site_<pluginId>
@@ -338,18 +322,17 @@ fn build_sources_menu<R: Runtime>(
             None::<&str>,
         )?;
         menu.append(&item)?;
-        online_count += 1;
     }
-    if online_count == 0 {
-        let empty = MenuItem::with_id(
-            manager,
-            "no_enabled_sources",
-            "暂无已启用的在线来源",
-            false,
-            None::<&str>,
-        )?;
-        menu.append(&empty)?;
+    if !plugin_sites.is_empty() {
+        menu.append(&PredefinedMenuItem::separator(manager)?)?;
     }
+    menu.append(&MenuItem::with_id(
+        manager,
+        "add_online_source",
+        "添加在线来源…",
+        true,
+        None::<&str>,
+    )?)?;
     Ok(Some(menu))
 }
 
@@ -398,7 +381,7 @@ fn current_site_id<R: Runtime>(handle: &tauri::AppHandle<R>) -> String {
         .get("global")
         .and_then(|g| g.get("lastSiteId"))
         .and_then(|v| v.as_str())
-        .unwrap_or("weread")
+        .unwrap_or("local")
         .to_string()
 }
 
@@ -544,14 +527,12 @@ fn build_monitor_menu_items<R: Runtime>(
     // Get the index of the screen that the main window is on
     let current_screen_index = get_current_screen_index(handle);
 
-
     // Get display names based on platform
     #[cfg(target_os = "macos")]
     let display_names = get_macos_display_names();
 
     #[cfg(not(target_os = "macos"))]
     let display_names = get_display_names(handle);
-
 
     // Use Tauri's available_monitors to get all monitors
     if let Ok(monitors) = handle.available_monitors() {
@@ -575,7 +556,6 @@ fn build_monitor_menu_items<R: Runtime>(
             let left_quote = "\u{201C}"; // "
             let right_quote = "\u{201D}"; // "
             let item_text = format!("移到 {}{}{}", left_quote, name_str, right_quote);
-
 
             if let Ok(item) = MenuItem::with_id(handle, &item_id, &item_text, true, None::<&str>) {
                 monitor_items.push(item);
@@ -807,10 +787,7 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
                 let _ = win.emit("menu-action", "auto_flip");
             }
         }
-        "reader_prev_page"
-        | "reader_next_page"
-        | "reader_prev_chapter"
-        | "reader_next_chapter" => {
+        "reader_prev_page" | "reader_next_page" | "reader_prev_chapter" | "reader_next_chapter" => {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.emit("menu-action", id);
             }
@@ -918,7 +895,9 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
             open_settings_target(app, "general", None, None);
         }
         "settings_reading" => open_settings_target(app, "reading", Some("auto-flip"), None),
-        "settings_content" => open_settings_target(app, "content", None, None),
+        "add_online_source" | "settings_content" => {
+            open_settings_target(app, "content", None, None)
+        }
         "settings_data" => {
             // 最近打开 → 管理阅读记录：直接进本地书架页（本地书目与封面管理）
             let url = crate::local_shelf_page_url();
@@ -1042,10 +1021,20 @@ fn build_app_menu<R: Runtime>(
     let forward = MenuItem::with_id(handle, "forward", "前进", true, Some("CmdOrCtrl+]"))?;
     let prev_page = MenuItem::with_id(handle, "reader_prev_page", "上一页 ←", true, None::<&str>)?;
     let next_page = MenuItem::with_id(handle, "reader_next_page", "下一页 →", true, None::<&str>)?;
-    let prev_chapter =
-        MenuItem::with_id(handle, "reader_prev_chapter", "上一章 ↑", true, None::<&str>)?;
-    let next_chapter =
-        MenuItem::with_id(handle, "reader_next_chapter", "下一章 ↓", true, None::<&str>)?;
+    let prev_chapter = MenuItem::with_id(
+        handle,
+        "reader_prev_chapter",
+        "上一章 ↑",
+        true,
+        None::<&str>,
+    )?;
+    let next_chapter = MenuItem::with_id(
+        handle,
+        "reader_next_chapter",
+        "下一章 ↓",
+        true,
+        None::<&str>,
+    )?;
     let auto_flip = CheckMenuItem::with_id(
         handle,
         "auto_flip",
@@ -1079,10 +1068,6 @@ fn build_app_menu<R: Runtime>(
         handle,
         &get_plugin_site_items(handle),
         &current_site_id(handle),
-        sites::is_site_enabled(
-            &settings::read_settings(handle).unwrap_or_else(|_| settings::default_settings()),
-            sites::WEREAD.id,
-        ),
     )?;
     let go_sep = PredefinedMenuItem::separator(handle)?;
     let go_sep2 = PredefinedMenuItem::separator(handle)?;
@@ -1417,6 +1402,7 @@ pub fn init<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             | "toggle_fullscreen"
             | "settings"
             | "settings_reading"
+            | "add_online_source"
             | "settings_content"
             | "settings_data"
             | "shortcuts"
@@ -1495,7 +1481,7 @@ fn initial_settings_from_document(document: &serde_json::Value) -> InitialSettin
     let site_id = global
         .and_then(|value| value.get("lastSiteId"))
         .and_then(serde_json::Value::as_str)
-        .unwrap_or("weread");
+        .unwrap_or("local");
     let site = document
         .get("sites")
         .and_then(|value| value.get(site_id))

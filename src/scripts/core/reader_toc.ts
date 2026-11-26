@@ -112,11 +112,6 @@ const byText = (
 
 const findTrigger = (siteId: string, doc: Document): HTMLElement | null => {
   switch (siteId) {
-    case 'weread':
-      return (
-        doc.querySelector<HTMLElement>('.readerControls button.catalog') ??
-        doc.querySelector<HTMLElement>('button.readerControls_item.catalog')
-      );
     case 'fanqie': {
       const icon = doc.querySelector<HTMLElement>(
         '.muyeicon-icon-chapter-menu',
@@ -171,7 +166,6 @@ const findTrigger = (siteId: string, doc: Document): HTMLElement | null => {
 
 /** 各站「隐藏工具栏」样式元素 ID：临时禁用即可恢复站点原生布局。 */
 const HIDE_TOOLBAR_STYLE_ID: Record<string, string> = {
-  weread: 'wxrd-hide-toolbar',
   qidian: 'plugin-qidian-toolbar',
   qimao: 'plugin-qimao-toolbar',
 };
@@ -229,29 +223,6 @@ const revealToolbar = (siteId: string, doc: Document): ToolbarReveal | null => {
  * 本就渲染在 DOM 里（关闭态 display:none 或 transform 移出屏），
  * 直接注入样式放开即可，等效于替官方脚本完成「显示目录」这一步。
  */
-const PANEL_FORCE_CSS: Record<string, string> = {
-  // 微信读书关闭态是纯 display:none，放开即恢复原生布局（真机已验证）。
-  // 起点/得到不在此列：它们的关闭态宽高由站点 JS 惰性设置（rect 0x0），
-  // 强制显示会卡在零尺寸/屏外，走点击路径更可靠。
-  weread:
-    'display: block !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; z-index: 2147483200 !important;',
-};
-
-const forcePanelStyle = (
-  siteId: string,
-  doc: Document,
-  css: string,
-): HTMLStyleElement | null => {
-  const hint = PANEL_HINT[siteId];
-  if (!hint) return null;
-  if (!doc.querySelector(hint)) return null;
-  const style = doc.createElement('style');
-  style.setAttribute('data-atreader-toc-reveal', '');
-  style.textContent = `html body ${hint} { ${css} }`;
-  (doc.head ?? doc.documentElement).appendChild(style);
-  return style;
-};
-
 /** 任意 pointerdown（面板外）或 Esc 后 300ms 执行清理；30s 安全兜底。 */
 let activeDismissCleanup: (() => void) | null = null;
 
@@ -355,7 +326,6 @@ const clickNative = (element: HTMLElement): TocOpenOutcome => {
 const NATIVE_CLICK_SITES = new Set(['dedao', 'duokan']);
 
 const PANEL_HINT: Record<string, string> = {
-  weread: '.readerCatalog',
   fanqie: '.reader-catalog',
   qidian: '#chapter-list',
   qimao: '.qm-fixed-right-extend',
@@ -424,58 +394,10 @@ export const openReaderToc = (
   const trigger = findTrigger(siteId, doc);
   if (!trigger) return 'not-found';
   const extraStyles: HTMLStyleElement[] = [];
-  let overlay: HTMLDivElement | null = null;
-  let detachWheelGuard: (() => void) | null = null;
   const cleanupAll = (): void => {
-    detachWheelGuard?.();
-    detachWheelGuard = null;
-    overlay?.remove();
-    overlay = null;
     for (const style of extraStyles) style.remove();
     extraStyles.length = 0;
   };
-
-  // 微信读书：React onClick 直调（同步、无延迟）；失败立即 CSS 强制显示——
-  // 合成点击对微信已被多轮实证无效，不再等它 600ms，与其他书城同时弹出。
-  if (siteId === 'weread') {
-    if (invokeReactOnClick(trigger)) return 'opened';
-    const style = forcePanelStyle('weread', doc, PANEL_FORCE_CSS.weread);
-    if (!style) return 'not-found';
-    extraStyles.push(style);
-    const overlayEl = doc.createElement('div');
-    overlayEl.setAttribute('data-atreader-toc-overlay', '');
-    overlayEl.style.cssText =
-      'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,0.45);';
-    (doc.body ?? doc.documentElement).appendChild(overlayEl);
-    overlay = overlayEl;
-    const detach = applyWeReadForceExtras(doc, extraStyles, (title) => {
-      // 站点状态机没参与，点章节不会自己导航：交给 RemoteManager 匹配
-      // chapterManager 跳转，并同步收起目录。
-      doc.defaultView?.dispatchEvent(
-        new CustomEvent('atreader:toc-chapter-pick', { detail: { title } }),
-      );
-      cleanupAll();
-    });
-    if (detach) detachWheelGuard = detach;
-    armDismissCleanup(
-      doc,
-      cleanupAll,
-      (target) => !!target?.closest('.readerCatalog'),
-    );
-    return 'opened';
-  }
-
-  // 目录面板/抽屉已在 DOM 中的站点：直接注入样式显示，不模拟点击、不弹工具栏。
-  // 面板缺失（懒加载站点）时落回下方的点击路径。
-  const forceCss = PANEL_FORCE_CSS[siteId];
-  if (forceCss) {
-    const style = forcePanelStyle(siteId, doc, forceCss);
-    if (style) {
-      extraStyles.push(style);
-      armDismissCleanup(doc, cleanupAll);
-      return 'opened';
-    }
-  }
 
   // 七猫：章节抽屉嵌在工具栏内且靠 CSS :hover 展开，连容器一起强制显示
   if (siteId === 'qimao') {
@@ -499,96 +421,6 @@ export const openReaderToc = (
     scheduleRevealRestore(reveal, doc, siteId, holdMs);
   }
   return 'opened';
-};
-
-/** 强制显示后把微信读书目录滚动到当前章（站点原生靠 React 状态定位）。 */
-const scrollWeReadToCurrentChapter = (doc: Document): void => {
-  const panel = doc.querySelector<HTMLElement>('.readerCatalog');
-  if (!panel || !isShown(panel)) return;
-  const title = doc
-    .querySelector('.renderTargetPageInfo_header_chapterTitle')
-    ?.textContent?.trim();
-  if (!title) return;
-  const items = Array.from(
-    panel.querySelectorAll<HTMLElement>('.readerCatalog_list_item_title'),
-  );
-  // 同名章（如多个番外同名）取最后一个，最接近当前进度
-  let target: HTMLElement | null = null;
-  for (const el of items) {
-    if (isCatalogTitleMatch((el.textContent ?? '').trim(), title)) target = el;
-  }
-  if (!target) return;
-  target.closest('li')?.classList.add('atreader-toc-current');
-  target.scrollIntoView({ block: 'center' });
-};
-
-/**
- * 目录项文本与当前章标题的匹配：目录项带「第N章 」前缀，用去空白后的
- * 相等/后缀关系；同名章取最后一个（最接近当前进度）。
- */
-export const isCatalogTitleMatch = (itemText: string, title: string): boolean => {
-  const item = itemText.replace(/\s+/g, '');
-  const head = title.replace(/\s+/g, '');
-  return item.length > 0 && head.length > 0 && item.endsWith(head);
-};
-
-/**
- * 微信读书 CSS 强制方案的补丁：面板改 flex 列、滚动区 flex:1 形成滚动容器
- *（否则滚动区高度跟着 8 万像素的章节列表走，内部没有可滚溢出），按章节
- * 标题匹配定位当前章，并手动滚 scrollTop——站点在 document 捕获期就
- * preventDefault 了滚轮，浏览器默认滚动已不可救。
- * 站点状态机没参与，点章节不会自己导航：拦截点击交给 onPick（调用方导航）。
- */
-const applyWeReadForceExtras = (
-  doc: Document,
-  extraStyles: HTMLStyleElement[],
-  onPick?: (title: string) => void,
-): (() => void) | null => {
-  const scrollStyle = doc.createElement('style');
-  scrollStyle.setAttribute('data-atreader-toc-reveal', '');
-  scrollStyle.textContent = [
-    'html body .readerCatalog { display: flex !important; flex-direction: column !important; }',
-    // 滚动用我们自己的（wheel 手动 scrollTop），外侧 WebKit 滚动条藏起来，
-    // 只留微信自带的 perfect-scrollbar 那条
-    'html body .readerCatalog_list_scroll_area { overflow-y: auto !important; -webkit-overflow-scrolling: touch !important; flex: 1 1 auto !important; min-height: 0 !important; height: auto !important; scrollbar-width: none !important; }',
-    'html body .readerCatalog_list_scroll_area::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }',
-    'html body .readerCatalog_list_item.atreader-toc-current { background: rgba(52, 159, 102, 0.14) !important; }',
-  ].join('\n');
-  (doc.head ?? doc.documentElement).appendChild(scrollStyle);
-  extraStyles.push(scrollStyle);
-  const panel = doc.querySelector<HTMLElement>('.readerCatalog');
-  const detachers: Array<() => void> = [];
-  if (panel) {
-    const onWheel = (event: WheelEvent): void => {
-      const area = panel.querySelector<HTMLElement>(
-        '.readerCatalog_list_scroll_area',
-      );
-      if (area) area.scrollTop += event.deltaY;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    panel.addEventListener('wheel', onWheel, { capture: true, passive: false });
-    detachers.push(() =>
-      panel.removeEventListener('wheel', onWheel, { capture: true }),
-    );
-    if (onPick) {
-      const onItemClick = (event: Event): void => {
-        const item = (event.target as Element | null)?.closest(
-          '.readerCatalog_list_item',
-        );
-        const title = item
-          ?.querySelector('.readerCatalog_list_item_title')
-          ?.textContent?.trim();
-        if (title) onPick(title);
-      };
-      panel.addEventListener('click', onItemClick);
-      detachers.push(() => panel.removeEventListener('click', onItemClick));
-    }
-  }
-  setTimeout(() => scrollWeReadToCurrentChapter(doc), 350);
-  return () => {
-    for (const detach of detachers) detach();
-  };
 };
 
 /** 目录当前是否展开（遥控「单击收目录」的判定依据）。 */

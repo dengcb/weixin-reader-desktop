@@ -1,3 +1,4 @@
+import { attachKeyboardToSameOriginIframes } from './iframe_keyboard';
 /**
  * Plugin API Implementation
  * 插件 API 实现
@@ -7,7 +8,7 @@
 
 import { injectCSS, removeCSS } from './utils';
 import { settingsStore } from './settings_store';
-import { EventBus } from './event_bus';
+import { EventBus, Events } from './event_bus';
 import { log as coreLog } from './logger';
 import { showToast } from './toast';
 import type {
@@ -324,8 +325,7 @@ const createContentAPI = (_pluginId: string): ContentAPI => {
     
     getContainer(): HTMLElement | null {
       // 尝试获取阅读区域容器
-      return document.querySelector('.readerChapterContent') || 
-             document.querySelector('#reader-container') ||
+      return document.querySelector('#reader-container') ||
              document.body;
     },
     
@@ -361,6 +361,14 @@ export const createPluginAPI = (
   cleanupPluginAPI(pluginId);
   
   return {
+    reader: {
+      onFrameKey: handler => trackCleanup(pluginId, attachKeyboardToSameOriginIframes(handler)),
+      onRoute: handler => trackCleanup(pluginId, EventBus.onWithHistory(Events.ROUTE_CHANGED, handler)),
+      onChapter: handler => trackCleanup(pluginId, EventBus.on(Events.CHAPTER_CHANGED, handler)),
+      onDirection: handler => trackCleanup(pluginId, EventBus.on(Events.PAGE_TURN_DIRECTION, handler)),
+      reportProgress: progress => EventBus.emit(Events.PROGRESS_UPDATED, { progress }),
+      syncTheme: () => window.dispatchEvent(new Event('atreader:theme-changed')),
+    },
     style: createStyleAPI(pluginId, styleFiles),
     settings: createSettingsAPI(pluginId),
     events: createEventsAPI(pluginId),

@@ -32,7 +32,7 @@ describe('fullscreen_exit_button（dev.9 退出全屏叉号）', () => {
     expect(again).toBe(first);
     // 深浅双适配样式必须存在关键选择器
     const css = document.getElementById(`${EXIT_BUTTON_ID}-style`)?.textContent ?? '';
-    expect(css).toContain('body.wr_whiteTheme #wxrd-exit-fullscreen');
+    expect(css).toContain('body.atreader-light-theme #wxrd-exit-fullscreen');
     expect(css).toContain('prefers-color-scheme: light');
     expect(css).toContain('wxrd-edge-shown');
     // 点击处理由调用方（inject.ts）绑定 simulate_menu_click，此处校验默认无内建 onclick

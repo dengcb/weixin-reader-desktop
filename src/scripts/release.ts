@@ -334,7 +334,7 @@ async function runBuild(targets: MacTarget[]): Promise<void> {
   for (const target of targets) {
     const buildStartedAt = Date.now();
     await runStep(`构建 ${target}`, () =>
-      runCommand(process.execPath, ['run', 'tauri', 'build', '--target', target, '--', '--locked']),
+      runCommand(process.execPath, ['run', 'tauri', 'build', '--config', 'src-tauri/tauri.github.conf.json', '--target', target, '--', '--locked']),
     );
     const record = collectMacArtifacts(target, buildStartedAt);
     await runStep(`公证并 stapling ${record.installer.name}`, () => notarizeAndStaple(record));

@@ -18,7 +18,7 @@ inject.ts
       ├─ SettingsStore              前端状态、合并视图、订阅、串行 patch
       ├─ PluginLoader
       │   ├─ PluginRegistry         唯一运行时注册表
-      │   ├─ WeReadSiteRuntime      桥接既有 WeReadAdapter
+      │   ├─ LocalSiteRuntime       内置本地阅读器
       │   └─ PluginSiteRuntime      包装外部 ReaderPlugin
       ├─ SiteContext                Managers 的唯一站点入口
       └─ Managers                   路由、菜单、样式、翻页、遥控、恢复
@@ -34,7 +34,7 @@ Rust
 初始化顺序由 `AppRuntime.initialize()` 固定：
 
 1. 初始化 `SettingsStore`。
-2. 注册微信读书桥接器。
+2. 注册内置本地阅读器。
 3. 调用 `get_runtime_plugin` 加载当前域名唯一匹配的外部插件。
 4. 激活当前运行时并由 Rust 应用站点缩放。
 5. 创建 Managers。
@@ -57,14 +57,14 @@ Rust
 | `onLoad()` / `onUnload()` | 生命周期 |
 | `styleOwner` | `manager` 或 `plugin`，避免重复注入 |
 
-### 微信读书桥接器
+### 微信读书外部插件
 
-`WeReadSiteRuntime` 延迟创建 `WeReadAdapter`：只有域名匹配并加载微信读书运行时时才构造适配器，避免在其他网站启动微信读书的进度监听器。
+`plugins/weread` 通过外部包装器接入，延迟创建 `WeReadAdapter`：只有域名匹配并加载微信读书运行时时才构造适配器，避免在其他网站启动微信读书的进度监听器。
 
 - 页面判断、翻页、双栏检测和进度仍委托给现有适配器。
 - 样式仍由 `StyleManager` 调用适配器的样式方法，`styleOwner = "manager"`。
 - `onUnload()` 销毁适配器并释放进度跟踪器。
-- 不在桥接层复制或修改微信读书进度算法。
+- 不在壳层复制微信读书进度算法。
 
 ### 外部插件包装器
 
@@ -152,7 +152,7 @@ plugin.atrd
 - `id` 只能由小写 ASCII 字母、数字、`-`、`_` 组成，最长 64 字节。
 - Web 插件必须提供合法的 `site.domain`、HTTP(S) `homeUrl` 和非空 `readerPattern`。
 - `siteId` 永远等于 manifest 的 `id`，不能使用菜单顺序或临时编号。
-- `weread` 是内置微信读书保留 ID，外部插件不得使用；`weread.qq.com` 及其父子域名同样由内置插件保留。
+- `local` 和本地协议域名由壳保留。微信读书以 `weread.atrd` 安装，与其他在线来源共用域名冲突检查。
 - 不同插件不得声明相同或父子重叠的域名；同一 manifest 内也不得重复声明重叠域名。
 - 外部插件必须 `export default` 一个实现 `ReaderPlugin` 的类。
 

@@ -13,11 +13,10 @@
 
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
 import { injectCSS, removeCSS } from '../core/utils';
-import { detectWereadTheme } from '../core/weread_theme';
 import {
   DEFAULT_WIDE_WIDTH_PERCENT,
   normalizeWideWidthPercent,
-} from '../core/reader_width';
+} from '../../plugins/shared/reader_width';
 import { settingsStore, MergedSettings } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { log } from '../core/logger';
@@ -117,6 +116,7 @@ export class StyleManager {
     this.darkModeHandler(this.darkModeQuery);
 
     // Listen for changes
+    window.addEventListener('atreader:theme-changed', this.onThemeChange);
     this.darkModeQuery.addEventListener('change', this.darkModeHandler);
 
     if (document.body) {
@@ -157,28 +157,20 @@ export class StyleManager {
   }
 
   private currentWindowTheme(): Theme | null | undefined {
-    if (this.siteContext.siteId !== 'weread') return null;
-    // 非 weread 站点必须主动恢复系统跟随（null）：窗口外观可能被上一站
-    // （weread 阅读页按 cookie set_theme）钉住，跨站导航不会自动复位；
-    // 若放任不管，新站点的 prefers-color-scheme 读到的是泄漏的假主题
-    // （zread 等按 matchMedia 跟随系统的站点会渲染成错误深浅）。
-    // 非阅读页（主页/书城）的 body 用 wr_theme_light/dark 标记主题，没有
-    // wr_whiteTheme——不能据此判 dark，否则 setTheme('dark') 会把 WebView
-    // 外观钉死，劫持 matchMedia，主页的系统主题跟随与深色滤镜全部失真
-    // （issue #18）。交还系统跟随（setTheme(null)）。
-    if (!this.siteContext.isReaderPage) return null;
-    // dev.16 真机取证（v1.8.4 合并收口）：新版微信读书阅读页【不存在】
-    // body.wr_whiteTheme DOM 类（上游此判据恒返 'dark'，亮色阅读页被钉成暗窗，
-    // 并与我们 weread_style_panel 的 cookie 联动产生 set_theme 双写竞速）。
-    // 阅读页真信号 = cookie wr_theme；与 weread_style_panel 共用同一真相源。
-    return detectWereadTheme();
+    return this.siteContext.isReaderPage ? this.siteContext.currentRuntime?.getWindowTheme?.() ?? null : null;
   }
+
+  private onThemeChange = () => this.syncWindowTheme();
 
   private syncWindowTheme(): void {
     if (window.self !== window.top || !window.__TAURI__) return;
     const theme = this.currentWindowTheme();
     // null（恢复系统跟随）对非 weread 与 weread 主页都是有效指令，必须下发
     if (theme === undefined) return;
+    const light = theme === 'light';
+    if (document.body && document.body.classList.contains('atreader-light-theme') !== light) {
+      document.body.classList.toggle('atreader-light-theme', light);
+    }
     if (theme === this.lastWindowTheme) return;
     this.lastWindowTheme = theme;
     this.setWindowTheme(theme);
@@ -275,7 +267,9 @@ export class StyleManager {
       this.darkModeQuery = null;
       this.darkModeHandler = null;
     }
+    window.removeEventListener('atreader:theme-changed', this.onThemeChange);
     this.pageThemeObserver?.disconnect();
+    document.body?.classList.remove('atreader-light-theme');
     this.pageThemeObserver = null;
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = null;

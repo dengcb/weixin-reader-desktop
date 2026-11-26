@@ -54,6 +54,15 @@
     .search-results { display:none; margin-top:12px; } .search-results.show { display:block; } .result { display:block; width:100%; padding:11px 13px; border:0; border-bottom:1px solid var(--line); background:var(--surface); text-align:left; cursor:pointer; } .result:hover { background:var(--surface-muted); } .result small { display:block; margin-top:2px; color:var(--muted); }
     .overlay { position:fixed; inset:0; z-index:10; display:none; align-items:center; justify-content:center; padding:24px; background:rgba(12,22,20,.48); } .overlay.show { display:flex; } .dialog { width:min(430px,100%); padding:22px; border:1px solid var(--line); border-radius:15px; background:var(--surface); box-shadow:var(--shadow); } .dialog h2 { margin:0 0 8px; font-size:18px; } .dialog p { margin:0 0 18px; color:var(--muted); font-size:13px; white-space:pre-line; } .dialog-actions { display:flex; justify-content:flex-end; gap:8px; }
     @media (max-width:850px) { .app-shell { grid-template-columns:190px 1fr; } .content { padding-inline:28px; } }
+  .plugin-more { position:relative; margin:0; }
+    .plugin-more summary {cursor:pointer; padding:6px; font-size:13px}
+    #pluginList { overflow:visible; }
+    .plugin-more[open] > div {position:absolute;top:calc(100% + 9px);right:-1px;z-index:2;display:flex;gap:4px;padding:6px;border:1px solid var(--line);background:var(--surface);border-radius:8px}
+    #pluginList {overflow:visible}
+    .plugin-update-head {flex-wrap:wrap}
+    .plugin-update-head [hidden] {display:none}
+    .plugin-fixed-mark { display:block; width:20px; height:20px; color:inherit; }
+    .plugin-fixed-mark img { display:block; width:100%; height:100%; border-radius:4px; filter:grayscale(1); opacity:.8; }
   </style>
 </head>
 <body>
@@ -77,7 +86,7 @@
       <section class="page active" id="page-general" data-title="通用"><div class="page-head"><div><div class="eyebrow">Preference 01</div><h1>通用</h1><p class="page-intro">设置应用启动后的打开方式。</p></div><div class="save-status" id="saveStatus" aria-live="polite"></div></div>
         <div class="group"><h2 class="group-title">启动与恢复</h2><div class="settings-card">
           <div class="setting-row" data-search="默认页面 首页 书架 启动 切换书店 回退 主页键 长按 退出"><div class="setting-copy"><div class="setting-label">默认页面</div><div class="setting-desc">长按主页键退出阅读，或启动/切换书店无阅读记忆时，回到书城首页还是书架。</div></div><select id="defaultPage" class="setting-control" aria-label="默认页面"><option value="home">首页</option><option value="shelf">书架</option></select></div>
-          <div class="setting-row" data-search="记住上次阅读来源 启动 来源 在线 本地"><div class="setting-copy"><div class="setting-label">记住上次阅读来源</div><div class="setting-desc">下次启动回到上次使用的在线来源或本地图书；来源不可用时使用可用入口。</div></div><label class="toggle setting-control"><input id="rememberSite" type="checkbox" data-global="rememberSite" aria-label="记住上次阅读来源"><span class="toggle-track"><span class="toggle-thumb"></span></span></label></div>
+          <div class="setting-row" data-search="记住上次阅读来源 启动 来源 在线 本地"><div class="setting-copy"><div class="setting-label">记住上次阅读来源</div><div class="setting-desc">下次启动回到上次使用的在线来源或本地图书；来源不可用时回到本地书库。</div></div><label class="toggle setting-control"><input id="rememberSite" type="checkbox" data-global="rememberSite" aria-label="记住上次阅读来源"><span class="toggle-track"><span class="toggle-thumb"></span></span></label></div>
           <div class="setting-row" data-search="记录并恢复阅读位置 进度 恢复 位置"><div class="setting-copy"><div class="setting-label">记录并恢复阅读位置</div><div class="setting-desc">由艾特阅读记录位置并尝试恢复；关闭后不清除已有记录，也不影响网站自己的进度同步。</div></div><label class="toggle setting-control"><input id="lastPage" type="checkbox" data-global="lastPage" aria-label="记录并恢复阅读位置"><span class="toggle-track"><span class="toggle-thumb"></span></span></label></div>
         </div></div>
         <div class="group"><h2 class="group-title">关于设置保存</h2><div class="settings-card"><div class="setting-row"><div class="setting-copy"><div class="setting-label">即时保存</div><div class="setting-desc">每次修改会立即写入应用配置。保存失败时，当前控件会恢复到后端状态，并显示重试提示。</div></div><span class="badge">自动</span></div></div></div>
@@ -139,9 +148,9 @@
         <p class="inline-note" data-search="输入监控 权限 macOS 授权 隐私 Windows 平台">macOS 需在「输入监控」中授权；音量键不调整系统音量需在「辅助功能」中授权。音量 / 返回 / 电源键仅 macOS 可用。遥控器语音翻页当前仅 macOS 实现（Windows 代码骨架已备，等待真机 PR 接线），支持二代（小米蓝牙遥控器 2 / 2 Pro），一代无蓝牙麦克风通道。</p>
         </div>
       </section>
-      <section class="page" id="page-content" data-title="内容与扩展"><div class="page-head"><div><div class="eyebrow">Manage 01</div><h1>内容与扩展</h1><p class="page-intro">管理在线阅读来源、查看本地图书格式支持，以及安装扩展。</p></div><div class="save-status" aria-live="polite"></div></div>
-        <div class="toolbar"><button id="installPluginBtn" class="button primary">从文件安装扩展…</button><span class="inline-note">选择 `.atrd` 后会进入确认窗口。</span></div>
-        <div class="group"><div class="group-head"><h2 class="group-title">在线来源</h2><div class="plugin-update-head"><button id="checkPluginUpdatesBtn" class="button" type="button">检查更新</button><span id="pluginUpdateStatus" class="update-state" aria-live="polite"></span></div></div><div id="pluginList" class="settings-card"><div class="empty">正在读取已安装来源…</div></div></div>
+      <section class="page" id="page-content" data-title="内容与扩展"><div class="page-head"><div><h1>内容与扩展</h1><p class="page-intro">管理在线阅读来源、查看本地图书格式支持，以及安装扩展。</p></div><div class="save-status" aria-live="polite"></div></div>
+        <div class="toolbar" data-search="获取插件 安装插件 从文件安装 扩展"><button id="getPluginsBtn" class="button primary">获取插件</button><button id="installPluginBtn" class="button">从文件安装…</button></div>
+        <div class="group"><div class="group-head"><h2 class="group-title">已安装的在线来源</h2><div class="plugin-update-head"><button id="checkPluginUpdatesBtn" class="button" type="button" hidden>检查更新</button><button id="updateAllPluginsBtn" class="button" hidden></button><span id="pluginUpdateStatus" class="update-state" aria-live="polite"></span></div></div><div id="pluginList" class="settings-card"><div class="empty">正在读取已安装来源…</div></div></div>
         <div class="group"><h2 class="group-title">格式支持</h2><div class="format-grid"><div class="format-tile"><strong>TXT</strong><span>内置 · 本地连续阅读</span></div><div class="format-tile"><strong>EPUB</strong><span>内置 · Foliate 排版引擎</span></div><div class="format-tile"><strong>MOBI / AZW3</strong><span>内置 · 无 DRM · Foliate 排版引擎</span></div><div class="format-tile"><strong>PDF</strong><span>内置 · 文字版提取 · 扫描版不支持</span></div></div><div class="inline-note">格式支持以当前版本实际解码和渲染能力为准。原始文件不会因清理记录被删除。</div></div>
         <details><summary>开发工具</summary><div class="details-body"><button id="createPluginBtn" class="button">新建扩展…</button><p>扩展编辑器面向开发者，拥有独立窗口和权限。普通用户无需进入这里即可安装或停用来源。</p></div></details>
       </section>
@@ -191,21 +200,327 @@
       const bindSetting = (id, patchFactory) => document.getElementById(id)?.addEventListener('change',(event) => { const target = event.currentTarget; const value = target.type === 'checkbox' ? target.checked : target.value; void patchSettings(patchFactory(value)).catch(() => syncControls(documentState || normalize({}))); });
       bindSetting('rememberSite',(value) => ({global:{rememberSite:value}})); bindSetting('lastPage',(value) => ({global:{lastPage:value}})); bindSetting('defaultPage',(value) => ({global:{defaultPage:value}})); bindSetting('hideCursor',(value) => ({global:{hideCursor:value}})); bindSetting('immersiveTitleBar',(value) => ({global:{immersiveTitleBar:value}})); bindSetting('showReadingPercent',(value) => ({global:{showReadingPercent:value}})); bindSetting('enableRemoteController',(value) => ({global:{enableRemoteController:value}})); bindSetting('voicePageTurn',(value) => ({global:{voicePageTurn:value}})); bindSetting('voicePageTurnPhrase',(value) => ({global:{voicePageTurnPhrase:(String(value||'').trim()||'翻页')}})); bindSetting('autoUpdate',(value) => ({global:{autoUpdate:value}})); bindSetting('keepAwake',(value) => ({global:{autoFlip:{keepAwake:value}}})); const applyFlipInterval = (seconds) => { void patchSettings({global:{autoFlip:{interval:seconds}}}).catch(() => syncControls(documentState || normalize({}))); }; const intervalSelect = document.getElementById('autoFlipInterval'); const intervalCustom = document.getElementById('autoFlipIntervalCustom'); intervalSelect?.addEventListener('change',() => { if (intervalSelect.value === 'custom') { intervalCustom.hidden = false; intervalCustom.focus(); return; } intervalCustom.hidden = true; applyFlipInterval(Number(intervalSelect.value)); }); intervalCustom?.addEventListener('change',() => { const seconds = Math.round(Number(intervalCustom.value)); if (!Number.isFinite(seconds) || seconds < 1 || seconds > 3600) { syncControls(documentState || normalize({})); return; } applyFlipInterval(seconds); });
       const confirm = (title,message,okText='确认') => new Promise((resolve) => { const overlay=document.getElementById('confirmOverlay'); const ok=document.getElementById('confirmOk'); const cancel=document.getElementById('confirmCancel'); const previous=document.activeElement; document.getElementById('confirmTitle').textContent=title; document.getElementById('confirmMessage').textContent=message; ok.textContent=okText; overlay.classList.add('show'); cancel.focus(); const trap=(event)=>{if(event.key!=='Tab')return;const nodes=[cancel,ok];const index=nodes.indexOf(document.activeElement);event.preventDefault();nodes[(index+(event.shiftKey?-1:1)+nodes.length)%nodes.length].focus();}; const close=(value)=>{overlay.classList.remove('show'); overlay.removeEventListener('keydown',trap); ok.onclick=null; cancel.onclick=null; overlay.onclick=null; previous?.focus?.(); resolve(value);}; overlay.addEventListener('keydown',trap); ok.onclick=()=>close(true); cancel.onclick=()=>close(false); overlay.onclick=(event)=>{if(event.target===overlay)close(false);}; });
-      const builtinPlugins = [{id:'weread',name:'微信读书',version:'内置',description:'微信读书网站阅读增强',builtin:true,site:{homeUrl:'https://weread.qq.com/'}}]; const isEnabled=(plugin,ids)=>ids === undefined || ids.includes(plugin.id); const pluginHome=(plugin)=>plugin.homeUrl || plugin.site?.homeUrl || '';
-      const reorderPlugins = (from,to) => { const [moved]=allPlugins.splice(from,1); allPlugins.splice(to,0,moved); renderPlugins(); const order=allPlugins.filter((plugin)=>!plugin.builtin).map((plugin)=>plugin.id); void patchSettings({global:{siteOrder:order}}).then(()=>emitEvent?.('site-order-changed')).catch(()=>refreshPlugins()); };
-      const bindDrag = (card,grip) => { grip.addEventListener('pointerdown',(event)=>{ if(event.button!==0)return; const list=document.getElementById('pluginList'); const cards=Array.from(list.querySelectorAll('.plugin-card')); const startIndex=cards.indexOf(card); if(startIndex<0)return; event.preventDefault(); const rects=cards.map((node)=>node.getBoundingClientRect()); const itemHeight=rects[startIndex].height; const startY=event.clientY; let targetIndex=startIndex; try{grip.setPointerCapture(event.pointerId);}catch{} list.classList.add('reordering'); card.classList.add('dragging'); const onMove=(moveEvent)=>{ const dy=moveEvent.clientY-startY; card.style.transform=`translateY(${dy}px)`; const center=rects[startIndex].top+dy+itemHeight/2; targetIndex=startIndex; cards.forEach((_,i)=>{ if(i===startIndex)return; const mid=rects[i].top+rects[i].height/2; if(startIndex<i){ if(center>mid) targetIndex=Math.max(targetIndex,i); } else if(center<mid){ targetIndex=Math.min(targetIndex,i); } }); cards.forEach((node,i)=>{ if(i===startIndex)return; const shift=(startIndex<targetIndex&&i>startIndex&&i<=targetIndex)?-itemHeight:(startIndex>targetIndex&&i<startIndex&&i>=targetIndex)?itemHeight:0; node.style.transform=shift?`translateY(${shift}px)`:''; }); }; const finish=()=>{ grip.removeEventListener('pointermove',onMove); grip.removeEventListener('pointerup',finish); grip.removeEventListener('pointercancel',finish); list.classList.remove('reordering'); card.classList.remove('dragging'); cards.forEach((node)=>{node.style.transform='';}); if(targetIndex!==startIndex) reorderPlugins(startIndex,targetIndex); }; grip.addEventListener('pointermove',onMove); grip.addEventListener('pointerup',finish); grip.addEventListener('pointercancel',finish); }); };
-      const renderPluginError = (error) => { const list=document.getElementById('pluginList'); list.replaceChildren(); const empty=document.createElement('div'); empty.className='empty'; empty.textContent=`无法读取扩展，请重试：${String(error?.message || error)}`; list.append(empty); };
-      const renderPlugins = () => { const list=document.getElementById('pluginList'); list.replaceChildren(); if (!allPlugins.length) { const empty=document.createElement('div'); empty.className='empty'; empty.textContent='暂无已安装的在线来源'; list.append(empty); return; } allPlugins.forEach((plugin) => { const card=document.createElement('div'); card.className='plugin-card'; const lead=document.createElement('span'); lead.className='plugin-lead'; if (!plugin.builtin) { const grip=document.createElement('button'); grip.type='button'; grip.className='plugin-grip'; grip.title='拖动调整顺序'; grip.setAttribute('aria-label',`拖动调整「${plugin.name || plugin.id}」的顺序`); grip.innerHTML='<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="3.5" cy="2.5" r="1.5"/><circle cx="8.5" cy="2.5" r="1.5"/><circle cx="3.5" cy="8" r="1.5"/><circle cx="8.5" cy="8" r="1.5"/><circle cx="3.5" cy="13.5" r="1.5"/><circle cx="8.5" cy="13.5" r="1.5"/></svg>'; bindDrag(card,grip); lead.append(grip); } else { lead.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,.2c1.1,0,2.3,0,3.4,0,1.4,0,2.8,0,4.2,0,1,0,2,.4,2.8,1,.7.6,1.2,1.5,1.3,2.4,0,.2,0,.5,0,.7,0,2.2,0,4.4,0,6.7,0,1.9,0,3.9,0,5.8,0,.4-.2.6-.5.7-.3.1-.7.2-1.1.3-.9.2-1.8.2-2.7.2-1.3,0-2.6,0-3.9,0-.8,0-1.6.2-2.3.5-.4.2-.7.5-1,.8,0,0,0,0,0,0-.2.1-.3.1-.5,0-.7-.7-1.6-1.1-2.6-1.3-.3,0-.7,0-1,0-1.3,0-2.6,0-4,0-.7,0-1.5,0-2.2-.1-.4,0-.9-.1-1.3-.3,0,0-.2,0-.2-.1-.2-.1-.3-.3-.3-.6,0-1,0-2.1,0-3.1,0-1.8,0-3.5,0-5.3,0-1.4,0-2.8,0-4.2,0-.6.1-1.2.4-1.7C1.2,1.4,2.2.6,3.6.3c.4,0,.9,0,1.3,0,1.2,0,2.3,0,3.5,0,1.2,0,2.4,0,3.6,0ZM19.2,9.6c0-.1,0-.3-.1-.4-.1-.5-.3-.9-.6-1.2-.3-.3-.6-.6-.9-.8-.5-.3-1-.5-1.6-.6-.4,0-.8,0-1.2,0-.3,0-.6,0-1,.2-.4.1-.8.3-1.1.4-.3.2-.5.4-.8.6-.4.4-.7.8-.9,1.3-.1.4-.2.8-.3,1.2,0,.4,0,.8.2,1.1.1.5.4.9.7,1.2.2.2.4.4.6.6,0,0,0,.1,0,.2,0,.3-.2.7-.2,1,0,0,0,.1,0,.2,0,0,.1,0,.2,0,.4-.2.8-.4,1.2-.6,0,0,.1,0,.2,0,0,0,.2,0,.3,0,.2,0,.3,0,.5,0,.1,0,.3,0,.4,0,0,0,0,0,0,0,0-.2-.1-.4-.1-.7,0-.5,0-1,.2-1.4.2-.5.5-.9,1-1.3.3-.2.6-.4,1-.6.3-.1.6-.2.9-.3.3,0,.6,0,.9,0,.1,0,.3,0,.4,0ZM22,12.7c0-.2,0-.5-.2-.8-.2-.5-.5-1-1-1.3-.5-.4-1.2-.6-1.8-.7-.3,0-.6,0-.9,0-.5,0-.9.2-1.3.4-.4.2-.8.5-1,.9-.3.4-.5.8-.6,1.3,0,.5,0,.9,0,1.3.1.4.4.8.7,1.1.6.5,1.2.9,2,1,.6,0,1.1,0,1.7-.2,0,0,.1,0,.2,0,.4.2.7.3,1.1.5,0,0,0,0,.1,0,0,0,0,0,0-.1,0-.3-.1-.6-.2-.8,0,0,0-.1,0-.2.2-.2.4-.4.6-.6.4-.5.6-1.1.6-1.9Z"/><path d="M.2,18.6c.2,0,.4.2.6.3.4.1.8.2,1.3.3,1.2.2,2.5.1,3.7.1.9,0,1.7,0,2.6,0,.6,0,1.2.1,1.7.4.3.1.5.3.7.5.3.3.7.4,1.2.4.4,0,.8-.2,1.1-.5.5-.5,1.1-.7,1.8-.8.3,0,.5,0,.8,0,1.5,0,3,0,4.5,0,.9,0,1.7,0,2.6-.3.3,0,.6-.2.9-.4,0,0,0,0,0,0,0,.1,0,.3,0,.4,0,.3,0,.7,0,1,0,.7-.2,1.3-.6,1.9-.6,1-1.5,1.6-2.7,1.8-.2,0-.5,0-.7,0-1.6,0-3.2,0-4.9,0-1.8,0-3.5,0-5.3,0-1.8,0-3.5,0-5.3,0-1,0-1.8-.3-2.5-.9-.8-.6-1.2-1.5-1.4-2.4,0-.2,0-.4,0-.7,0-.4,0-.8,0-1.1,0,0,0,0,0,0Z"/><path d="M13.6,8.5c.3,0,.6.3.6.6,0,.3-.3.6-.6.6-.4,0-.6-.3-.6-.6,0-.3.3-.6.6-.6Z"/><path d="M15.8,9.1c0-.3.3-.6.6-.6.3,0,.6.3.6.6,0,.3-.3.6-.6.6-.3,0-.6-.3-.6-.6Z"/><path d="M17.9,11.9c0,.3-.2.5-.5.5-.3,0-.5-.2-.5-.5,0-.3.2-.5.5-.5.3,0,.5.2.5.5Z"/><path d="M20.1,11.9c0,.3-.2.5-.5.5-.3,0-.5-.2-.5-.5,0-.3.2-.5.5-.5.2,0,.5.2.5.5Z"/></svg>'; } const copy=document.createElement('div'); const row=document.createElement('div'); row.className='plugin-name-row'; const name=document.createElement('span'); name.className='plugin-name'; name.textContent=plugin.name || plugin.id; const badge=document.createElement('span'); badge.className=`badge ${plugin.enabled ? '' : 'muted'}`; badge.textContent=plugin.enabled ? (plugin.builtin ? '内置' : '已启用') : '已停用'; row.append(name,badge); if (plugin.update?.hasUpdate) { const updateBadge=document.createElement('span'); updateBadge.className='badge update'; updateBadge.textContent=`有新版 v${plugin.update.remoteVersion}`; row.append(updateBadge); } const meta=document.createElement('div'); meta.className='plugin-meta'; meta.textContent=`${plugin.builtin ? '官方内置' : `版本 ${plugin.version || '未知'}`} · ${plugin.site?.domain || pluginHome(plugin) || '在线来源'}`; copy.append(row,meta); const actions=document.createElement('div'); actions.className='plugin-actions'; const toggle=document.createElement('label'); toggle.className='toggle'; const input=document.createElement('input'); input.type='checkbox'; input.checked=!!plugin.enabled; input.setAttribute('aria-label',`${plugin.name || plugin.id}已启用`); const track=document.createElement('span'); track.className='toggle-track'; const thumb=document.createElement('span'); thumb.className='toggle-thumb'; track.append(thumb); toggle.append(input,track); input.addEventListener('change',()=>void togglePlugin(plugin,input)); if (!plugin.builtin) { if (plugin.update?.hasUpdate) { const update=document.createElement('button'); update.className='button primary'; update.textContent='更新'; update.addEventListener('click',()=>void updatePlugin(plugin,update)); actions.append(update); } const edit=document.createElement('button'); edit.className='button'; edit.textContent='编辑'; edit.addEventListener('click',()=>openPluginEditor('edit',plugin.id)); const uninstall=document.createElement('button'); uninstall.className='button danger'; uninstall.textContent='卸载'; uninstall.addEventListener('click',()=>void uninstallPlugin(plugin)); actions.append(edit,uninstall); } actions.append(toggle); card.append(lead,copy,actions); list.append(card); }); };
-      const refreshPlugins = async () => { const settings=documentState || await readSettings(); const ids=Array.isArray(settings.global?.enabledPlugins) ? settings.global.enabledPlugins : undefined; try { const external=await invoke('get_installed_plugins'); const order=Array.isArray(settings.global?.siteOrder)?settings.global.siteOrder:[]; const rank=(id)=>{const index=order.indexOf(id);return index<0?Number.MAX_SAFE_INTEGER:index;}; external.sort((a,b)=>rank(a.id)-rank(b.id)||String(a.id).localeCompare(String(b.id))); allPlugins=[...builtinPlugins,...external.filter((plugin)=>plugin.id!=='weread').map((plugin)=>({...plugin,builtin:false}))].map((plugin)=>({...plugin,enabled:isEnabled(plugin,ids),update:pluginUpdates.get(plugin.id)})); renderPlugins(); } catch (error) { renderPluginError(error); } };
-      const refreshPluginsFromRepository = async () => { try { await readSettings(); await refreshPlugins(); } catch (error) { renderPluginError(error); } };
-      const togglePlugin = async (plugin,input) => { input.disabled=true; try { acceptSettings(await invoke('set_content_source_enabled',{sourceId:plugin.id,enabled:input.checked})); syncControls(documentState); await refreshPlugins(); } catch (error) { input.checked=!input.checked; window.alert(`更新来源状态失败：${String(error?.message || error)}`); } input.disabled=false; };
-      const uninstallPlugin = async (plugin) => { const confirmed=await confirm(`卸载「${plugin.name || plugin.id}」？`,'将移除扩展文件，保留该来源的设置和阅读记录。重新安装同一扩展后可继续使用。','卸载'); if (!confirmed) return; try { await invoke('uninstall_plugin',{pluginId:plugin.id}); await refreshPlugins(); } catch(error) { window.alert(`卸载失败：${String(error?.message || error)}`); } };
-      let pluginUpdates=new Map(); let pluginUpdateStatusTimer=null;
-      const setPluginUpdateStatus=(text,kind='')=>{const node=document.getElementById('pluginUpdateStatus');node.textContent=text||'';node.className=`update-state ${kind}`;};
-      const setPluginUpdateStatusTransient=(text,kind='')=>{if(pluginUpdateStatusTimer){clearTimeout(pluginUpdateStatusTimer);pluginUpdateStatusTimer=null;}if(!text){setPluginUpdateStatus('');return;}setPluginUpdateStatus(text,kind);pluginUpdateStatusTimer=setTimeout(()=>{pluginUpdateStatusTimer=null;setPluginUpdateStatus('');},5000);};
-      const checkPluginUpdates = async () => { const button=document.getElementById('checkPluginUpdatesBtn'); button.disabled=true; button.textContent='检查中…'; try { const list=await invoke('check_plugin_updates'); pluginUpdates=new Map(list.map((item)=>[item.id,item])); await refreshPlugins(); const count=list.filter((item)=>item.hasUpdate).length; if (count>0) setPluginUpdateStatusTransient(`发现 ${count} 个更新`,'warning'); else setPluginUpdateStatusTransient('已全部最新','success'); } catch (error) { /* 检查失败静默：网络不可达是常态，只保留成功反馈 */ } finally { button.disabled=false; button.textContent='检查更新'; } };
-      document.getElementById('checkPluginUpdatesBtn').addEventListener('click',()=>void checkPluginUpdates());
-      const updatePlugin = async (plugin,button) => { button.disabled=true; button.textContent='更新中…'; try { const result=await invoke('update_plugin',{pluginId:plugin.id}); pluginUpdates.delete(plugin.id); await refreshPlugins(); setPluginUpdateStatusTransient(`已更新到 v${result.version}`,'success'); } catch (error) { /* 更新失败静默：恢复按钮即可，不弹错误信息 */ button.disabled=false; button.textContent='更新'; } };
+      const isEnabled = (plugin, ids) => ids === undefined || ids.includes(plugin.id);
+      const pluginHome = (plugin) => plugin.homeUrl || plugin.site?.homeUrl || '';
+      const reorderPlugins = (from, to) => {
+        const [moved] = allPlugins.splice(from, 1);
+        allPlugins.splice(to, 0, moved);
+        renderPlugins();
+        const order = allPlugins.filter((plugin) => !plugin.capabilities?.fixedFirst).map((plugin) => plugin.id);
+        void patchSettings({ global: { siteOrder: order } })
+          .then(() => emitEvent?.('site-order-changed'))
+          .catch(() => refreshPlugins());
+      };
+      const bindDrag = (card, grip) => {
+        grip.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0) return;
+          const list = document.getElementById('pluginList');
+          const cards = Array.from(list.querySelectorAll('.plugin-card'));
+          const startIndex = cards.indexOf(card);
+          if (startIndex < 0) return;
+          event.preventDefault();
+          const rects = cards.map((node) => node.getBoundingClientRect());
+          const itemHeight = rects[startIndex].height;
+          const startY = event.clientY;
+          let targetIndex = startIndex;
+          try {
+            grip.setPointerCapture(event.pointerId);
+          } catch {}
+          list.classList.add('reordering');
+          card.classList.add('dragging');
+          const onMove = (moveEvent) => {
+            const dy = moveEvent.clientY - startY;
+            card.style.transform = `translateY(${dy}px)`;
+            const center = rects[startIndex].top + dy + itemHeight / 2;
+            targetIndex = startIndex;
+            cards.forEach((_, i) => {
+              if (i === startIndex || allPlugins[i].capabilities?.fixedFirst) return;
+              const mid = rects[i].top + rects[i].height / 2;
+              if (startIndex < i) {
+                if (center > mid) targetIndex = Math.max(targetIndex, i);
+              } else if (center < mid) {
+                targetIndex = Math.min(targetIndex, i);
+              }
+            });
+            cards.forEach((node, i) => {
+              if (i === startIndex) return;
+              const shift =
+                startIndex < targetIndex && i > startIndex && i <= targetIndex
+                  ? -itemHeight
+                  : startIndex > targetIndex && i < startIndex && i >= targetIndex
+                    ? itemHeight
+                    : 0;
+              node.style.transform = shift ? `translateY(${shift}px)` : '';
+            });
+          };
+          const finish = () => {
+            grip.removeEventListener('pointermove', onMove);
+            grip.removeEventListener('pointerup', finish);
+            grip.removeEventListener('pointercancel', finish);
+            list.classList.remove('reordering');
+            card.classList.remove('dragging');
+            cards.forEach((node) => {
+              node.style.transform = '';
+            });
+            if (targetIndex !== startIndex) reorderPlugins(startIndex, targetIndex);
+          };
+          grip.addEventListener('pointermove', onMove);
+          grip.addEventListener('pointerup', finish);
+          grip.addEventListener('pointercancel', finish);
+        });
+      };
+      const renderPluginError = (error) => {
+        const list = document.getElementById('pluginList');
+        list.replaceChildren();
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = `无法读取扩展，请重试：${String(error?.message || error)}`;
+        list.append(empty);
+      };
+      document.addEventListener('click', (event) => {
+        for (const menu of document.querySelectorAll('.plugin-more[open]')) {
+          if (!menu.contains(event.target)) menu.open = false;
+        }
+      }, true);
+      const renderPlugins = () => {
+        const pending = allPlugins.filter((plugin) => plugin.update?.hasUpdate);
+        const check = document.getElementById('checkPluginUpdatesBtn');
+        check.hidden = !allPlugins.length;
+        check.disabled = pluginBusy;
+        const all = document.getElementById('updateAllPluginsBtn');
+        all.hidden = pending.length < 2;
+        all.disabled = pluginBusy;
+        all.textContent = '全部更新（' + pending.length + '）';
+        const list = document.getElementById('pluginList');
+        list.replaceChildren();
+        if (!allPlugins.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = '暂无已安装的在线来源';
+          list.append(empty);
+          return;
+        }
+        allPlugins.forEach((plugin) => {
+          const card = document.createElement('div');
+          card.className = 'plugin-card';
+          const lead = document.createElement('span');
+          lead.className = 'plugin-lead';
+          if (!plugin.capabilities?.fixedFirst) {
+            const grip = document.createElement('button');
+            grip.className = 'plugin-grip';
+            grip.type = 'button';
+            grip.title = '拖动调整顺序';
+            grip.setAttribute('aria-label', '调整「' + plugin.name + '」的顺序');
+            grip.innerHTML = '<svg viewBox="0 0 12 16" aria-hidden="true"><circle cx="3.5" cy="2.5" r="1.5"/><circle cx="8.5" cy="2.5" r="1.5"/><circle cx="3.5" cy="8" r="1.5"/><circle cx="8.5" cy="8" r="1.5"/><circle cx="3.5" cy="13.5" r="1.5"/><circle cx="8.5" cy="13.5" r="1.5"/></svg>';
+            bindDrag(card, grip);
+            lead.append(grip);
+          } else {
+            const mark = document.createElement('span');
+            mark.className = 'plugin-fixed-mark';
+            mark.setAttribute('aria-hidden', 'true');
+            const mask = plugin.capabilities.monochromeIcon;
+            if (typeof mask === 'string' && /^data:image\/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$/.test(mask) && mask.split(',')[1].length % 4 === 0) {
+              const namespace = 'http://www.w3.org/2000/svg';
+              const source = new DOMParser().parseFromString(atob(mask.split(',')[1]), 'image/svg+xml');
+              const svg = document.createElementNS(namespace, 'svg');
+              svg.setAttribute('viewBox', source.documentElement.getAttribute('viewBox') || '0 0 24 24');
+              svg.setAttribute('aria-hidden', 'true');
+              source.querySelectorAll('path[d]').forEach((path) => {
+                const shape = document.createElementNS(namespace, 'path');
+                shape.setAttribute('d', path.getAttribute('d'));
+                svg.append(shape);
+              });
+              mark.append(svg);
+            } else if (/^data:image\/png;base64,/.test(plugin.icon || '')) {
+              const fallback = document.createElement('img');
+              fallback.src = plugin.icon;
+              fallback.alt = '';
+              mark.append(fallback);
+            }
+            lead.append(mark);
+          }
+          const copy = document.createElement('div');
+          const row = document.createElement('div');
+          row.className = 'plugin-name-row';
+          const name = document.createElement('strong');
+          name.textContent = plugin.name || plugin.id;
+          row.append(name);
+          const meta = document.createElement('div');
+          meta.className = 'plugin-meta';
+          meta.textContent = `${plugin.version || '未知版本'}${plugin.update?.hasUpdate ? ' → ' + plugin.update.remoteVersion : ''} · ${plugin.site?.domain || pluginHome(plugin) || '在线来源'}`;
+          copy.append(row, meta);
+          const actions = document.createElement('div');
+          actions.className = 'plugin-actions';
+          const toggle = document.createElement('label');
+          toggle.className = 'toggle';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = !!plugin.enabled;
+          input.disabled = pluginBusy;
+          input.setAttribute('aria-label', `${plugin.name || plugin.id}已启用`);
+          const track = document.createElement('span');
+          track.className = 'toggle-track';
+          const thumb = document.createElement('span');
+          thumb.className = 'toggle-thumb';
+          track.append(thumb);
+          toggle.append(input, track);
+          input.addEventListener('change', () => void togglePlugin(plugin, input));
+          if (plugin.update?.hasUpdate) {
+            const update = document.createElement('button');
+            update.className = 'button primary';
+            update.disabled = pluginBusy;
+            update.textContent = failedUpdates.has(plugin.id) ? '重试' : '更新';
+            update.addEventListener('click', () => void runUpdates([plugin]));
+            actions.append(update);
+          }
+          const edit = document.createElement('button');
+          edit.className = 'button';
+          edit.textContent = '编辑';
+          edit.disabled = pluginBusy;
+          edit.addEventListener('click', () => openPluginEditor('edit', plugin.id));
+          const uninstall = document.createElement('button');
+          uninstall.className = 'button danger';
+          uninstall.textContent = '卸载';
+          uninstall.disabled = pluginBusy;
+          uninstall.addEventListener('click', () => void uninstallPlugin(plugin));
+          const more = document.createElement('details');
+          more.className = 'plugin-more';
+          const summary = document.createElement('summary');
+          summary.textContent = '更多';
+          summary.setAttribute('aria-label', plugin.name + '的更多操作');
+          const menu = document.createElement('div');
+          menu.append(edit, uninstall);
+          more.append(summary, menu);
+          actions.append(toggle, more);
+          card.append(lead, copy, actions);
+          list.append(card);
+        });
+      };
+      const refreshPlugins = async () => {
+        const settings = documentState || (await readSettings());
+        const ids = Array.isArray(settings.global?.enabledPlugins) ? settings.global.enabledPlugins : undefined;
+        try {
+          const external = await invoke('get_installed_plugins');
+          allPlugins = external
+            .filter((plugin) => plugin.site)
+            .map((plugin) => ({
+              ...plugin,
+              enabled: isEnabled(plugin, ids),
+              update: pluginUpdates.get(plugin.id),
+            }));
+          renderPlugins();
+        } catch (error) {
+          renderPluginError(error);
+        }
+      };
+      const refreshPluginsFromRepository = async () => {
+        try {
+          await readSettings();
+          await refreshPlugins();
+        } catch (error) {
+          renderPluginError(error);
+        }
+      };
+      const togglePlugin = async (plugin, input) => {
+        input.disabled = true;
+        try {
+          acceptSettings(
+            await invoke('set_content_source_enabled', { sourceId: plugin.id, enabled: input.checked }),
+          );
+          syncControls(documentState);
+          await refreshPlugins();
+        } catch (error) {
+          input.checked = !input.checked;
+          window.alert(`更新来源状态失败：${String(error?.message || error)}`);
+        }
+        input.disabled = false;
+      };
+      const uninstallPlugin = async (plugin) => {
+        const confirmed = await confirm(
+          `卸载「${plugin.name || plugin.id}」？`,
+          '将移除扩展文件，保留该来源的设置和阅读记录。重新安装同一扩展后可继续使用。',
+          '卸载',
+        );
+        if (!confirmed) return;
+        try {
+          await invoke('uninstall_plugin', { pluginId: plugin.id });
+          await refreshPlugins();
+        } catch (error) {
+          window.alert(`卸载失败：${String(error?.message || error)}`);
+        }
+      };
+      let pluginUpdates = new Map();
+      let pluginBusy = false;
+      const failedUpdates = new Set();
+      let statusTimer;
+      const setPluginUpdateStatus = (text, kind = '') => {
+        const node = document.getElementById('pluginUpdateStatus');
+        node.textContent = text || '';
+        node.className = `update-state ${kind}`;
+        clearTimeout(statusTimer);
+        if (kind !== 'pending') statusTimer = setTimeout(() => { node.textContent = ''; }, 4000);
+      };
+      const checkPluginUpdates = async () => {
+        if (pluginBusy) return;
+        pluginBusy = true;
+        renderPlugins();
+        setPluginUpdateStatus('正在检查…', 'pending');
+        try {
+          const list = await invoke('check_plugin_updates');
+          pluginUpdates = new Map(list.map((item) => [item.id, item]));
+          failedUpdates.clear();
+          await refreshPlugins();
+          const count = list.filter((item) => item.hasUpdate).length;
+          setPluginUpdateStatus(
+            count
+              ? '发现 ' + count + ' 个更新'
+              : list.length
+                ? '已收录的插件均为最新版本'
+                : '更新目录尚未收录已安装的插件',
+          );
+        } catch {
+          setPluginUpdateStatus('检查失败，请重试', 'error');
+        } finally {
+          pluginBusy = false;
+          renderPlugins();
+        }
+      };
+      const runUpdates = async (plugins) => {
+        if (pluginBusy || !plugins.length) return;
+        pluginBusy = true;
+        renderPlugins();
+        const failures = [];
+        try {
+          for (const [index, plugin] of plugins.entries()) {
+            setPluginUpdateStatus('正在更新 ' + plugin.name + '（' + (index + 1) + '/' + plugins.length + '）', 'pending');
+            try {
+              await invoke('update_plugin', { pluginId: plugin.id });
+              pluginUpdates.delete(plugin.id);
+              failedUpdates.delete(plugin.id);
+            } catch {
+              failedUpdates.add(plugin.id);
+              failures.push(plugin.name);
+            }
+          }
+          await refreshPlugins();
+          setPluginUpdateStatus(
+            failures.length ? failures.join('、') + ' 更新失败，可逐项重试' : '插件已更新',
+            failures.length ? 'error' : 'success',
+          );
+        } finally {
+          pluginBusy = false;
+          renderPlugins();
+        }
+      };
+      document
+        .getElementById('getPluginsBtn')
+        .addEventListener('click', () =>
+          invoke('open_plugin_catalog').catch(() => setPluginUpdateStatus('无法打开官网，请重试', 'error')),
+        );
+      document.getElementById('checkPluginUpdatesBtn').addEventListener('click', checkPluginUpdates);
+      document
+        .getElementById('updateAllPluginsBtn')
+        .addEventListener('click', () => runUpdates(allPlugins.filter((plugin) => plugin.update?.hasUpdate)));
       const openPluginEditor = async (mode,pluginId=null) => { if (!WebviewWindow) return; const existing=await WebviewWindow.getByLabel('plugin-editor').catch(()=>null); if(existing){await existing.setFocus();return;} const url=mode==='edit' ? `editor.html?mode=edit&pluginId=${encodeURIComponent(pluginId)}` : 'editor.html'; new WebviewWindow('plugin-editor',{url,title:mode==='create'?'新建扩展':'编辑扩展',width:1100,height:750,minWidth:900,minHeight:600,center:true,resizable:true}); };
       document.getElementById('installPluginBtn').addEventListener('click',async()=>{try{const file=await dialog?.open?.({multiple:false,filters:[{name:'AT Reader 扩展',extensions:['atrd']}]});if(typeof file==='string')await invoke('prepare_plugin_install',{path:file});}catch(error){window.alert(`安装失败：${String(error?.message || error)}`);}}); document.getElementById('createPluginBtn').addEventListener('click',()=>openPluginEditor('create'));
       document.getElementById('clearLocalHistoryBtn').addEventListener('click',async()=>{const confirmed=await confirm('清除本地阅读记录？','将清除各书阅读位置（进度归零）与最近打开痕迹。\n\n书架图书、封面与图书缓存全部保留；原始 TXT/EPUB/MOBI 文件不受影响。在线来源的登录状态、阅读记录和设置不受影响。当前打开的本地图书将退出。','清除记录');if(!confirmed)return;const button=document.getElementById('clearLocalHistoryBtn');button.disabled=true;try{await invoke('clear_local_history');setSaveStatus('本地阅读记录已清除');}catch(error){setSaveStatus(`清理失败：${String(error?.message || error)}`,'error');}finally{button.disabled=false;}});

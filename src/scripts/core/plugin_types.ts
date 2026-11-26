@@ -33,6 +33,9 @@ export type RenderMode = 'webview' | 'custom';
  * 声明插件支持哪些功能，框架据此启用/禁用相应的 UI 和逻辑
  */
 export interface PluginCapabilities {
+  fixedFirst?: boolean;
+  /** 固定来源在设置列表前导栏使用的单色 SVG 蒙版（Base64 data URL）。 */
+  monochromeIcon?: string;
   /** 宽屏模式 */
   wideMode?: boolean;
   /** 隐藏工具栏 */
@@ -270,7 +273,17 @@ export interface ContentAPI {
  * 插件 API
  * 核心框架提供给插件的所有能力
  */
+export interface ReaderSignals {
+  onFrameKey(handler: (event: KeyboardEvent) => void): () => void;
+  onRoute(handler: (route: {url: string; isReader: boolean}) => void): () => void;
+  onChapter(handler: (chapter: {url: string}) => void): () => void;
+  onDirection(handler: (turn: {direction: 'forward' | 'backward'}) => void): () => void;
+  reportProgress(progress: number): void;
+  syncTheme(): void;
+}
+
 export interface PluginAPI {
+  reader?: ReaderSignals;
   /** 样式管理 */
   style: StyleAPI;
   /** 设置管理（插件专属命名空间） */
@@ -401,6 +414,20 @@ export interface BookProgress {
  * 所有插件都需要实现这个接口
  */
 export interface ReaderPlugin {
+  readonly styleOwner?: 'manager' | 'plugin';
+  getWideModeCSS?(wide: boolean, width?: number): string;
+  getToolbarCSS?(hide: boolean): string;
+  getNavbarCSS?(hide: boolean): string;
+  getDarkThemeCSS?(): string;
+  getLightThemeCSS?(): string;
+  getWindowTheme?(): 'light' | 'dark' | null;
+  openToc?(): 'opened' | 'already-open' | 'not-found' | undefined;
+  closeToc?(): boolean | undefined;
+  getProgressPanel?(): HTMLElement | null;
+  getProgressInset?(parent: HTMLElement): number;
+  clickNextChapter?(): void;
+  canNavigatePreviousChapter?(): boolean;
+  canNavigateNextChapter?(): boolean;
   // ==================== 元信息 ====================
   
   /** 插件清单 */

@@ -1,8 +1,10 @@
+import { createPluginAPI } from '../plugin_api';
+import WeReadPlugin from '../../../../plugins/weread';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { ProgressTracker } from '../../adapters/progress_tracker';
-import { chapterManager, type ChapterData } from '../chapter_manager';
+import { ProgressTracker } from '../../../../plugins/weread/progress_tracker';
+import { chapterManager, type ChapterData } from '../../../../plugins/weread/chapter_manager';
 import { EventBus, Events } from '../event_bus';
-import { getChapterUrl } from '../../utils/chapter';
+import { getChapterUrl } from '../../../../plugins/weread/chapter';
 
 const original = {
   fetch: globalThis.fetch,
@@ -32,7 +34,7 @@ const chapter = (
 const trackers: ProgressTracker[] = [];
 const createTracker = () => {
   history.replaceState({}, '', '/');
-  const tracker = new ProgressTracker();
+  const tracker = new ProgressTracker(createPluginAPI(new WeReadPlugin().manifest).reader!);
   trackers.push(tracker);
   return Object.assign(tracker as any, {
     currentBookToken: 'book-token',

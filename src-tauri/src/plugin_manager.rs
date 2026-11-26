@@ -15,9 +15,9 @@ const MAX_ENTRY_BYTES: u64 = 4 * 1024 * 1024;
 static INSTALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 插件 ID 与站点 ID 共用同一命名空间。内置站点永远不能被外部插件覆盖。
-pub const RESERVED_PLUGIN_IDS: &[(&str, &str)] = &[("weread", "微信读书")];
+pub const RESERVED_PLUGIN_IDS: &[(&str, &str)] = &[("local", "本地图书")];
 pub const RESERVED_PLUGIN_DOMAINS: &[(&str, &str, &str)] =
-    &[("weread", "微信读书", "weread.qq.com")];
+    &[("local", "本地图书", "atreader.localhost")];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInfo {
@@ -231,15 +231,10 @@ pub fn inspect_install_conflicts(
         conflicts.push(PluginInstallConflict {
             kind: "reserved-id".to_string(),
             blocking: true,
-            message: if candidate.id == "weread" {
-                "微信读书为内置插件；如已卸载，请在插件管理中点击“恢复”，不能从外部插件包安装。"
-                    .to_string()
-            } else {
-                format!(
-                    "插件 ID「{}」已由内置插件「{}」使用，请更换插件 ID。",
-                    candidate.id, name
-                )
-            },
+            message: format!(
+                "插件 ID「{}」已由内置插件「{}」使用，请更换插件 ID。",
+                candidate.id, name
+            ),
             existing_id: Some(candidate.id.clone()),
             existing_name: Some((*name).to_string()),
             existing_version: None,
@@ -524,6 +519,36 @@ pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
     Ok(manifest)
 }
 
+/// A successful first run consumes the bundled seed, including when a newer or edited
+/// installation already exists. Explicit uninstallation leaves the receipt intact.
+pub fn install_bundled_plugin<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    if !crate::update::github_channel(app) {
+        return Ok(());
+    }
+    let package = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?
+        .join("preinstalled/reader.atrd");
+    seed_plugin_once(app, &package)
+}
+
+fn seed_plugin_once<R: Runtime>(app: &AppHandle<R>, package: &Path) -> Result<(), String> {
+    let receipt = ensure_plugins_dir(app)?.join(".preinstall-v1");
+    if receipt.try_exists().map_err(|error| error.to_string())? {
+        return Ok(());
+    }
+    let path = package.to_str().ok_or("无效的预装插件路径")?;
+    let manifest = inspect_plugin_package(path)?;
+    if !installed_plugin_dir(app, &manifest.id)?
+        .try_exists()
+        .map_err(|error| error.to_string())?
+    {
+        install_plugin_from_file(app, path)?;
+    }
+    fs::write(receipt, []).map_err(|error| error.to_string())
+}
+
 pub fn install_plugin_from_file<R: Runtime>(
     app: &AppHandle<R>,
     file_path: &str,
@@ -782,16 +807,55 @@ mod tests {
     }
 
     #[test]
+    fn bundled_plugin_preserves_settings_retries_and_respects_uninstallation() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let dir = std::env::temp_dir().join(format!("atreader-seed-test-{}", std::process::id()));
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = dir.to_string_lossy().into_owned();
+        let app = mock_builder().build(context).unwrap();
+        let handle = app.handle();
+        let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/weread.atrd");
+        crate::settings::update_setting(handle, "global.enabledPlugins", serde_json::json!([]))
+            .unwrap();
+        crate::settings::update_setting(handle, "sites.weread.zoom", serde_json::json!(1.4))
+            .unwrap();
+        let before = crate::settings::read_settings(handle).unwrap();
+
+        assert!(seed_plugin_once(handle, &dir.join("missing.atrd")).is_err());
+        seed_plugin_once(handle, &package).unwrap();
+        let plugins = get_installed_plugins(handle).unwrap();
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id, "weread");
+        assert!(manifest_matches_host(&plugins[0], "book.weread.qq.com"));
+        assert!(!manifest_matches_host(&plugins[0], "other.example"));
+        assert_eq!(crate::settings::read_settings(handle).unwrap(), before);
+
+        let code = installed_plugin_dir(handle, "weread")
+            .unwrap()
+            .join("plugin.js");
+        fs::write(&code, "// locally edited").unwrap();
+        fs::remove_file(ensure_plugins_dir(handle).unwrap().join(".preinstall-v1")).unwrap();
+        seed_plugin_once(handle, &package).unwrap();
+        assert_eq!(fs::read_to_string(code).unwrap(), "// locally edited");
+        uninstall_plugin(handle, "weread").unwrap();
+        seed_plugin_once(handle, &package).unwrap();
+        assert!(get_installed_plugins(handle).unwrap().is_empty());
+        install_plugin_from_file(handle, package.to_str().unwrap()).unwrap();
+        assert_eq!(crate::settings::read_settings(handle).unwrap(), before);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn install_conflicts_reserve_builtin_ids() {
         let mut candidate = web_manifest(json!("weread.qq.com"));
-        candidate.id = "weread".to_string();
+        candidate.id = "local".to_string();
 
         let conflicts = inspect_install_conflicts(&candidate, &[]);
 
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].kind, "reserved-id");
         assert!(conflicts[0].blocking);
-        assert!(conflicts[0].message.contains("点击“恢复”"));
+        assert!(conflicts[0].message.contains("内置插件"));
         assert!(reject_blocking_install_conflicts(&conflicts).is_err());
     }
 
@@ -832,14 +896,14 @@ mod tests {
 
     #[test]
     fn install_conflicts_protect_builtin_domains_under_a_different_id() {
-        let mut candidate = web_manifest(json!(["reader.weread.qq.com"]));
+        let mut candidate = web_manifest(json!(["atreader.localhost"]));
         candidate.id = "lookalike".to_string();
 
         let conflicts = inspect_install_conflicts(&candidate, &[]);
 
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].kind, "domain");
-        assert_eq!(conflicts[0].existing_id.as_deref(), Some("weread"));
+        assert_eq!(conflicts[0].existing_id.as_deref(), Some("local"));
         assert!(conflicts[0].blocking);
     }
 

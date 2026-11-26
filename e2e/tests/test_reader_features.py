@@ -10,6 +10,8 @@ Tests the following features:
 
 import sys
 import os
+import json
+from zipfile import ZipFile
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, expect
@@ -22,7 +24,7 @@ TEST_PAGE_URL = f"file://{TEST_PAGE_PATH}"
 def test_reader_wide_toggle():
     """Test that reader wide mode can be toggled on and off"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -67,7 +69,7 @@ def test_reader_wide_toggle():
 def test_hide_toolbar_toggle():
     """Test that toolbar can be hidden and shown"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -113,7 +115,7 @@ def test_hide_toolbar_toggle():
 def test_auto_flip_toggle():
     """Test that auto flip can be toggled on and off"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -152,7 +154,7 @@ def test_auto_flip_toggle():
 def test_auto_flip_clears_on_navigation():
     """Test that auto flip is cleared when leaving reader page"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -189,7 +191,7 @@ def test_auto_flip_clears_on_navigation():
 def test_menu_states_sync():
     """Test that menu button states are synced with settings"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -223,7 +225,7 @@ def test_menu_states_sync():
 def test_log_output():
     """Test that actions are logged"""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
         page = browser.new_page()
         page.goto(TEST_PAGE_URL)
         page.wait_for_load_state("networkidle")
@@ -253,10 +255,137 @@ def test_log_output():
         browser.close()
 
 
+def test_packaged_reader_plugin():
+    """Load the shipped plugin through the actual host loader on an offline fixture."""
+    root = TEST_PAGE_PATH.parents[1]
+    with ZipFile(root / "plugins/weread.atrd") as archive:
+        package = {
+            "plugin": json.loads(archive.read("manifest.json")),
+            "code": archive.read("plugin.js").decode(),
+        }
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
+        page = browser.new_page()
+        url = "https://weread.qq.com/web/reader/fixture"
+        page.route("**/*", lambda route: route.fulfill(
+            content_type="text/html", body='<main class="readerChapterContent"></main><div class="readerControls"></div>'
+        ) if route.request.url == url else route.abort())
+        page.goto(url)
+        page.evaluate("""payload => {
+            let callbackId = 0;
+            const settings = {schemaVersion:2, _version:0, global:{}, sites:{}, pluginConfigs:{}};
+            window.__TAURI_INTERNALS__ = {
+                metadata: {currentWindow:{label:'main'}},
+                transformCallback: () => ++callbackId,
+                invoke: async () => null
+            };
+            window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
+            window.__TAURI__ = {
+                core: { invoke: async name => {
+                    if (name === 'get_runtime_plugin') return payload;
+                    if (name === 'get_settings') return settings;
+                    if (name === 'patch_settings') return {status:'applied', settings};
+                    return null;
+                } },
+                event: { listen: async () => () => {} }
+            };
+        }""", package)
+        page.add_script_tag(path=str(root / "src/scripts/inject.js"))
+        button = page.locator("#wxrd-style-button")
+        expect(button).to_be_visible()
+        button.click()
+        expect(page.locator("#wxrd-style-panel")).to_be_visible()
+        page.wait_for_function("!!window.atreaderRuntime")
+        page.evaluate("window.atreaderRuntime.destroy()")
+        expect(button).to_have_count(0)
+        expect(page.locator("#wxrd-style-panel")).to_have_count(0)
+        browser.close()
+
+
+def test_plugin_manager():
+    """Exercise the shipped settings page with deterministic IPC responses."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, executable_path=os.getenv("ATREADER_TEST_CHROMIUM"))
+        page = browser.new_page(viewport={"width": 790, "height": 680}, color_scheme="dark")
+        page.add_init_script("""{
+            window.calls = [];
+            window.sources = [];
+            let failedOnce = false;
+            const listeners = {};
+            window.addSources = () => {
+                window.sources = ['weread','other','unlisted'].map((id,i) => ({
+                    id, name:id, version:'1.0.0', site:{domain:id+'.test'}, capabilities:{fixedFirst:i===0}
+                }));
+                listeners['plugins-updated']({});
+            };
+            window.__TAURI__ = {
+                dialog: { open: async () => '/fixtures/reader.atrd' },
+                event: { listen: async (name, handler) => { listeners[name]=handler; } },
+                core: { invoke: async (name, args) => {
+                    window.calls.push([name,args]);
+                    if (name==='get_settings') return {global:{enabledPlugins:['other']}};
+                    if (name==='get_installed_plugins') return window.sources;
+                    if (name==='check_plugin_updates') return window.sources.slice(0,2).map(p=>({
+                        id:p.id,hasUpdate:p.version==='1.0.0',remoteVersion:'2.0.0'
+                    }));
+                    if (name==='update_plugin') {
+                        if (args.pluginId==='weread' && !failedOnce) { failedOnce=true; throw Error('offline'); }
+                        window.sources.find(p=>p.id===args.pluginId).version='2.0.0';
+                    }
+                    return null;
+                }}
+            };
+        }""")
+        url = (TEST_PAGE_PATH.parents[1] / "src/windows/settings.html").as_uri()
+        page.goto(url+"?tab=content")
+        expect(page.locator("#pluginList")).to_contain_text("暂无已安装")
+        expect(page.locator("#checkPluginUpdatesBtn")).to_be_hidden()
+        page.get_by_role("button", name="获取插件").click()
+        page.get_by_role("button", name="从文件安装…").click()
+        assert page.evaluate("calls.some(([name])=>name==='open_plugin_catalog')")
+        assert page.evaluate("calls.some(([name,args])=>name==='prepare_plugin_install' && args.path==='/fixtures/reader.atrd')")
+        manifest = json.loads((TEST_PAGE_PATH.parents[1] / "plugins/weread/manifest.json").read_text())
+        page.evaluate("""manifest => {
+            addSources();
+            Object.assign(sources[0], {icon:manifest.icon, capabilities:manifest.capabilities});
+        }""", manifest)
+        rows = page.locator(".plugin-card")
+        expect(rows).to_have_count(3)
+        expect(rows.first.locator(".plugin-grip")).to_have_count(0)
+        expect(rows.locator(".plugin-name-row img")).to_have_count(0)
+        expect(rows.first.locator(".plugin-fixed-mark svg path")).to_have_count(6)
+        expect(rows.first.get_by_role("checkbox")).not_to_be_checked()
+        rows.first.locator("summary").focus()
+        page.keyboard.press("Enter")
+        expect(rows.first.get_by_role("button", name="卸载")).to_be_visible()
+        gap = rows.first.locator(".plugin-more").evaluate(
+            "el => el.lastElementChild.getBoundingClientRect().top - el.getBoundingClientRect().bottom"
+        )
+        assert gap >= 8
+        page.locator("#page-content h1").click()
+        expect(rows.first.get_by_role("button", name="卸载")).to_be_hidden()
+        page.get_by_role("button", name="检查更新", exact=True).click()
+        page.get_by_role("button", name="全部更新（2）").click()
+        expect(page.locator("#pluginUpdateStatus")).to_contain_text("weread 更新失败")
+        expect(rows.nth(1)).to_contain_text("2.0.0")
+        rows.first.get_by_role("button", name="重试").click()
+        expect(rows.first).to_contain_text("2.0.0")
+        expect(rows.first.get_by_role("checkbox")).not_to_be_checked()
+        assert page.evaluate("calls.filter(([n])=>n==='update_plugin').map(([,a])=>a.pluginId)") == ['weread','other','weread']
+        page.emulate_media(color_scheme="light")
+        page.get_by_role("button", name="检查更新", exact=True).click()
+        expect(page.locator("#pluginUpdateStatus")).to_contain_text("已收录的插件均为最新版本")
+        expect(page.locator("#pluginUpdateStatus")).to_have_text("", timeout=6000)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
 if __name__ == "__main__":
     print("Running Weixin Reader E2E Tests...\n")
 
     tests = [
+        ("Packaged Reader Plugin", test_packaged_reader_plugin),
+        ("Plugin Management", test_plugin_manager),
         ("Reader Wide Toggle", test_reader_wide_toggle),
         ("Hide Toolbar Toggle", test_hide_toolbar_toggle),
         ("Auto Flip Toggle", test_auto_flip_toggle),

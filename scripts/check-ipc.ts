@@ -156,6 +156,8 @@ if (unexpectedMainCommands.length > 0) {
   messages.push(`main-runtime unexpected command: ${unexpectedMainCommands.join(', ')}`);
 }
 const expectedLocalCommands = new Set([
+  'has_online_sources',
+  'open_plugin_catalog',
   'log_to_file',
   'update_menu_state',
   'set_menu_item_enabled',

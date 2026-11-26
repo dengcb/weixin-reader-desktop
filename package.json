@@ -5,7 +5,7 @@
   "packageManager": "bun@1.3.14",
   "type": "module",
   "scripts": {
-    "start": "bun run sync-version && tauri dev",
+    "start": "bun run sync-version && tauri dev --config src-tauri/tauri.github.conf.json",
     "dev": "bun run sync-version && vite",
     "sync-version": "bun src/scripts/sync_version.ts",
     "check:version": "bun src/scripts/sync_version.ts --check",
@@ -31,7 +31,9 @@
     "release:intel": "bun src/scripts/release.ts intel",
     "release:upload": "bun src/scripts/release.ts upload",
     "release:status": "bun src/scripts/release.ts status",
-    "release:publish": "bun src/scripts/release.ts publish"
+    "release:publish": "bun src/scripts/release.ts publish",
+    "build:store": "tauri build --bundles nsis",
+    "build:github": "tauri build --config src-tauri/tauri.github.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1"

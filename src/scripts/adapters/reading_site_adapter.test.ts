@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { BaseSiteAdapter } from './reading_site_adapter';
+import { BaseSiteAdapter } from '../../plugins/shared/reading_site_adapter';
 
 /**
  * 契约测试：程序化翻页的合成键必须以「真实键盘事件」的形态派发。

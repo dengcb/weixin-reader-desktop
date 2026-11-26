@@ -1,8 +1,8 @@
+import WeReadPlugin from '../../../../plugins/weread';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { PluginRegistry } from '../plugin_registry';
 import {
   createPluginSiteRuntime,
-  createWeReadSiteRuntime,
   isReaderSiteRuntime,
 } from '../reader_site_runtime';
 import { createSiteContext, SiteContext } from '../site_context';
@@ -52,7 +52,7 @@ describe('ReaderSiteRuntime and SiteContext', () => {
   });
 
   it('routes WeRead and external plugins through the same context interface', () => {
-    const weread = createWeReadSiteRuntime();
+    const weread = createPluginSiteRuntime(new WeReadPlugin());
     const external = createPluginSiteRuntime(externalPlugin());
     // Happy DOM 的测试地址是 example.com；本用例只验证两类实现都经由
     // SiteContext 暴露统一接口，域名匹配另由注册表用例覆盖。
@@ -72,7 +72,7 @@ describe('ReaderSiteRuntime and SiteContext', () => {
   });
 
   it('does not construct the WeRead adapter while another domain is active', () => {
-    const weread = createWeReadSiteRuntime();
+    const weread = new WeReadPlugin();
     expect((weread as any).adapter).toBeNull();
     expect(weread.matchesDomain()).toBe(false);
     expect((weread as any).adapter).toBeNull();

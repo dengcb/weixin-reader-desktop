@@ -160,18 +160,7 @@ export class MenuManager {
 
     // 当前运行时已经过域名匹配和插件加载校验，直接读取它的 manifest。
     // 不从远程阅读窗口调用插件管理 IPC，避免扩大主窗口权限。
-    const siteId = this.siteContext.siteId;
-    const isWeread = siteId === 'weread';
-    const caps = isWeread
-      ? {
-          wideMode: true,
-          hideToolbar: true,
-          hideNavbar: true,
-          hideCursor: true,
-          autoFlip: true,
-          chapterNav: true,
-        }
-      : this.siteContext.currentRuntime?.manifest.capabilities;
+    const caps = this.siteContext.currentRuntime?.manifest.capabilities;
     const capWide = caps?.wideMode === true;
     const capToolbar = caps?.hideToolbar === true;
     const capNavbar = caps?.hideNavbar === true;

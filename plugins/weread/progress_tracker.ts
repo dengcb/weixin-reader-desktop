@@ -1,7 +1,6 @@
-import { BaseManager, Events } from '../core/base_manager';
-import { chapterManager, ChapterData } from '../core/chapter_manager';
-import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
-import { getChapterUrl } from '../utils/chapter';
+import type { ReaderSignals } from '../../src/scripts/core/plugin_types';
+import { chapterManager, ChapterData } from './chapter_manager';
+import { getChapterUrl } from './chapter';
 
 /**
  * 进度跟踪器 (新算法)
@@ -36,7 +35,7 @@ enum PageDirection {
 
 type InitializationRetryReason = 'metadata' | 'progress';
 
-export class ProgressTracker extends BaseManager {
+export class ProgressTracker {
   // URL 中的书籍 token 用于识别 SPA 切书，数字 ID 用于官方进度 API。
   private currentBookToken: string | null = null;
   private currentBookId: string | null = null;
@@ -78,24 +77,25 @@ export class ProgressTracker extends BaseManager {
   private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private detachIframeKeydown: (() => void) | null = null;
 
-  constructor() {
-    super();
+  private destroyed = false;
+  private subscriptions: (() => void)[] = [];
+  constructor(private readonly reader: ReaderSignals) {
     this.init();
   }
 
   private init(): void {
     // 监听路由变化事件（进入阅读页）
-    this.onWithHistory(Events.ROUTE_CHANGED, (e: RouteChangedEvent) => {
+    this.subscriptions.push(this.reader.onRoute((e) => {
       if (e.isReader) {
         const bookToken = this.extractBookTokenFromUrl(e.url);
         if (bookToken) void this.onEnterReaderPage(bookToken);
       } else {
         this.leaveReaderPage();
       }
-    });
+    }));
 
     // 监听章节切换事件
-    this.on(Events.CHAPTER_CHANGED, (e: ChapterChangedEvent) => {
+    this.subscriptions.push(this.reader.onChapter((e) => {
       const bookToken = this.extractBookTokenFromUrl(e.url);
       if (!bookToken) return;
 
@@ -105,15 +105,15 @@ export class ProgressTracker extends BaseManager {
       } else if (this.currentBookId) {
         void this.onChapterChange(e.url);
       }
-    });
+    }));
 
     // 兼容保留：翻页方向事件的外部发射方已在 a13132d 收敛（方向记录改由下方
     // keydown 监听统一承担，适配器 triggerKey 现在派发 key='ArrowRight' 形态的
     // 合成事件）。外部插件仍可 emit 该事件注入方向
-    this.on(Events.PAGE_TURN_DIRECTION, (data: { direction: 'forward' | 'backward' }) => {
+    this.subscriptions.push(this.reader.onDirection((data: { direction: 'forward' | 'backward' }) => {
       const pageDirection = data.direction === 'forward' ? PageDirection.FORWARD : PageDirection.BACKWARD;
       this.recordPageDirection(pageDirection);
-    });
+    }));
 
     // 监听 DOM 准备就绪
     this.domReadyHandler = () => {
@@ -196,6 +196,7 @@ export class ProgressTracker extends BaseManager {
         return;
       }
 
+      window.dispatchEvent(new Event('atreader:capabilities-changed'));
       // 2. 获取已登录用户对本书的官方阅读进度。
       const numericBookId = chapterManager.readNumericBookId();
       if (!numericBookId) {
@@ -562,7 +563,7 @@ export class ProgressTracker extends BaseManager {
     // 正文 iframe 聚焦时 keydown 不冒泡出 frame——方向监听必须同样挂进
     // 同源 iframe，否则翻页方向不更新、章切换误判为目录跳转（2026-11 审计
     // I-P1-2）。
-    this.detachIframeKeydown = attachKeyboardToSameOriginIframes(this.keydownHandler);
+    this.detachIframeKeydown = this.reader.onFrameKey(this.keydownHandler);
   }
 
   /**
@@ -726,7 +727,7 @@ export class ProgressTracker extends BaseManager {
   }
 
   private updateProgressBar(progress: number): void {
-    this.emit(Events.PROGRESS_UPDATED, { progress });
+    this.reader.reportProgress(progress);
   }
 
   // =====================================================
@@ -795,10 +796,8 @@ export class ProgressTracker extends BaseManager {
     this.detachIframeKeydown = null;
 
     // 调用基类清理
-    super.destroy();
+    this.destroyed = true;
+    for (const unsubscribe of this.subscriptions.splice(0)) unsubscribe();
   }
 }
 
-// 类型导入（保持兼容）
-import type { RouteChangedEvent } from '../managers/ipc_manager';
-import type { ChapterChangedEvent } from '../managers/ipc_manager';

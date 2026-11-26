@@ -23,6 +23,10 @@
     "version": "1.0.1",
     "atrd": "/plugins/qimao.atrd"
   },
+  "weread": {
+    "version": "1.0.1",
+    "atrd": "/plugins/weread.atrd"
+  },
   "zread": {
     "version": "1.0.0",
     "atrd": "/plugins/zread.atrd"

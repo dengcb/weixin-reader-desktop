@@ -1,6 +1,7 @@
-import { BaseSiteAdapter } from './reading_site_adapter';
+import type { PluginAPI } from '../../src/scripts/core/plugin_types';
+import { BaseSiteAdapter } from '../../src/plugins/shared/reading_site_adapter';
 import { ProgressTracker } from './progress_tracker';
-import { normalizeWideWidthPercent } from '../core/reader_width';
+import { normalizeWideWidthPercent } from '../../src/plugins/shared/reader_width';
 
 /**
  * 微信读书网站适配器
@@ -13,13 +14,8 @@ export class WeReadAdapter extends BaseSiteAdapter {
   // ==================== 进度跟踪器 ====================
   private progressTracker: ProgressTracker | null = null;
 
-  constructor() {
-    super();
-    // 初始化进度跟踪器（会自动监听 ipc:route-changed 事件）
-    this.progressTracker = new ProgressTracker();
-    // 注意: 不再需要在构造函数中手动触发 onEnterReaderPage
-    // 因为 IPCManager 会在初始化时发出 ipc:route-changed 事件
-    // ProgressTracker 会监听该事件并自动处理
+  start(api: PluginAPI) {
+    if (api.reader) this.progressTracker = new ProgressTracker(api.reader);
   }
 
   // ==================== 路由检测 ====================

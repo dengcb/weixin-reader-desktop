@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 
@@ -34,7 +34,11 @@ try {
     const buildStart = performance.now();
 
     // Build without updater artifacts to save time
-    execSync(`tauri build --target ${target}`, { stdio: 'inherit', env: { ...process.env } });
+    execFileSync('tauri', [
+        'build', '--bundles', 'app', '--target', target,
+        '--config', 'src-tauri/tauri.github.conf.json',
+        '--config', JSON.stringify({ bundle: { createUpdaterArtifacts: false } }),
+    ], { stdio: 'inherit' });
 
     const buildEnd = performance.now();
     console.log(`✅ [Build for ${target}] Finished in ${((buildEnd - buildStart) / 1000).toFixed(2)}s`);

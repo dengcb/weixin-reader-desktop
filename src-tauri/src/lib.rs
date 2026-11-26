@@ -9,6 +9,8 @@ mod commands;
 mod font_cache;
 mod local_books;
 mod local_covers;
+#[cfg(target_os = "macos")]
+mod media_key_suppressor;
 mod menu;
 mod menu_model;
 pub mod monitor;
@@ -16,8 +18,6 @@ mod plugin_installer;
 pub mod plugin_manager;
 mod plugin_updates;
 mod reading_progress;
-#[cfg(target_os = "macos")]
-mod media_key_suppressor;
 #[cfg(target_os = "macos")]
 mod remote_hid;
 mod remote_hid_windows;
@@ -108,7 +108,6 @@ fn reveal_main_window_once<R: tauri::Runtime>(
 enum MainStartupTarget {
     Online(String),
     Local(tauri::Url),
-    Library,
 }
 
 fn selected_startup_site_id(settings: &serde_json::Value) -> &str {
@@ -118,13 +117,13 @@ fn selected_startup_site_id(settings: &serde_json::Value) -> &str {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
     if !remember_site {
-        return sites::WEREAD.id;
+        return "local";
     }
     settings
         .get("global")
         .and_then(|global| global.get("lastSiteId"))
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(sites::WEREAD.id)
+        .unwrap_or("local")
 }
 
 #[cfg(test)]
@@ -164,8 +163,7 @@ where
     }
 }
 
-/// 首选记忆站点；若其已禁用，则依次尝试微信读书和已启用的外部站点。
-/// 没有任何在线站点可用时返回 None，由调用方打开本地默认页。
+/// 仅恢复已安装且启用的记忆来源，其余情况打开本地书架。
 fn resolve_enabled_startup_url<F>(
     settings: &serde_json::Value,
     external_site_ids: &[String],
@@ -174,25 +172,14 @@ fn resolve_enabled_startup_url<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
-    let mut candidates = vec![selected_startup_site_id(settings).to_string()];
-    // "local" 不是在线站点：其专用分支已在 main_startup_target 顶部处理。
-    // 若留在这里，书被删后会拿 sites.local.lastReaderUrl 里的过期
-    // atreader:// URL 充当在线站点启动（2026-11 审计 R-P1-1）。
-    candidates.retain(|site_id| site_id != "local");
-    if !candidates.iter().any(|site_id| site_id == sites::WEREAD.id) {
-        candidates.push(sites::WEREAD.id.to_string());
+    let id = selected_startup_site_id(settings);
+    if id == "local"
+        || !external_site_ids.iter().any(|installed| installed == id)
+        || !sites::is_site_enabled(settings, id)
+    {
+        return None;
     }
-    for site_id in external_site_ids {
-        if !candidates.iter().any(|candidate| candidate == site_id) {
-            candidates.push(site_id.clone());
-        }
-    }
-
-    candidates.into_iter().find_map(|site_id| {
-        sites::is_site_enabled(settings, &site_id)
-            .then(|| resolve_site_url(settings, &site_id, &mut resolve_home))
-            .flatten()
-    })
+    resolve_site_url(settings, id, &mut resolve_home)
 }
 
 fn installed_external_site_ids(app: &tauri::AppHandle) -> Vec<String> {
@@ -202,6 +189,12 @@ fn installed_external_site_ids(app: &tauri::AppHandle) -> Vec<String> {
         .filter(|plugin| plugin.site.is_some())
         .map(|plugin| plugin.id)
         .collect()
+}
+
+/// 本次若改打开本地页，不改写已记住的在线来源。
+/// 来源稍后装回、重新启用，或重新打开「记住上次阅读来源」后，还能回到该站点。
+fn site_id_persisted_on_startup(_opened_local: bool, _remembered: Option<&str>) -> Option<&str> {
+    None
 }
 
 fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> MainStartupTarget {
@@ -220,7 +213,7 @@ fn main_startup_target(app: &tauri::AppHandle, settings: &serde_json::Value) -> 
         sites::resolve_default_page_url(app, site_id)
     })
     .map(MainStartupTarget::Online)
-    .unwrap_or(MainStartupTarget::Library)
+    .unwrap_or_else(|| MainStartupTarget::Local(local_shelf_page_url()))
 }
 
 pub(crate) fn navigate_away_after_local_history_clear(app: &tauri::AppHandle) {
@@ -242,17 +235,10 @@ pub(crate) fn navigate_away_after_local_history_clear(app: &tauri::AppHandle) {
                 let _ = window.navigate(url);
             }
         }
-        MainStartupTarget::Local(_) | MainStartupTarget::Library => {
-            let _ = window.navigate(library_page_url());
+        MainStartupTarget::Local(url) => {
+            let _ = window.navigate(url);
         }
     }
-}
-
-#[cfg(target_os = "windows")]
-fn library_page_url() -> tauri::Url {
-    "http://atreader.localhost/library"
-        .parse()
-        .expect("valid local library URL")
 }
 
 fn is_library_page_url(url: &tauri::Url) -> bool {
@@ -282,41 +268,134 @@ pub(crate) fn is_local_shelf_url(url: &tauri::Url) -> bool {
     is_local_origin && url.path().trim_end_matches('/') == LOCAL_SHELF_PAGE_PATH
 }
 
-#[cfg(not(target_os = "windows"))]
-fn library_page_url() -> tauri::Url {
-    "atreader://localhost/library"
-        .parse()
-        .expect("valid local library URL")
+/// 插件启用集合变化后，主窗口该怎么走。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PluginUpdateNavigation {
+    Stay,
+    LocalShelf,
+    Online(String),
 }
 
-fn navigate_to_library_when_no_online_site(app: &tauri::AppHandle) {
-    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
-    if !matches!(
-        main_startup_target(app, &settings),
-        MainStartupTarget::Library
-    ) {
-        return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.navigate(library_page_url());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainPageKind {
+    Library,
+    LocalShelf,
+    LocalReader,
+    Remote,
+}
+
+fn classify_main_page(url: &tauri::Url) -> MainPageKind {
+    if is_library_page_url(url) {
+        MainPageKind::Library
+    } else if is_local_shelf_url(url) {
+        MainPageKind::LocalShelf
+    } else if local_books::is_local_reader_url(url) {
+        MainPageKind::LocalReader
+    } else if matches!(url.scheme(), "http" | "https")
+        && url.host_str() != Some("atreader.localhost")
+    {
+        MainPageKind::Remote
+    } else {
+        // 其它本地协议页（法律文档等）不联动。
+        MainPageKind::LocalReader
     }
 }
 
-fn navigate_to_enabled_site_when_on_library(app: &tauri::AppHandle) {
-    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
-    let MainStartupTarget::Online(url) = main_startup_target(app, &settings) else {
-        return;
-    };
+/// 远程页是否该退回本地：仅当「当前域名所属插件已全部停用」，
+/// 或「已没有任何启用的在线来源」。登录/支付等未声明域名不因其它来源变动被赶走。
+fn should_evacuate_remote_host(
+    host: &str,
+    settings: &serde_json::Value,
+    plugins: &[plugin_manager::PluginInfo],
+) -> bool {
+    let mut matched = false;
+    let mut matched_enabled = false;
+    let mut any_enabled_online = false;
+    for plugin in plugins {
+        if plugin.site.is_none() {
+            continue;
+        }
+        let enabled = sites::is_site_enabled(settings, &plugin.id);
+        if enabled {
+            any_enabled_online = true;
+        }
+        if plugin_manager::manifest_matches_host(plugin, host) {
+            matched = true;
+            if enabled {
+                matched_enabled = true;
+            }
+        }
+    }
+    if matched_enabled {
+        return false;
+    }
+    if matched {
+        return true;
+    }
+    !any_enabled_online
+}
+
+fn decide_plugin_update_navigation(
+    page: MainPageKind,
+    host: Option<&str>,
+    settings: &serde_json::Value,
+    plugins: &[plugin_manager::PluginInfo],
+    online_startup_url: Option<String>,
+) -> PluginUpdateNavigation {
+    match page {
+        MainPageKind::LocalReader => PluginUpdateNavigation::Stay,
+        MainPageKind::Library | MainPageKind::LocalShelf => {
+            if let Some(url) = online_startup_url {
+                PluginUpdateNavigation::Online(url)
+            } else if page == MainPageKind::Library {
+                PluginUpdateNavigation::LocalShelf
+            } else {
+                PluginUpdateNavigation::Stay
+            }
+        }
+        MainPageKind::Remote => {
+            let Some(host) = host else {
+                return PluginUpdateNavigation::Stay;
+            };
+            if should_evacuate_remote_host(host, settings, plugins) {
+                PluginUpdateNavigation::LocalShelf
+            } else {
+                PluginUpdateNavigation::Stay
+            }
+        }
+    }
+}
+
+fn apply_plugin_update_navigation(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let is_on_library = window
-        .url()
-        .ok()
-        .is_some_and(|current| is_library_page_url(&current));
-    if is_on_library {
-        if let Ok(url) = url.parse::<tauri::Url>() {
-            let _ = window.navigate(url);
+    let Ok(url) = window.url() else { return };
+    let Ok(plugins) = plugin_manager::get_installed_plugins(app) else {
+        return;
+    };
+    let settings = settings::read_settings(app).unwrap_or_else(|_| settings::default_settings());
+    let online_startup = match main_startup_target(app, &settings) {
+        MainStartupTarget::Online(target) => Some(target),
+        MainStartupTarget::Local(_) => None,
+    };
+    match decide_plugin_update_navigation(
+        classify_main_page(&url),
+        url.host_str(),
+        &settings,
+        &plugins,
+        online_startup,
+    ) {
+        PluginUpdateNavigation::Stay => {}
+        PluginUpdateNavigation::LocalShelf => menu::switch_to_local(app),
+        PluginUpdateNavigation::Online(target) => {
+            // lastSiteId 往往已是目标站；switch_to_site 会当成「同站」而不导航。
+            let site_id = selected_startup_site_id(&settings).to_string();
+            if let Ok(parsed) = target.parse::<tauri::Url>() {
+                let _ = window.set_theme(None);
+                commands::apply_site_zoom(app.clone(), site_id);
+                let _ = window.navigate(parsed);
+            }
         }
     }
 }
@@ -418,7 +497,7 @@ pub fn run() {
                     .header("content-type", "text/plain; charset=utf-8")
                     .body(b"Not Found".to_vec())
                     .expect("valid local shelf response")
-            }
+            };
         }
         if matches!(
             request.uri().path(),
@@ -480,6 +559,10 @@ pub fn run() {
             // Tauri v2 doesn't have cleanup(), use window close event instead
             // For menu quit, we handle it in menu.rs custom quit item
 
+            if let Err(error) = plugin_manager::install_bundled_plugin(app.handle()) {
+                log::warn!("预装插件未完成，下次启动重试：{error}");
+            }
+
             // Update Manager Init
             update::init(app.handle());
 
@@ -516,7 +599,21 @@ pub fn run() {
                 main_startup_target(app.handle(), &settings)
             };
             let is_local_page = matches!(&startup_target, MainStartupTarget::Local(_));
-            let is_library = matches!(&startup_target, MainStartupTarget::Library);
+            let remembered_site = settings::read_settings(app.handle()).ok().and_then(|state| {
+                state["global"]["lastSiteId"]
+                    .as_str()
+                    .map(str::to_owned)
+            });
+            if let Some(site_id) =
+                site_id_persisted_on_startup(is_local_page, remembered_site.as_deref())
+            {
+                let _ = settings::update_setting(
+                    app.handle(),
+                    "global.lastSiteId",
+                    serde_json::json!(site_id),
+                );
+            }
+
             let url = match startup_target {
                 MainStartupTarget::Online(url_str) => {
                     println!("[Init] Restoring enabled online site: {}", url_str);
@@ -527,19 +624,15 @@ pub fn run() {
                         Ok(online) => WebviewUrl::External(online),
                         Err(error) => {
                             eprintln!(
-                                "[Init] 存储的 lastReaderUrl 非法，改用微信读书首页：{url_str} ({error})"
+                                "[Init] 存储的 lastReaderUrl 非法，改用本地书架：{url_str} ({error})"
                             );
-                            WebviewUrl::External("https://weread.qq.com/".parse().unwrap())
+                            WebviewUrl::CustomProtocol(local_shelf_page_url())
                         }
                     }
                 }
                 MainStartupTarget::Local(url) => {
                     println!("[Init] Restoring local book: {}", url);
                     WebviewUrl::CustomProtocol(url)
-                }
-                MainStartupTarget::Library => {
-                    println!("[Init] No enabled online site, loading local default page");
-                    WebviewUrl::CustomProtocol(library_page_url())
                 }
             };
 
@@ -663,9 +756,7 @@ pub fn run() {
             {
                 let settings = settings::read_settings(app.handle())
                     .unwrap_or_else(|_| settings::default_settings());
-                let zoom = if is_library {
-                    1.0
-                } else if is_local_page {
+                let zoom = if is_local_page {
                     settings.get("sites")
                         .and_then(|s| s.get("local"))
                         .and_then(|s| s.get("zoom"))
@@ -767,13 +858,12 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             menu::watch_fullscreen_exit(app.handle());
 
-            // 禁用或卸载最后一个在线插件时，立即回到本地默认页，避免继续停留在
-            // 已无插件支撑的远程网站；恢复插件时再从默认页回到可用书店。
+            // 当前来源停用/卸掉，或已无任何在线来源时回本地书架；
+            // 人在书架且记住的在线来源重新可用时再回去。登录页等未声明域名不联动。
             let navigation_handle = app.handle().clone();
             app.listen("plugins-updated", move |_| {
                 commands::refresh_app_menu(&navigation_handle);
-                navigate_to_library_when_no_online_site(&navigation_handle);
-                navigate_to_enabled_site_when_on_library(&navigation_handle);
+                apply_plugin_update_navigation(&navigation_handle);
             });
 
             // 设置页拖拽调整书城顺序：只影响菜单展示顺序，不改变启用集合，
@@ -867,6 +957,8 @@ pub fn run() {
             menu::claim_settings_target,
             commands::switch_bookstore_by_index,
             commands::get_bookstore_list,
+            commands::has_online_sources,
+            commands::open_plugin_catalog,
             commands::apply_site_zoom,
             commands::set_immersive_title_bar,
             font_cache::ensure_font_cache,
@@ -1001,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_url_forces_weread_when_site_memory_is_disabled() {
+    fn startup_url_uses_local_when_site_memory_is_disabled() {
         let settings = json!({
             "global": {
                 "rememberSite": false,
@@ -1013,30 +1105,33 @@ mod tests {
                 "fanqie": { "lastReaderUrl": "https://fanqienovel.com/reader/123" }
             }
         });
-        assert_eq!(
-            resolve_startup_url(&settings, home),
-            Some("https://weread.qq.com/web/reader/book".to_string())
-        );
-        assert_eq!(selected_startup_site_id(&settings), "weread");
+        assert_eq!(resolve_startup_url(&settings, home), None);
+        assert_eq!(selected_startup_site_id(&settings), "local");
     }
 
     #[test]
     fn startup_url_defaults_both_flags_and_handles_unknown_sites() {
-        assert_eq!(
-            resolve_startup_url(&json!({}), home),
-            Some("https://weread.qq.com/".to_string())
-        );
+        assert_eq!(resolve_startup_url(&json!({}), home), None);
         let unknown = json!({
             "global": { "lastSiteId": "missing" },
             "sites": {}
         });
         assert_eq!(resolve_startup_url(&unknown, home), None);
-        assert_eq!(selected_startup_site_id(&json!({})), "weread");
+        assert_eq!(selected_startup_site_id(&json!({})), "local");
         assert_eq!(selected_startup_site_id(&unknown), "missing");
     }
 
     #[test]
-    fn startup_uses_an_enabled_external_site_when_weread_is_disabled() {
+    fn local_fallback_keeps_the_remembered_online_site() {
+        assert_eq!(site_id_persisted_on_startup(true, Some("weread")), None);
+        assert_eq!(site_id_persisted_on_startup(true, Some("fanqie")), None);
+        assert_eq!(site_id_persisted_on_startup(true, Some("local")), None);
+        assert_eq!(site_id_persisted_on_startup(true, None), None);
+        assert_eq!(site_id_persisted_on_startup(false, Some("weread")), None);
+    }
+
+    #[test]
+    fn startup_uses_local_when_remembered_site_is_disabled() {
         let settings = json!({
             "global": {
                 "enabledPlugins": ["fanqie"],
@@ -1045,7 +1140,7 @@ mod tests {
         });
         assert_eq!(
             resolve_enabled_startup_url(&settings, &["fanqie".to_string()], home),
-            Some("https://fanqienovel.com/".to_string())
+            None
         );
     }
 
@@ -1060,6 +1155,125 @@ mod tests {
         assert_eq!(
             resolve_enabled_startup_url(&settings, &["fanqie".to_string()], home),
             None
+        );
+    }
+
+    fn web_plugin(id: &str, domain: &str) -> plugin_manager::PluginInfo {
+        plugin_manager::PluginInfo {
+            id: id.into(),
+            name: id.into(),
+            version: "1.0.0".into(),
+            description: None,
+            author: None,
+            homepage: None,
+            icon: None,
+            source_type: "web".into(),
+            site: Some(plugin_manager::PluginSiteConfig {
+                domain: json!(domain),
+                home_url: format!("https://{domain}/"),
+                shelf: None,
+                reader_pattern: "/reader/".into(),
+                boot_theme: None,
+            }),
+            capabilities: None,
+            config_schema: None,
+            builtin: false,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn remote_evacuate_only_when_own_source_disabled_or_no_online_left() {
+        let weread = web_plugin("weread", "weread.qq.com");
+        let fanqie = web_plugin("fanqie", "fanqienovel.com");
+        let both = [weread.clone(), fanqie.clone()];
+        let all_on = json!({});
+        let weread_off = json!({ "global": { "enabledPlugins": ["fanqie"] } });
+        let none_on = json!({ "global": { "enabledPlugins": [] } });
+
+        assert!(!should_evacuate_remote_host("weread.qq.com", &all_on, &both));
+        assert!(!should_evacuate_remote_host("open.weixin.qq.com", &all_on, &both));
+        assert!(!should_evacuate_remote_host(
+            "open.weixin.qq.com",
+            &weread_off,
+            &both
+        ));
+        assert!(should_evacuate_remote_host(
+            "weread.qq.com",
+            &weread_off,
+            &both
+        ));
+        assert!(should_evacuate_remote_host(
+            "open.weixin.qq.com",
+            &none_on,
+            &both
+        ));
+        assert!(should_evacuate_remote_host(
+            "weread.qq.com",
+            &all_on,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn plugin_update_restores_online_from_shelf_and_migrates_library() {
+        let weread = web_plugin("weread", "weread.qq.com");
+        let settings = json!({});
+        assert_eq!(
+            decide_plugin_update_navigation(
+                MainPageKind::LocalShelf,
+                Some("localhost"),
+                &settings,
+                &[weread.clone()],
+                Some("https://weread.qq.com/".into()),
+            ),
+            PluginUpdateNavigation::Online("https://weread.qq.com/".into())
+        );
+        assert_eq!(
+            decide_plugin_update_navigation(
+                MainPageKind::Library,
+                Some("localhost"),
+                &settings,
+                &[weread.clone()],
+                None,
+            ),
+            PluginUpdateNavigation::LocalShelf
+        );
+        assert_eq!(
+            decide_plugin_update_navigation(
+                MainPageKind::LocalReader,
+                Some("localhost"),
+                &settings,
+                &[weread],
+                Some("https://weread.qq.com/".into()),
+            ),
+            PluginUpdateNavigation::Stay
+        );
+        assert_eq!(
+            decide_plugin_update_navigation(
+                MainPageKind::Remote,
+                Some("open.weixin.qq.com"),
+                &json!({ "global": { "enabledPlugins": ["fanqie"] } }),
+                &[
+                    web_plugin("weread", "weread.qq.com"),
+                    web_plugin("fanqie", "fanqienovel.com")
+                ],
+                None,
+            ),
+            PluginUpdateNavigation::Stay
+        );
+        assert_eq!(
+            decide_plugin_update_navigation(
+                MainPageKind::Remote,
+                Some("weread.qq.com"),
+                &json!({ "global": { "enabledPlugins": ["fanqie"] } }),
+                &[
+                    web_plugin("weread", "weread.qq.com"),
+                    web_plugin("fanqie", "fanqienovel.com")
+                ],
+                None,
+            ),
+            PluginUpdateNavigation::LocalShelf
         );
     }
 

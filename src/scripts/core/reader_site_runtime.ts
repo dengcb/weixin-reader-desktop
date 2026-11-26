@@ -1,7 +1,3 @@
-import manifest from '../../plugins/builtin/weread/manifest.json';
-import { WeReadAdapter } from '../adapters/weread_adapter';
-import { setupStylePanel } from '../adapters/weread_style_panel';
-import { chapterManager } from './chapter_manager';
 import type {
   BookProgress,
   PluginAPI,
@@ -13,8 +9,7 @@ import type {
 /**
  * Managers 唯一依赖的站点运行时接口。
  *
- * WeRead 通过旧适配器桥接，第三方站点通过 ReaderPlugin 桥接；页面行为的
- * 实现仍留在各自的适配器/插件中，核心层只负责生命周期和能力路由。
+ * 本地来源与外部插件共用此接口，核心层负责生命周期和能力路由。
  */
 export interface ReaderSiteRuntime extends ReaderPlugin {
   readonly id: string;
@@ -39,136 +34,14 @@ export interface ReaderSiteRuntime extends ReaderPlugin {
   canNavigateNextChapter?(): boolean;
 }
 
-class WeReadSiteRuntime implements ReaderSiteRuntime {
-  readonly manifest = manifest as PluginManifest;
-  readonly id = this.manifest.id;
-  readonly name = this.manifest.name;
-  readonly styleOwner = 'manager' as const;
-
-  private adapter: WeReadAdapter | null = null;
-  private stylePanelTeardown: (() => void) | null = null;
-
-  private getAdapter(): WeReadAdapter {
-    this.adapter ??= new WeReadAdapter();
-    return this.adapter;
-  }
-
-  onLoad(api: PluginAPI): void {
-    // WeRead 的样式继续由 StyleManager 应用，进度跟踪器由适配器构造函数启动。
-    this.getAdapter();
-    // 阅读样式面板（issue #3 纯白正文 / #4 行距段间距）：右侧工具栏注入入口按钮
-    this.stylePanelTeardown = setupStylePanel(api);
-  }
-
-  onUnload(): void {
-    this.stylePanelTeardown?.();
-    this.stylePanelTeardown = null;
-    this.adapter?.destroy?.();
-    this.adapter = null;
-  }
-
-  matchesDomain(): boolean {
-    const domains = this.manifest.site?.domain;
-    const configured = Array.isArray(domains) ? domains : [domains];
-    return configured.some(domain =>
-      typeof domain === 'string'
-      && (window.location.hostname === domain || window.location.hostname.endsWith(`.${domain}`))
-    );
-  }
-
-  isReaderPage(): boolean {
-    return this.getAdapter().isReaderPage();
-  }
-
-  isHomePage(): boolean {
-    return this.getAdapter().isHomePage();
-  }
-
-  nextPage(): void | Promise<void> {
-    return this.getAdapter().nextPage();
-  }
-
-  openReadingStyle(): boolean {
-    const button = document.getElementById('wxrd-style-button') as HTMLButtonElement | null;
-    if (!button) return false;
-    const panel = document.getElementById('wxrd-style-panel') as HTMLElement | null;
-    if (!panel || panel.hidden) button.click();
-    return true;
-  }
-
-  canOpenReadingStyle(): boolean { return true; }
-  canNavigateChapter(): boolean { return chapterManager.isInitialized(); }
-  private currentChapterPosition(): number {
-    const match = window.location.pathname.match(/\/web\/reader\/([^?#]+)/);
-    const fullPath = match?.[1];
-    const marker = fullPath?.indexOf('k') ?? -1;
-    if (!fullPath || marker <= 0) return -1;
-    const segment = fullPath.slice(marker);
-    return chapterManager.getChapters().findIndex(
-      chapter => chapterManager.getChapterUrlSegment(chapter.chapterIdx) === segment,
-    );
-  }
-  canNavigatePreviousChapter(): boolean { return this.currentChapterPosition() > 0; }
-  canNavigateNextChapter(): boolean {
-    const position = this.currentChapterPosition();
-    return position >= 0 && position < chapterManager.getChapters().length - 1;
-  }
-
-  prevPage(): void | Promise<void> {
-    return this.getAdapter().prevPage();
-  }
-
-  getStyles(): PluginStyles {
-    return {};
-  }
-
-  getWideModeCSS(wide: boolean, wideWidthPercent?: number): string {
-    return this.getAdapter().getWideModeCSS(wide, wideWidthPercent);
-  }
-
-  getToolbarCSS(hide: boolean): string {
-    return this.getAdapter().getToolbarCSS(hide);
-  }
-
-  getNavbarCSS(hide: boolean): string {
-    return this.getAdapter().getNavbarCSS?.(hide) ?? '';
-  }
-
-  getDarkThemeCSS(): string {
-    return this.getAdapter().getDarkThemeCSS?.() ?? '';
-  }
-
-  getLightThemeCSS(): string {
-    return this.getAdapter().getLightThemeCSS?.() ?? '';
-  }
-
-  isDoubleColumn(): boolean {
-    return this.getAdapter().isDoubleColumn();
-  }
-
-  isAtBottom(): boolean {
-    return this.getAdapter().isAtBottom();
-  }
-
-  getChapterProgress(): number {
-    return this.getAdapter().getChapterProgress?.() ?? 0;
-  }
-
-  getBookProgress(): Promise<BookProgress | null> {
-    return this.getAdapter().getBookProgress?.() ?? Promise.resolve(null);
-  }
-
-  clickNextChapter(): void {
-    this.getAdapter().clickNextChapter?.();
-  }
-
-  getReaderMenuItems(): string[] {
-    return this.getAdapter().getReaderMenuItems?.() ?? ['reader_wide', 'hide_toolbar', 'auto_flip'];
-  }
-}
-
 class PluginSiteRuntime implements ReaderSiteRuntime {
-  readonly styleOwner = 'plugin' as const;
+  get styleOwner() { return this.plugin.styleOwner ?? 'plugin'; }
+  getWindowTheme() { return this.plugin.getWindowTheme?.() ?? null; }
+  openToc() { return this.plugin.openToc?.(); }
+  closeToc() { return this.plugin.closeToc?.(); }
+  get getProgressPanel() { return this.plugin.getProgressPanel?.bind(this.plugin); }
+  get getProgressInset() { return this.plugin.getProgressInset?.bind(this.plugin); }
+  clickNextChapter() { this.plugin.clickNextChapter?.(); }
   private readonly effectiveManifest: PluginManifest;
 
   constructor(
@@ -250,42 +123,48 @@ class PluginSiteRuntime implements ReaderSiteRuntime {
   canNavigatePreviousChapter(): boolean {
     const declared = this.effectiveManifest.capabilities.chapterNav;
     if (declared === false) return false;
+    if (this.plugin.canNavigatePreviousChapter) return this.plugin.canNavigatePreviousChapter();
     return declared === true || typeof this.plugin.prevChapter === 'function';
   }
   canNavigateNextChapter(): boolean {
     const declared = this.effectiveManifest.capabilities.chapterNav;
     if (declared === false) return false;
+    if (this.plugin.canNavigateNextChapter) return this.plugin.canNavigateNextChapter();
     return declared === true || typeof this.plugin.nextChapter === 'function';
   }
   getReaderMenuItems(): string[] {
     return this.plugin.getReaderMenuItems?.() ?? ['reader_wide', 'hide_toolbar', 'auto_flip'];
   }
 
-  getWideModeCSS(wide: boolean, _wideWidthPercent?: number): string {
+  getWideModeCSS(wide: boolean, wideWidthPercent?: number): string {
+    if (this.plugin.getWideModeCSS) return this.plugin.getWideModeCSS(wide, wideWidthPercent);
     const styles = this.plugin.getStyles().wideMode;
     return styles ? (wide ? styles.enabled : styles.disabled) : '';
   }
 
   getToolbarCSS(hide: boolean): string {
+    if (this.plugin.getToolbarCSS) return this.plugin.getToolbarCSS(hide);
     const styles = this.plugin.getStyles().toolbar;
     return styles ? (hide ? styles.enabled : styles.disabled) : '';
   }
 
   getNavbarCSS(hide: boolean): string {
+    if (this.plugin.getNavbarCSS) return this.plugin.getNavbarCSS(hide);
     const styles = this.plugin.getStyles().navbar;
     return styles ? (hide ? styles.enabled : styles.disabled) : '';
   }
 
   getDarkThemeCSS(): string {
+    if (this.plugin.getDarkThemeCSS) return this.plugin.getDarkThemeCSS();
     return this.plugin.getStyles().theme?.dark ?? '';
   }
 
   getLightThemeCSS(): string {
+    if (this.plugin.getLightThemeCSS) return this.plugin.getLightThemeCSS();
     return this.plugin.getStyles().theme?.light ?? '';
   }
 }
 
-export const createWeReadSiteRuntime = (): ReaderSiteRuntime => new WeReadSiteRuntime();
 
 export const createPluginSiteRuntime = (
   plugin: ReaderPlugin,

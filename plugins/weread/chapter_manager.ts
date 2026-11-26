@@ -1,5 +1,4 @@
-import { log } from './logger';
-import { getChapterUrl } from '../utils/chapter';
+import { getChapterUrl } from './chapter';
 
 /**
  * 章节数据
@@ -74,7 +73,7 @@ class ChapterManager {
     if (cached?.length) {
       this.activateBook(bookId, cached);
       this.touchCache(bookId, cached);
-      log.info('[ChapterManager] 使用已缓存章节数据');
+      console.info('[ChapterManager] 使用已缓存章节数据');
       return true;
     }
 
@@ -87,7 +86,7 @@ class ChapterManager {
     if (!load) {
       const numericId = this.readNumericBookId();
       if (!numericId) {
-        log.warn('[ChapterManager] 无法获取数字型 ID，可能页面未完全加载');
+        console.warn('[ChapterManager] 无法获取数字型 ID，可能页面未完全加载');
         return false;
       }
 
@@ -115,7 +114,7 @@ class ChapterManager {
     }
 
     this.activateBook(bookId, loadedChapters);
-    log.info(`[ChapterManager] 初始化成功，${loadedChapters.length} 章`);
+    console.info(`[ChapterManager] 初始化成功，${loadedChapters.length} 章`);
     return true;
   }
 
@@ -133,7 +132,7 @@ class ChapterManager {
       });
 
       if (!response.ok) {
-        log.warn(`[ChapterManager] API 失败: ${response.status}`);
+        console.warn(`[ChapterManager] API 失败: ${response.status}`);
         return null;
       }
 
@@ -163,7 +162,7 @@ class ChapterManager {
         .sort((a: ChapterData, b: ChapterData) => a.chapterIdx - b.chapterIdx);
     } catch (e) {
       if (signal.aborted) return null;
-      log.error('[ChapterManager] 初始化失败', e);
+      console.error('[ChapterManager] 初始化失败', e);
       return null;
     }
   }

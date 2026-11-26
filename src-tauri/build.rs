@@ -35,6 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "claim_settings_target",
             "switch_bookstore_by_index",
             "get_bookstore_list",
+            "has_online_sources",
+            "open_plugin_catalog",
             "apply_site_zoom",
             "set_immersive_title_bar",
             "ensure_font_cache",

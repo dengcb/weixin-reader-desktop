@@ -79,25 +79,25 @@ export const ensureExitButton = (doc: Document): HTMLButtonElement | null => {
     #${EXIT_BUTTON_ID}:hover {
       transform: translateX(-50%) scale(1.07);
     }
-    body.wr_whiteTheme #${EXIT_BUTTON_ID} {
+    body.atreader-light-theme #${EXIT_BUTTON_ID} {
       color: #1f2329;
     }
-    body.wr_whiteTheme #${EXIT_BUTTON_ID}::before {
+    body.atreader-light-theme #${EXIT_BUTTON_ID}::before {
       background: rgba(244, 245, 247, 0.55);
       box-shadow: 0 4px 22px rgba(0, 0, 0, 0.12);
     }
-    body.wr_whiteTheme #${EXIT_BUTTON_ID}:hover::before {
+    body.atreader-light-theme #${EXIT_BUTTON_ID}:hover::before {
       background: rgba(244, 245, 247, 0.85);
     }
     @media (prefers-color-scheme: light) {
-      body:not(.wr_whiteTheme) #${EXIT_BUTTON_ID} {
+      body:not(.atreader-light-theme) #${EXIT_BUTTON_ID} {
         color: #1f2329;
       }
-      body:not(.wr_whiteTheme) #${EXIT_BUTTON_ID}::before {
+      body:not(.atreader-light-theme) #${EXIT_BUTTON_ID}::before {
         background: rgba(244, 245, 247, 0.55);
         box-shadow: 0 4px 22px rgba(0, 0, 0, 0.12);
       }
-      body:not(.wr_whiteTheme) #${EXIT_BUTTON_ID}:hover::before {
+      body:not(.atreader-light-theme) #${EXIT_BUTTON_ID}:hover::before {
         background: rgba(244, 245, 247, 0.85);
       }
     }

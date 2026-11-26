@@ -74,7 +74,7 @@
     body.bars-hidden main { transform: translateY(-60px); }
     body.bars-hidden .manage-bar { transform: translateY(100%); }
 
-    /* ---- 顶栏：品牌 / 居中搜索 / 导入入口（同微信读书书架布局） ---- */
+    /* ---- 顶栏：品牌 / 居中搜索 / 导入入口 ---- */
     .topbar {
       position: sticky;
       top: 0;
@@ -155,7 +155,7 @@
     .pill.danger:disabled { opacity: .35; cursor: default; }
     .pill.danger.armed { filter: brightness(.85); }
 
-    /* ---- 问候区：衬线大标题（微信读书书架的用户名排印） ---- */
+    /* ---- 问候区：衬线大标题 ---- */
     main {
       max-width: 1168px;
       margin: 0 auto;
@@ -171,7 +171,7 @@
     }
     .greeting .count { margin-left: 10px; color: var(--muted); font-size: 13px; font-weight: 400; letter-spacing: 0; }
 
-    /* ---- 封面网格：居中限宽，观感对齐微信读书书架 ---- */
+    /* ---- 封面网格：居中限宽 ---- */
     .shelf {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
@@ -373,6 +373,7 @@
     .title-input { width: 100%; box-sizing: border-box; padding: 3px 6px; margin: -3px -6px;
       border: 1px solid var(--accent); border-radius: 6px; background: var(--field); color: var(--ink);
       font: inherit; text-overflow: ellipsis; }
+  .catalog-link{font:inherit;background:none;color:var(--accent);border:0;text-decoration:underline;cursor:pointer;padding:0}
   </style>
 </head>
 <body>
@@ -405,6 +406,7 @@
       把 TXT / EPUB / MOBI / PDF 拖进窗口即可上架
       <br>
       <button type="button" class="pill" id="emptyImportBtn">导入本地图书</button>
+      <p id="pluginHint" hidden>也可以从艾特阅读官网<button id="getPlugins" type="button" class="catalog-link">获取在线阅读插件</button></p>
     </div>
   </main>
   <div class="manage-bar" id="manageBar" hidden>
@@ -414,11 +416,17 @@
   </div>
   <script>
     const invoke = window.__TAURI__?.core?.invoke;
+    const refreshPluginHint = async () => {
+      if (invoke) document.getElementById('pluginHint').hidden = await invoke('has_online_sources').catch(()=>true);
+    };
+    void refreshPluginHint();
+    window.__TAURI__?.event?.listen('plugins-updated', refreshPluginHint);
+    document.getElementById('getPlugins').addEventListener('click', () => invoke?.('open_plugin_catalog').catch(()=>window.alert('无法打开艾特阅读官网')));
     // 从阅读页进入时窗口标题还停留在旧书名：JS 设置 document.title 触发壳同步，
     // 同时直接调 set_title 双保险
     document.title = '本地书架 - 艾特阅读';
     void invoke?.('set_title', { title: '本地书架 - 艾特阅读' })?.catch?.(() => {});
-    // 封面占位：按书名稳定取色（微信读书书架观感），无真实封面文件可渲染
+    // 封面占位：按书名稳定取色，无真实封面文件可渲染
     const PALETTES = [
       ['#b3382e', '#7e1f18'], ['#2e5e8f', '#1c3d60'], ['#4a7a2c', '#2e521a'],
       ['#8a5a2c', '#5e3a18'], ['#6b4fa0', '#463172'], ['#a0425e', '#6e2a40'],

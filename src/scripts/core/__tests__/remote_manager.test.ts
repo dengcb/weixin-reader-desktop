@@ -1,3 +1,4 @@
+import { openToc, closeToc } from '../../../../plugins/weread/toc';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventBus } from '../event_bus';
 import { settingsStore } from '../settings_store';
@@ -262,6 +263,32 @@ describe('RemoteManager keyboard contract', () => {
     manager.destroy();
   });
 
+  it('lets arrow keys through when chapter navigation stays put', () => {
+    const { manager, prevChapter, nextChapter } = createManager();
+    prevChapter.mockImplementation(() => false);
+    nextChapter.mockImplementation(() => false);
+
+    const up = new KeyboardEvent('keydown', { code: 'ArrowUp', cancelable: true });
+    window.dispatchEvent(up);
+    const down = new KeyboardEvent('keydown', { code: 'ArrowDown', cancelable: true });
+    window.dispatchEvent(down);
+
+    expect(prevChapter).toHaveBeenCalledTimes(1);
+    expect(nextChapter).toHaveBeenCalledTimes(1);
+    expect(up.defaultPrevented).toBe(false);
+    expect(down.defaultPrevented).toBe(false);
+    manager.destroy();
+  });
+
+  it('consumes arrow keys when chapter navigation moves', () => {
+    const { manager, prevChapter } = createManager();
+    const up = new KeyboardEvent('keydown', { code: 'ArrowUp', cancelable: true });
+    window.dispatchEvent(up);
+    expect(prevChapter).toHaveBeenCalledTimes(1);
+    expect(up.defaultPrevented).toBe(true);
+    manager.destroy();
+  });
+
   it('does not recursively consume chapter keys emitted by the runtime bridge', () => {
     const { manager, prevChapter, nextChapter } = createManager();
     for (const code of ['ArrowUp', 'ArrowDown']) {
@@ -498,6 +525,7 @@ describe('RemoteManager HID button contract', () => {
       + '<div class="readerCatalog" style="display:none"></div>';
     const { manager } = createManager();
     (manager as any).siteContext.siteId = 'weread';
+    Object.assign((manager as any).siteContext.currentRuntime,{ openToc, closeToc });
     (manager as any).siteContext.isReaderPage = true;
 
     const tocStyle = () => document.querySelector('style[data-atreader-toc-reveal]');

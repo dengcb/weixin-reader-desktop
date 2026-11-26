@@ -2,7 +2,6 @@ import { settingsStore } from '../core/settings_store';
 import { createSiteContext, SiteContext } from '../core/site_context';
 import { log } from '../core/logger';
 import { EventBus, Events } from '../core/event_bus';
-import { chapterManager } from '../core/chapter_manager';
 import { showToast } from '../core/toast';
 import { invoke } from '../core/tauri';
 import { attachKeyboardToSameOriginIframes } from '../core/iframe_keyboard';
@@ -41,17 +40,8 @@ export class RemoteManager {
   private lastMenuReleaseAt = 0;
   /** 菜单键按下的墙钟时刻：定时器被系统节流时在释放按墙钟补判长按 */
   private menuPressAt = 0;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private initializationGeneration = 0;
   private unsubscribeSettings: (() => void) | null = null;
   private unsubscribeReaderCommand: (() => void) | null = null;
-  private routeChangedHandler: (() => void) | null = null;
-  /** 微信读书强制目录的选章事件（站点状态机未参与，需自导航） */
-  private tocPickHandler: ((event: Event) => void) | null = null;
-
-  // 当前章节索引（从 URL 或 API 获取）
-  private currentChapterIdx: number = -1;
-
   constructor() {
     this.siteContext = createSiteContext();
     this.init();
@@ -79,187 +69,19 @@ export class RemoteManager {
     const settings = settingsStore.get();
     if (settings.enableRemoteController !== false) this.enable();
 
-    // 路由变化时初始化
-    this.routeChangedHandler = () => this.tryInitialize();
-    window.addEventListener('ipc:route-changed', this.routeChangedHandler);
-
-    // 首次加载
-    if (this.siteContext.isReaderPage) {
-      this.tryInitialize();
-    }
-
-    // 微信读书强制目录：站点状态机没参与，点章节由这里匹配章节数据自导航
-    this.tocPickHandler = (event: Event) => {
-      if (this.siteContext.siteId !== 'weread') return;
-      const title = (event as CustomEvent<{ title?: string }>).detail?.title;
-      if (title) this.navigateToChapterTitle(title);
-    };
-    window.addEventListener('atreader:toc-chapter-pick', this.tocPickHandler);
-
     log.info('[RemoteManager] 初始化完成');
   }
 
-  /** 按目录项标题在 chapterManager 里找章并跳转（微信读书强制目录用）。 */
-  private navigateToChapterTitle(title: string): void {
-    const normalized = title.replace(/\s+/g, '');
-    const chapters = chapterManager.getChapters();
-    // 目录项带「第N章 」前缀，用去空白后缀匹配；同名章取最后一个
-    let target: (typeof chapters)[number] | null = null;
-    for (const chapter of chapters) {
-      const chapterTitle = (chapter.title ?? '').replace(/\s+/g, '');
-      if (chapterTitle.endsWith(normalized) || normalized.endsWith(chapterTitle)) {
-        target = chapter;
-      }
-    }
-    if (!target) {
-      log.info(`[RemoteManager] 目录选章未匹配: ${title}`);
-      return;
-    }
-    const url = chapterManager.buildChapterUrl(target.chapterIdx);
-    if (!url) return;
-    log.info(`[RemoteManager] 目录跳转: ${target.title}`);
-    window.location.href = url;
-  }
-
-  /**
-   * 尝试初始化章节数据
-   */
-  private async tryInitialize() {
-    const generation = ++this.initializationGeneration;
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    if (!this.siteContext.isReaderPage) return;
-
-    // 等待页面加载
-    let retries = 0;
-    const maxRetries = 20;
-
-    const check = async () => {
-      if (generation !== this.initializationGeneration) return;
-      // 提取 URL 路径作为 bookId
-      const pathMatch = window.location.pathname.match(/\/web\/reader\/([^?#]+)/);
-      if (!pathMatch) {
-        if (++retries < maxRetries) this.retryTimer = setTimeout(check, 500);
-        return;
-      }
-
-      // 第一次进入时，URL 就是 bookId（可能包含 k+chapterId，取 k 之前的部分）
-      const fullPath = pathMatch[1];
-      const kIndex = fullPath.indexOf('k');
-      const bookIdSegment = kIndex > 0 ? fullPath.substring(0, kIndex) : fullPath;
-
-      // 初始化 ChapterManager
-      const success = await chapterManager.initialize(bookIdSegment);
-      if (generation !== this.initializationGeneration) return;
-      if (!success) {
-        // 可能未登录或页面未加载完成，静默重试
-        if (++retries < maxRetries) this.retryTimer = setTimeout(check, 500);
-        return;
-      }
-
-      // 尝试从 URL 获取当前章节
-      this.updateCurrentChapterFromUrl();
-
-      log.info(`[RemoteManager] 初始化成功，共 ${chapterManager.getChapters().length} 章`);
-      window.dispatchEvent(new Event('atreader:capabilities-changed'));
-    };
-
-    check();
-  }
-
-  /**
-   * 从 URL 更新当前章节索引
-   */
-  private updateCurrentChapterFromUrl() {
-    const pathMatch = window.location.pathname.match(/\/web\/reader\/([^?#]+)/);
-    if (!pathMatch) return;
-
-    const fullPath = pathMatch[1];
-    const kIndex = fullPath.indexOf('k');
-
-    if (kIndex > 0) {
-      // URL 有 chapterId，找到对应章节
-      const chapterSegment = fullPath.substring(kIndex);
-      const chapters = chapterManager.getChapters();
-
-      for (const ch of chapters) {
-        if (chapterManager.getChapterUrlSegment(ch.chapterIdx) === chapterSegment) {
-          this.currentChapterIdx = ch.chapterIdx;
-          log.info(`[RemoteManager] 当前章节: ${ch.title} (idx=${ch.chapterIdx})`);
-          return;
-        }
-      }
-    }
-
-    // URL 没有 chapterId 或找不到匹配，等翻页后再更新
-    log.info('[RemoteManager] 等待翻页后获取当前章节');
-  }
-
-  /**
-   * 跳转章节
-   */
   private navigateChapter(direction: number): boolean {
     const runtime = this.siteContext.currentRuntime;
     const navigate = direction < 0 ? runtime?.prevChapter : runtime?.nextChapter;
-    if (navigate && runtime) {
-      Promise.resolve(navigate.call(runtime)).then((changed) => {
-        if (changed) showToast(direction < 0 ? '上一章' : '下一章');
-      }).catch((error) => log.error('[RemoteManager] 本地章节切换失败', error));
-      return true;
-    }
-
-    // 检查登录状态，未登录时静默返回
-    if (!chapterManager.isLoggedIn()) {
-      return false;
-    }
-
-    if (!chapterManager.isInitialized()) {
-      return false;
-    }
-
-    // 先尝试从 URL 更新当前章节
-    this.updateCurrentChapterFromUrl();
-
-    if (this.currentChapterIdx < 0) {
-      return false;
-    }
-
-    const chapters = chapterManager.getChapters();
-    const currentArrayIdx = chapters.findIndex(c => c.chapterIdx === this.currentChapterIdx);
-    if (currentArrayIdx < 0) {
-      return false;
-    }
-
-    const targetArrayIdx = currentArrayIdx + direction;
-
-    // 边界检查
-    if (targetArrayIdx < 0) {
-      log.info('[RemoteManager] 已是第一章');
-      return false;
-    }
-    if (targetArrayIdx >= chapters.length) {
-      log.info('[RemoteManager] 已是最后一章');
-      return false;
-    }
-
-    const targetChapter = chapters[targetArrayIdx];
-    const targetUrl = chapterManager.buildChapterUrl(targetChapter.chapterIdx);
-
-    if (!targetUrl) {
-      return false;
-    }
-
-    log.info(`[RemoteManager] 跳转: ${targetChapter.title}`);
-
-    if (direction === -1) {
-      showToast('上一章');
-    } else if (direction === 1) {
-      showToast('下一章');
-    }
-
-    window.location.href = targetUrl;
+    if (!navigate || !runtime) return false;
+    const result = navigate.call(runtime);
+    // 同步返回 false：章节表未就绪、已是首尾章。方向键交回网页（竖排滚动）。
+    if (result === false) return false;
+    Promise.resolve(result).then((changed) => {
+      if (changed) showToast(direction < 0 ? '上一章' : '下一章');
+    }).catch((error) => log.error('[RemoteManager] 本地章节切换失败', error));
     return true;
   }
 
@@ -550,7 +372,7 @@ export class RemoteManager {
       this.menuLongFired = true;
       const siteId = this.siteContext.siteId;
       if (!this.siteContext.isReaderPage) return;
-      const outcome = openReaderToc(siteId);
+      const outcome = this.siteContext.currentRuntime?.openToc?.() ?? openReaderToc(siteId);
       log.info(`[RemoteManager] 菜单长按 site=${siteId} outcome=${outcome}`);
       if (outcome === 'not-found') showToast('未找到目录入口');
     }, MENU_HOLD_MS);
@@ -570,7 +392,7 @@ export class RemoteManager {
       if (Date.now() - this.menuPressAt >= MENU_HOLD_MS) {
         const siteId = this.siteContext.siteId;
         if (this.siteContext.isReaderPage) {
-          const outcome = openReaderToc(siteId);
+          const outcome = this.siteContext.currentRuntime?.openToc?.() ?? openReaderToc(siteId);
           log.info(`[RemoteManager] 菜单长按(节流兜底) site=${siteId} outcome=${outcome}`);
           if (outcome === 'not-found') showToast('未找到目录入口');
         }
@@ -582,15 +404,12 @@ export class RemoteManager {
     if (longPress) return;
     // 目录展开时，单击改为收起目录（长按开 → 单击关，可循环）；
     // 目录没开时维持原语义：切换工具栏显隐。
-    if (closeReaderToc(this.siteContext.siteId)) return;
+    if (this.siteContext.currentRuntime?.closeToc?.() ?? closeReaderToc(this.siteContext.siteId)) return;
     const current = settingsStore.get();
     settingsStore.update({ hideToolbar: !current.hideToolbar });
   }
 
   destroy() {
-    this.initializationGeneration++;
-    if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.retryTimer = null;
     if (this.menuHoldTimer) clearTimeout(this.menuHoldTimer);
     this.menuHoldTimer = null;
     for (const entry of this.holdTimers.values()) clearTimeout(entry.timer);
@@ -599,16 +418,7 @@ export class RemoteManager {
     this.unsubscribeSettings = null;
     this.unsubscribeReaderCommand?.();
     this.unsubscribeReaderCommand = null;
-    if (this.routeChangedHandler) {
-      window.removeEventListener('ipc:route-changed', this.routeChangedHandler);
-      this.routeChangedHandler = null;
-    }
-    if (this.tocPickHandler) {
-      window.removeEventListener('atreader:toc-chapter-pick', this.tocPickHandler);
-      this.tocPickHandler = null;
-    }
     this.disable();
-    chapterManager.reset();
     log.info('[RemoteManager] 已销毁');
   }
 }

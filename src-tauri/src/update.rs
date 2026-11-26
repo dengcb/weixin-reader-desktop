@@ -39,11 +39,24 @@ pub struct UpdateInfo {
     pub body: String,
 }
 
+pub(crate) fn github_channel<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("distribution")
+        .and_then(|value| value.get("channel"))
+        .and_then(|channel| channel.as_str())
+        == Some("github")
+}
+
 pub fn init<R: Runtime>(app: &AppHandle<R>) {
     app.manage(UpdateState {
         downloaded: Mutex::new(false),
     });
 
+    if !github_channel(app) {
+        return;
+    }
     let app_handle = app.clone();
 
     // Spawn background task
@@ -148,6 +161,9 @@ async fn check_silent<R: Runtime>(app: &AppHandle<R>) {
 // Manual Check (Command)
 #[tauri::command]
 pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<UpdateInfo, String> {
+    if !github_channel(&app) {
+        return Err("请在 Microsoft Store 中检查应用更新".into());
+    }
     // Disable menu during check
     if let Some(menu_state) = app.try_state::<MenuState<R>>() {
         if let Ok(guard) = menu_state.check_update_item.lock() {
@@ -229,6 +245,9 @@ pub async fn check_update_manual<R: Runtime>(app: AppHandle<R>) -> Result<Update
 // Install Now (Command)
 #[tauri::command]
 pub async fn install_update_now<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if !github_channel(&app) {
+        return Err("请通过 Microsoft Store 更新应用".into());
+    }
     // Check if update is already downloaded
     if let Some(state) = app.try_state::<UpdateState>() {
         if *state.downloaded.lock().unwrap() {

@@ -258,7 +258,10 @@ pub fn set_menu_bar_hidden<R: Runtime>(
     let apply = |w: &tauri::WebviewWindow<R>| {
         let outcome = if hidden { w.hide_menu() } else { w.show_menu() };
         if let Err(error) = outcome {
-            log::error!("切换菜单栏可见性失败（目标：{}）：{error}", if hidden { "隐藏" } else { "显示" });
+            log::error!(
+                "切换菜单栏可见性失败（目标：{}）：{error}",
+                if hidden { "隐藏" } else { "显示" }
+            );
         }
     };
     apply(win);
@@ -451,7 +454,7 @@ pub fn simulate_menu_click<R: Runtime>(
     crate::menu::handle_menu_action(&app, &action)
 }
 
-/// 书店快捷键：按序号切换书店（1=微信读书，2=第一个插件站点，依此类推）
+/// 书店快捷键：按序号切换书店（1 起对应启用的在线来源）
 #[tauri::command]
 pub fn switch_bookstore_by_index<R: Runtime>(
     app: AppHandle<R>,
@@ -463,7 +466,7 @@ pub fn switch_bookstore_by_index<R: Runtime>(
     }
     let settings = crate::settings::read_settings(&app)
         .unwrap_or_else(|_| crate::settings::default_settings());
-    // 与菜单、书城切换浮层共用同一份有序站点；插件枚举失败时仍保留 weread
+    // 与菜单、书城切换浮层共用同一份有序站点；插件枚举失败时仍可打开本地书库
     let site_ids: Vec<String> = match crate::plugin_manager::get_installed_plugins(&app) {
         Ok(mut plugins) => crate::sites::ordered_enabled_sites(&settings, &mut plugins),
         Err(_) => crate::sites::ordered_enabled_sites(&settings, &mut []),
@@ -522,13 +525,13 @@ pub fn get_bookstore_list<R: Runtime>(
     }
     let settings = crate::settings::read_settings(&app)
         .unwrap_or_else(|_| crate::settings::default_settings());
-    // 与菜单对勾同语义：未记录过站点时视为微信读书；指向已禁用站点时
+    // 与菜单对勾同语义：未记录过站点时视为本地书库；指向已禁用站点时
     // 匹配不到任何条目，浮层按「无当前站」处理（首按高亮第一项）。
     let current = settings
         .get("global")
         .and_then(|global| global.get("lastSiteId"))
         .and_then(serde_json::Value::as_str)
-        .unwrap_or(crate::sites::WEREAD.id)
+        .unwrap_or("local")
         .to_string();
     let entries = match crate::plugin_manager::get_installed_plugins(&app) {
         Ok(mut plugins) => crate::sites::ordered_enabled_sites(&settings, &mut plugins),
@@ -542,15 +545,18 @@ pub fn get_bookstore_list<R: Runtime>(
         index: 0,
         current: current == "local",
     });
-    items.extend(entries.into_iter().enumerate().map(|(offset, site)| {
-        BookstoreListItem {
-            icon: crate::plugin_installer::safe_icon_url(site.icon.as_deref()),
-            index: offset + 1,
-            current: site.id == current,
-            id: site.id,
-            name: site.name,
-        }
-    }));
+    items.extend(
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(offset, site)| BookstoreListItem {
+                icon: crate::plugin_installer::safe_icon_url(site.icon.as_deref()),
+                index: offset + 1,
+                current: site.id == current,
+                id: site.id,
+                name: site.name,
+            }),
+    );
     Ok(items)
 }
 
@@ -597,14 +603,24 @@ pub fn set_immersive_title_bar<R: Runtime>(app: AppHandle<R>, hidden: bool) {
     {
         use tauri::TitleBarStyle;
         IMMERSIVE_TITLE_HIDDEN.store(hidden, Ordering::Relaxed);
-        let style = if hidden { TitleBarStyle::Overlay } else { TitleBarStyle::Visible };
+        let style = if hidden {
+            TitleBarStyle::Overlay
+        } else {
+            TitleBarStyle::Visible
+        };
         let _ = win.set_title_bar_style(style);
         if hidden {
             let _ = win.set_title("");
         } else {
-            let last = LAST_WINDOW_TITLE.lock().map(|t| t.clone()).unwrap_or_default();
+            let last = LAST_WINDOW_TITLE
+                .lock()
+                .map(|t| t.clone())
+                .unwrap_or_default();
             let title = if last.is_empty() {
-                app.config().product_name.clone().unwrap_or_else(|| "艾特阅读".to_string())
+                app.config()
+                    .product_name
+                    .clone()
+                    .unwrap_or_else(|| "艾特阅读".to_string())
             } else {
                 last
             };
@@ -642,7 +658,7 @@ pub(crate) fn refresh_app_menu<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub(crate) fn enable_plugin_in_settings(app: &AppHandle, plugin_id: &str) -> Result<(), String> {
-    let mut source_ids = vec![crate::sites::WEREAD.id.to_string()];
+    let mut source_ids = Vec::new();
     if let Ok(plugins) = crate::plugin_manager::get_installed_plugins(app) {
         source_ids.extend(
             plugins
@@ -670,7 +686,7 @@ pub fn set_content_source_enabled(
     if window.label() != "settings" {
         return Err("只有设置窗口可以管理内容来源".to_string());
     }
-    let mut source_ids = vec![crate::sites::WEREAD.id.to_string()];
+    let mut source_ids = Vec::new();
     if let Ok(plugins) = crate::plugin_manager::get_installed_plugins(&app) {
         source_ids.extend(
             plugins
@@ -747,7 +763,7 @@ pub async fn install_plugin(
     Ok(result)
 }
 
-/// 若主窗口当前停留在指定插件的站点上，先导航回微信读书（优先续读上次阅读页，无则首页）
+/// 若主窗口当前停留在指定插件的站点上，先切换到本地图书
 /// 用于卸载前脱离该站点，避免卸载后滞留在无插件支撑、且无书店菜单可切换的页面上
 fn navigate_home_if_on_plugin_site(app: &AppHandle, plugin_id: &str) {
     let Some(win) = app.get_webview_window("main") else {
@@ -780,32 +796,14 @@ fn navigate_home_if_on_plugin_site(app: &AppHandle, plugin_id: &str) {
         return;
     }
 
-    // 导航目标：weread 上次阅读页 → 回退 weread 首页
-    let settings =
-        crate::settings::read_settings(app).unwrap_or_else(|_| crate::settings::default_settings());
-    let target = settings
-        .get("sites")
-        .and_then(|s| s.get("weread"))
-        .and_then(|s| s.get("lastReaderUrl"))
-        .and_then(|u| u.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| crate::sites::resolve_home_url(app, "weread"));
-    if let Some(t) = target {
-        if let Ok(u) = t.parse::<tauri::Url>() {
-            println!(
-                "[Plugin] Main window is on '{}' site, navigating back to weread before uninstall",
-                plugin_id
-            );
-            let _ = win.navigate(u);
-        }
-    }
+    crate::menu::switch_to_local(app);
 }
 
 /// 卸载插件
 #[tauri::command]
 pub async fn uninstall_plugin(app: AppHandle, plugin_id: String) -> Result<(), String> {
     println!("[Plugin] Uninstalling plugin: {}", plugin_id);
-    // 若正停在该插件站点上，先跳回微信读书再卸载
+    // 若正停在该插件站点上，先切换到本地再卸载
     navigate_home_if_on_plugin_site(&app, &plugin_id);
     plugin_manager::uninstall_plugin(&app, &plugin_id)?;
     println!("[Plugin] Plugin uninstalled: {}", plugin_id);
@@ -815,6 +813,21 @@ pub async fn uninstall_plugin(app: AppHandle, plugin_id: String) -> Result<(), S
     refresh_app_menu(&app);
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_plugin_catalog(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url("https://reader.dengcb.com/#plugins", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn has_online_sources(app: AppHandle) -> Result<bool, String> {
+    Ok(plugin_manager::get_installed_plugins(&app)?
+        .iter()
+        .any(|plugin| plugin.site.is_some()))
 }
 
 /// 检查外部插件更新：拉取远端版本索引并与已安装版本比较
@@ -881,13 +894,15 @@ pub async fn update_plugin(
         plugin_manager::reject_blocking_install_conflicts(&conflicts)?;
         // 同 ID 覆盖属预期更新路径，不走 confirm_plugin_replacement 确认弹窗。
         let result = plugin_manager::install_plugin_from_file(&app, &tmp_path)?;
-        enable_plugin_in_settings(&app, &result.id)?;
         Ok(result)
     })();
     let _ = std::fs::remove_file(&tmp);
     let result = install?;
 
-    println!("[PluginUpdate] Updated {} -> v{}", result.id, result.version);
+    println!(
+        "[PluginUpdate] Updated {} -> v{}",
+        result.id, result.version
+    );
     // 触发主窗口热更新（原地换插件实例）与书店菜单重建
     let _ = app.emit("plugins-updated", ());
     refresh_app_menu(&app);
@@ -899,7 +914,9 @@ pub async fn update_plugin(
 pub async fn get_installed_plugins(
     app: AppHandle,
 ) -> Result<Vec<plugin_manager::PluginInfo>, String> {
-    plugin_manager::get_installed_plugins(&app)
+    let mut plugins = plugin_manager::get_installed_plugins(&app)?;
+    crate::sites::sort_plugins_by_site_order(&crate::settings::read_settings(&app)?, &mut plugins);
+    Ok(plugins)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -929,7 +946,10 @@ const READER_BOOT_PLUGINS: &[&str] = &["qidian", "qimao"];
 /// 分栏站点携带（双栏偏好由前端在 documentStart 实时读 localStorage 判定，
 /// 不进快照）。progress 等运行态样式不进快照。
 pub fn build_boot_snapshot_json(
-    plugins: &[(plugin_manager::PluginInfo, std::collections::BTreeMap<String, String>)],
+    plugins: &[(
+        plugin_manager::PluginInfo,
+        std::collections::BTreeMap<String, String>,
+    )],
     settings: &serde_json::Value,
 ) -> Option<String> {
     let enabled = settings
@@ -968,12 +988,14 @@ pub fn build_boot_snapshot_json(
             continue;
         }
         let caps = plugin.capabilities.clone().unwrap_or_else(|| json!({}));
-        let want_navbar =
-            caps.get("hideNavbar").and_then(serde_json::Value::as_bool) == Some(true);
+        let want_navbar = caps.get("hideNavbar").and_then(serde_json::Value::as_bool) == Some(true);
         let want_toolbar =
             caps.get("hideToolbar").and_then(serde_json::Value::as_bool) == Some(true);
         let want_reader = READER_BOOT_PLUGINS.contains(&plugin.id.as_str())
-            && caps.get("doubleColumn").and_then(serde_json::Value::as_bool) == Some(true);
+            && caps
+                .get("doubleColumn")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
         if !want_navbar && !want_toolbar && !want_reader {
             continue;
         }
@@ -1031,8 +1053,10 @@ pub fn build_boot_snapshot<R: Runtime>(
     let is_enabled = |plugin_id: &str| {
         enabled.is_none_or(|ids| ids.iter().any(|value| value.as_str() == Some(plugin_id)))
     };
-    let mut pairs: Vec<(plugin_manager::PluginInfo, std::collections::BTreeMap<String, String>)> =
-        Vec::new();
+    let mut pairs: Vec<(
+        plugin_manager::PluginInfo,
+        std::collections::BTreeMap<String, String>,
+    )> = Vec::new();
     for plugin in plugin_manager::get_installed_plugins(app)? {
         if !is_enabled(&plugin.id) {
             continue;
@@ -1428,7 +1452,10 @@ mod tests {
         let mut styles = std::collections::BTreeMap::new();
         styles.insert("navbar.css".to_string(), "header{display:none}".to_string());
         styles.insert("toolbar.css".to_string(), ".rail{display:none}".to_string());
-        styles.insert("reader.css".to_string(), ".paged{column-count:2}".to_string());
+        styles.insert(
+            "reader.css".to_string(),
+            ".paged{column-count:2}".to_string(),
+        );
 
         let mut plugin = web_plugin(json!("zread.ai"));
         plugin.id = "zread".to_string();
@@ -1460,7 +1487,10 @@ mod tests {
     #[test]
     fn boot_snapshot_embeds_reader_boot_only_for_mpa_allowlist() {
         let mut styles = std::collections::BTreeMap::new();
-        styles.insert("reader.css".to_string(), ".paged{column-count:2}".to_string());
+        styles.insert(
+            "reader.css".to_string(),
+            ".paged{column-count:2}".to_string(),
+        );
         styles.insert("wide.css".to_string(), ".paged{--ratio:90%}".to_string());
         styles.insert(
             "theme-night.css".to_string(),
@@ -1580,7 +1610,7 @@ mod tests {
     }
 
     #[test]
-    fn bookstore_list_is_main_window_only_and_starts_with_local_then_weread() {
+    fn bookstore_list_is_main_window_only_and_starts_with_local() {
         let app = tauri::test::mock_app();
         let settings_window =
             tauri::WebviewWindowBuilder::new(&app, "settings", Default::default())
@@ -1606,12 +1636,7 @@ mod tests {
             .first()
             .and_then(|entry| entry.icon.as_deref())
             .is_some_and(|icon| icon.starts_with("data:image/png;base64,")));
-        // mock 环境无 lastSiteId 记录，按菜单语义视为微信读书
-        let weread = entries.get(1).expect("weread follows local");
-        assert_eq!(weread.id, "weread");
-        assert_eq!(weread.name, "微信读书");
-        assert_eq!(weread.index, 1);
-        assert_eq!(weread.current, true);
+        assert!(entries[0].current);
         for (offset, entry) in entries.iter().enumerate().skip(1) {
             assert_eq!(entry.index, offset);
         }

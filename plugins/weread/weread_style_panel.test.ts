@@ -1,5 +1,6 @@
+import { detectWereadTheme } from './weread_theme';
 import { afterEach, beforeEach, describe, expect, it, mock, test } from 'bun:test';
-import type { PluginAPI } from '../core/plugin_types';
+import type { PluginAPI } from '../../src/scripts/core/plugin_types';
 import { setupStylePanel } from './weread_style_panel';
 
 const createAPI = (initial: Record<string, unknown> = {}) => {
@@ -265,12 +266,8 @@ describe('WeRead 纯白正文背景黑度', () => {
 describe('微信读书主题 → 整窗联动契约', () => {
   test('watcher 变化时调用 plugin:window|set_theme（菜单栏/原生件深浅色）', async () => {
     const calls: Array<{ label?: string; value?: string }> = [];
-    (window as any).__TAURI__ = {
-      ...(window as any).__TAURI__,
-      __currentWindow: { label: 'main' },
-      core: { invoke: async (cmd: string, args: any) => { if (cmd === 'plugin:window|set_theme') calls.push(args); return null; } },
-    };
     const context = createAPI({ whiteText: true });
+    Object.assign(context.api, { reader: {syncTheme: () => calls.push({value:detectWereadTheme()})} });
     let localTeardown = setupStylePanel(context.api);
     // 使 mount 真正发生：reader 路径 + .readerControls 容器（否则面板不装配、
     // syncWindowTheme 不会挂载——本用例此前 Received:[] 的根因）
