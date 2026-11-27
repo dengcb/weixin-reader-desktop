@@ -105,6 +105,45 @@ fn reveal_main_window_once<R: tauri::Runtime>(
     }
 }
 
+/// Windows：在非主窗口销毁前同步摘除共享 HMENU，防止 Win32 DestroyWindow 自动
+/// DestroyMenu 误杀主窗口正在使用的同一个 HMENU。
+///
+/// 注意：tauri 的 `window.remove_menu()` 通过 `run_on_main_thread` 异步派发
+/// `muda::remove_for_hwnd`，若仅依赖它，在 `CloseRequested` 返回后同步执行的
+/// `DestroyWindow` 可能抢在闭包之前销毁 HMENU。因此这里先在主线程同步调用
+/// `SetMenu(hwnd, NULL)` 立即脱钩，再调用 `remove_menu()` 清理 Tauri/muda 状态。
+#[cfg(target_os = "windows")]
+fn detach_shared_menu_on_windows<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetMenu;
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            SetMenu(hwnd.0 as _, std::ptr::null_mut());
+        }
+    }
+    let _ = window.remove_menu();
+}
+
+/// Windows 兜底：若某个辅助窗口绕过 CloseRequested 直接 destroy() 导致主窗口的
+/// 共享 HMENU 已被系统销毁（`GetMenu` 非空但 `IsMenu == 0`），立即重建主窗口菜单。
+#[cfg(target_os = "windows")]
+fn ensure_main_menu_alive_on_windows<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetMenu, IsMenu};
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(hwnd) = main.hwnd() else {
+        return;
+    };
+    let menu_dead = unsafe {
+        let hmenu = GetMenu(hwnd.0 as _);
+        !hmenu.is_null() && IsMenu(hmenu) == 0
+    };
+    if menu_dead {
+        let _ = main.remove_menu();
+        let _ = menu::rebuild_full_menu(app);
+    }
+}
+
 enum MainStartupTarget {
     Online(String),
     Local(tauri::Url),
@@ -812,6 +851,15 @@ pub fn run() {
 
             // Menu Init - AFTER main window is created
             menu::init(app)?;
+            // Windows：app.set_menu 会把同一个 Win32 HMENU 共享挂到所有已存在窗口
+            //（包含无边框启动遮罩窗 startup）。startup 关闭时 DestroyWindow 会自动
+            // DestroyMenu 销毁共享 HMENU，导致主窗口暗色菜单栏退化为白底黑字且
+            // 首次 show_menu 失败（ERROR_INVALID_MENU_HANDLE）。启动窗无需菜单，
+            // 挂载后立刻同步摘除。
+            #[cfg(target_os = "windows")]
+            if let Some(startup) = app.get_webview_window("startup") {
+                detach_shared_menu_on_windows(&startup);
+            }
 
             // 语音翻页：注册监听管理状态，并按记忆的开关状态恢复监听。
             app.manage(voice_turner::VoiceTurnerState::new());
@@ -996,6 +1044,28 @@ pub fn run() {
                 }
                 // WindowEvent - monitor for destroyed/close events
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    // Windows：非主窗口（settings / plugin-editor / plugin-installer /
+                    // startup / 法律文档窗等）与主窗口共享同一个 app 级 Win32 HMENU。
+                    // 窗口销毁时 Win32 DestroyWindow 会自动 DestroyMenu 销毁挂载其上的
+                    // HMENU，导致主窗口菜单栏变成死句柄（暗色绘制 GetMenuItemInfoW 失败
+                    // 退化为白底黑字，且 show_menu 返回 ERROR_INVALID_MENU_HANDLE）。
+                    // 1) CloseRequested 时在主线程同步 SetMenu(hwnd, NULL) + remove_menu；
+                    // 2) 对绕过 CloseRequested 直接 destroy() 的辅助窗，在 Destroyed 后
+                    //    校验主窗口 HMENU 存活，失效则自愈重建。
+                    #[cfg(target_os = "windows")]
+                    if label != "main" {
+                        match event {
+                            tauri::WindowEvent::CloseRequested { .. } => {
+                                if let Some(win) = app_handle.get_webview_window(&label) {
+                                    detach_shared_menu_on_windows(&win);
+                                }
+                            }
+                            tauri::WindowEvent::Destroyed => {
+                                ensure_main_menu_alive_on_windows(app_handle);
+                            }
+                            _ => {}
+                        }
+                    }
                     if label == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                         println!("[WindowEvent] Window '{}' destroyed", label);
                         clear_auto_flip_active(app_handle.clone(), "WindowEvent");
