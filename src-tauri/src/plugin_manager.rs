@@ -461,6 +461,17 @@ fn remove_plugin_directory(plugin_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) const MANIFEST_V2: &str = "manifest.v2.json";
+pub(crate) const MANIFEST_V1: &str = "manifest.json";
+
+pub(crate) fn plugin_manifest_name(directory: &Path) -> &'static str {
+    let versioned = directory.join(MANIFEST_V2);
+    match fs::symlink_metadata(&versioned) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => MANIFEST_V1,
+        _ => MANIFEST_V2,
+    }
+}
+
 pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
     if Path::new(file_path)
         .extension()
@@ -483,6 +494,7 @@ pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
     }
 
     let mut total_size = 0_u64;
+    let mut manifest_name = None;
     for index in 0..archive.len() {
         let entry = archive
             .by_index(index)
@@ -491,6 +503,14 @@ pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
             .enclosed_name()
             .ok_or("Plugin archive contains an unsafe path")?;
         validate_archive_path(&enclosed)?;
+        if let Some(name) = [MANIFEST_V1, MANIFEST_V2]
+            .into_iter()
+            .find(|name| enclosed == Path::new(name))
+        {
+            if entry.is_dir() || manifest_name.replace(name).is_some() {
+                return Err("插件包必须包含且只包含一份清单".to_string());
+            }
+        }
         if is_zip_symlink(entry.unix_mode()) {
             return Err("Plugin archive cannot contain symbolic links".to_string());
         }
@@ -504,8 +524,8 @@ pub fn inspect_plugin_package(file_path: &str) -> Result<PluginInfo, String> {
     }
 
     let mut manifest_file = archive
-        .by_name("manifest.json")
-        .map_err(|_| "Plugin package missing manifest.json")?;
+        .by_name(manifest_name.ok_or("插件包缺少清单")?)
+        .map_err(|_| "无法读取插件包清单")?;
     if manifest_file.size() > 256 * 1024 {
         return Err("Plugin manifest is too large".to_string());
     }
@@ -638,7 +658,7 @@ pub fn install_plugin_from_file<R: Runtime>(
             }
         }
 
-        let staged_manifest = fs::read_to_string(staging.join("manifest.json"))
+        let staged_manifest = fs::read_to_string(staging.join(plugin_manifest_name(&staging)))
             .map_err(|error| format!("Failed to verify staged manifest: {error}"))?;
         let staged_info: PluginInfo = serde_json::from_str(&staged_manifest)
             .map_err(|error| format!("Invalid staged manifest: {error}"))?;
@@ -660,6 +680,16 @@ pub fn install_plugin_from_file<R: Runtime>(
         return Err(error);
     }
 
+    if plugin_manifest_name(&plugin_dir) == MANIFEST_V2
+        && plugin_manifest_name(&staging) == MANIFEST_V1
+    {
+        if let Err(error) = fs::rename(staging.join(MANIFEST_V1), staging.join(MANIFEST_V2)) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(format!(
+                "Failed to retain the plugin manifest format: {error}"
+            ));
+        }
+    }
     replace_plugin_directory(&staging, &plugin_dir, &backup)?;
 
     manifest.enabled = true;
@@ -691,7 +721,8 @@ pub fn get_installed_plugins<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Plugi
         if validate_plugin_id(plugin_id).is_err() {
             continue;
         }
-        let manifest_path = installed_plugin_dir(app, plugin_id)?.join("manifest.json");
+        let directory = installed_plugin_dir(app, plugin_id)?;
+        let manifest_path = directory.join(plugin_manifest_name(&directory));
         let Ok(metadata) = fs::symlink_metadata(&manifest_path) else {
             continue;
         };
@@ -826,6 +857,12 @@ mod tests {
         let plugins = get_installed_plugins(handle).unwrap();
         assert_eq!(plugins.len(), 1);
         assert_eq!(plugins[0].id, "weread");
+        let installed = installed_plugin_dir(handle, "weread").unwrap();
+        assert!(installed.join(MANIFEST_V2).is_file());
+        assert!(
+            !installed.join(MANIFEST_V1).exists(),
+            "旧版只读取 manifest.json"
+        );
         assert!(manifest_matches_host(&plugins[0], "book.weread.qq.com"));
         assert!(!manifest_matches_host(&plugins[0], "other.example"));
         assert_eq!(crate::settings::read_settings(handle).unwrap(), before);

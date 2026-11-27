@@ -260,7 +260,7 @@ def test_packaged_reader_plugin():
     root = TEST_PAGE_PATH.parents[1]
     with ZipFile(root / "plugins/weread.atrd") as archive:
         package = {
-            "plugin": json.loads(archive.read("manifest.json")),
+            "plugin": json.loads(archive.read("manifest.v2.json")),
             "code": archive.read("plugin.js").decode(),
         }
     with sync_playwright() as p:

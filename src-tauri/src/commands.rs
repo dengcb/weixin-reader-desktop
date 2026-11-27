@@ -1129,6 +1129,7 @@ pub struct PluginFile {
 
 fn write_plugin_files(
     plugin_dir: &std::path::Path,
+    manifest_name: &str,
     manifest: &serde_json::Value,
     files: Vec<PluginFile>,
 ) -> Result<(), String> {
@@ -1141,6 +1142,11 @@ fn write_plugin_files(
     let mut names = std::collections::HashSet::new();
     for file in &files {
         plugin_manager::validate_plugin_file_name(&file.name)?;
+        if file.name.eq_ignore_ascii_case(plugin_manager::MANIFEST_V1)
+            || file.name.eq_ignore_ascii_case(plugin_manager::MANIFEST_V2)
+        {
+            return Err("The plugin manifest must be edited separately".to_string());
+        }
         if !names.insert(file.name.clone()) {
             return Err(format!("Duplicate plugin file: {}", file.name));
         }
@@ -1166,7 +1172,7 @@ fn write_plugin_files(
         .and_then(serde_json::Value::as_str)
         .ok_or("Missing plugin id in manifest")?;
     plugin_manager::validate_plugin_id(manifest_id)?;
-    let manifest_path = plugin_dir.join("manifest.json");
+    let manifest_path = plugin_dir.join(manifest_name);
     if std::fs::symlink_metadata(&manifest_path).is_ok_and(|meta| meta.file_type().is_symlink()) {
         return Err("Plugin manifest cannot be a symbolic link".to_string());
     }
@@ -1227,8 +1233,8 @@ pub async fn load_plugin_for_edit(
         return Err(format!("Plugin not found: {}", plugin_id));
     }
 
-    // 读取 manifest.json
-    let manifest_path = plugins_dir.join("manifest.json");
+    // 读取插件清单
+    let manifest_path = plugins_dir.join(plugin_manager::plugin_manifest_name(&plugins_dir));
     let manifest_metadata = std::fs::symlink_metadata(&manifest_path)
         .map_err(|e| format!("Failed to inspect manifest: {}", e))?;
     if manifest_metadata.file_type().is_symlink() || !manifest_metadata.is_file() {
@@ -1314,7 +1320,12 @@ pub async fn save_plugin(
     if !plugin_dir.exists() {
         return Err("Installed plugin not found".to_string());
     }
-    write_plugin_files(&plugin_dir, &manifest, files)
+    write_plugin_files(
+        &plugin_dir,
+        plugin_manager::plugin_manifest_name(&plugin_dir),
+        &manifest,
+        files,
+    )
 }
 
 /// 导出位置由原生对话框选择，选定后由 Rust 直接写入。
@@ -1336,7 +1347,7 @@ pub async fn export_plugin(
 
     let Some(path) = result else { return Ok(None) };
     let directory = path.as_path().ok_or("Selected export path is not local")?;
-    write_plugin_files(directory, &manifest, files)?;
+    write_plugin_files(directory, plugin_manager::MANIFEST_V1, &manifest, files)?;
     Ok(Some(directory.to_string_lossy().to_string()))
 }
 
@@ -1378,7 +1389,12 @@ pub async fn install_plugin_from_editor(
     ));
     std::fs::create_dir(&staging)
         .map_err(|error| format!("Failed to create plugin staging directory: {error}"))?;
-    if let Err(error) = write_plugin_files(&staging, &manifest, files) {
+    if let Err(error) = write_plugin_files(
+        &staging,
+        plugin_manager::plugin_manifest_name(&plugin_dir),
+        &manifest,
+        files,
+    ) {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(error);
     }
@@ -1647,6 +1663,7 @@ mod tests {
         let directory = temporary_editor_directory("layout");
         write_plugin_files(
             &directory,
+            plugin_manager::MANIFEST_V1,
             &json!({ "id": "demo" }),
             vec![
                 PluginFile {
@@ -1678,6 +1695,7 @@ mod tests {
         let duplicate = temporary_editor_directory("duplicate");
         let result = write_plugin_files(
             &duplicate,
+            plugin_manager::MANIFEST_V1,
             &json!({ "id": "demo" }),
             vec![
                 PluginFile {
@@ -1694,12 +1712,13 @@ mod tests {
         assert!(!duplicate.exists());
 
         let missing_id = temporary_editor_directory("missing-id");
-        assert!(write_plugin_files(&missing_id, &json!({}), Vec::new()).is_err());
+        assert!(write_plugin_files(&missing_id, plugin_manager::MANIFEST_V1, &json!({}), Vec::new()).is_err());
 
         let oversized = temporary_editor_directory("oversized");
         let content = "x".repeat(4 * 1024 * 1024 + 1);
         assert!(write_plugin_files(
             &oversized,
+            plugin_manager::MANIFEST_V1,
             &json!({ "id": "demo" }),
             vec![PluginFile {
                 name: "plugin.js".to_string(),
@@ -1714,7 +1733,7 @@ mod tests {
     fn editor_writer_requires_a_real_directory_root() {
         let path = temporary_editor_directory("root-file");
         std::fs::write(&path, "not a directory").unwrap();
-        let result = write_plugin_files(&path, &json!({ "id": "demo" }), Vec::new());
+        let result = write_plugin_files(&path, plugin_manager::MANIFEST_V1, &json!({ "id": "demo" }), Vec::new());
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "not a directory");
         let _ = std::fs::remove_file(path);
@@ -1742,6 +1761,7 @@ mod tests {
 
         let result = write_plugin_files(
             &plugin_dir,
+            plugin_manager::MANIFEST_V1,
             &json!({ "id": "demo" }),
             vec![PluginFile {
                 name: "plugin.js".to_string(),

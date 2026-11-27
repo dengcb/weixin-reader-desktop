@@ -41,6 +41,11 @@ function resolvePluginDir(pluginId: string): string | null {
   return null;
 }
 
+// The versioned manifest keeps this plugin out of readers with a built-in copy.
+function packageManifestName(pluginId: string): string {
+  return pluginId === 'weread' ? 'manifest.v2.json' : 'manifest.json';
+}
+
 /**
  * 生成 plugins/index.json：外部插件版本索引，应用内「检查更新」的唯一数据源。
  * 版本取自 .atrd 内的 manifest（构建产物），不读源码 manifest——
@@ -54,7 +59,7 @@ async function updatePluginIndex(): Promise<void> {
     const id = file.slice(0, -'.atrd'.length);
     let version: string | null = null;
     try {
-      const manifestText = await $`unzip -p ${join(EXTERNAL_PLUGINS_DIR, file)} manifest.json`.text();
+      const manifestText = await $`unzip -p ${join(EXTERNAL_PLUGINS_DIR, file)} ${packageManifestName(id)}`.text();
       version = JSON.parse(manifestText).version ?? null;
     } catch {
       version = null;
@@ -142,10 +147,10 @@ async function buildPlugin(pluginId: string): Promise<void> {
   
   // 5. 写入修改后的 manifest
   writeFileSync(
-    join(tempDir, 'manifest.json'),
+    join(tempDir, packageManifestName(pluginId)),
     JSON.stringify(externalManifest, null, 2)
   );
-  console.log(`  ✓ Created manifest.json (builtin: false)`);
+  console.log(`  ✓ Created ${packageManifestName(pluginId)} (builtin: false)`);
   
   // 6. 复制样式文件（排除 release 子目录，避免"包中包"）
   if (existsSync(stylesDir)) {

@@ -1,2 +1,3 @@
 # 赞助入口：指向 README「赞赏支持」章节
-custom: ["https://github.com/dengcb/weixin-reader-desktop#-赞赏支持"]
+# custom URL 须为 ASCII（中文锚点需百分号编码），否则 GitHub 会静默丢弃整条链接
+custom: ["https://github.com/dengcb/weixin-reader-desktop#-%E8%B5%9E%E8%B5%8F%E6%94%AF%E6%8C%81"]

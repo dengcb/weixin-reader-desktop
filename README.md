@@ -7,7 +7,7 @@
 **官方支持：微信读书 · 番茄小说 · 本地 TXT / EPUB / MOBI / PDF(文字版) 电子书**
 
 <p>
-  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v2.2.4-orange?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/dengcb/weixin-reader-desktop/releases"><img src="https://img.shields.io/badge/release-v2.2.5-orange?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/github/downloads/dengcb/weixin-reader-desktop/total?style=flat-square&color=green" alt="Downloads">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D5?style=flat-square&logo=tauri&logoColor=white" alt="Tauri">
@@ -129,7 +129,7 @@ CPU 占用低
 
 ### 🛠 可视化插件编辑器 <sup>v0.9.0 新增</sup>
 
-GitHub 版首次启动预装微信读书。商店版可前往「设置 → 内容与扩展 → 获取插件」，在艾特阅读官网下载后双击安装。
+GitHub 版首次启动预装微信读书。商店版可前往「设置 → 内容与扩展 → 获取插件」，在艾特阅读官网下载后双击安装。微信读书独立插件适用于艾特阅读 2.2.5 及以上版本。
 
 > 内置插件开发工具，无需外部 IDE 即可创建和编辑插件
 
