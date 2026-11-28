@@ -895,11 +895,17 @@ pub fn handle_menu_action<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<()
             open_settings_target(app, "general", None, None);
         }
         "settings_reading" => open_settings_target(app, "reading", Some("auto-flip"), None),
-        "add_online_source" | "settings_content" => {
-            open_settings_target(app, "content", None, None)
+        "add_online_source" => {
+            // 与「管理内容与扩展」区分：添加来源引导到官网插件 catalog，
+            // 用默认浏览器打开，避免和上一层设置入口重复。
+            use tauri_plugin_opener::OpenerExt;
+            let _ = app
+                .opener()
+                .open_url("https://reader.dengcb.com/#plugins", None::<&str>);
         }
+        "settings_content" => open_settings_target(app, "content", None, None),
         "settings_data" => {
-            // 最近打开 → 管理阅读记录：直接进本地书架页（本地书目与封面管理）
+            // 最近打开 → 打开本地书架：直接进本地书架页（本地书目与封面管理）
             let url = crate::local_shelf_page_url();
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_theme(None);
@@ -972,7 +978,7 @@ fn build_app_menu<R: Runtime>(
         None::<&str>,
     )?;
     let settings_data =
-        MenuItem::with_id(handle, "settings_data", "管理阅读记录…", true, None::<&str>)?;
+        MenuItem::with_id(handle, "settings_data", "打开本地书架…", true, None::<&str>)?;
 
     let open_local = MenuItem::with_id(
         handle,

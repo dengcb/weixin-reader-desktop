@@ -159,10 +159,6 @@ async function main(): Promise<void> {
     let inFullscreen = false;
     let suppressEdgeMove = false;
     const hideTimer: { current: ReturnType<typeof setTimeout> | null } = { current: null };
-    // 诊断窗（同第5轮方法论：先可观测再判定）：真机 CDP 直接读
-    // window.wxrdEdgeProbe 判定链路停在哪一步
-    const probe = { inFullscreen: false, suppressed: false, lastY: -1, handlerFired: 0, lastGuard: '' };
-    (window as any).wxrdEdgeProbe = probe;
     // 真相源策略（dev.12 定案）：历史 inFullscreen 闭包只被
     // fullscreen-changed 事件驱动，而启动全屏回放的 emit 与注入脚本
     // listen 注册存在竞速（非持久广播在订阅前发生即丢失）——探针实证
@@ -182,8 +178,6 @@ async function main(): Promise<void> {
       });
     };
     const edgeHandler = (e: MouseEvent) => {
-      probe.lastY = e.clientY;
-      probe.suppressed = suppressEdgeMove;
       const topClientY = (e as { __atreaderTopClientY?: number }).__atreaderTopClientY;
       const y = typeof topClientY === 'number' ? topClientY : e.clientY;
       // 指针离开命中带较远时不隐藏（保留 EXIT_BUTTON_LINGER_MS 的找回窗口）；
@@ -192,10 +186,7 @@ async function main(): Promise<void> {
       // 全屏判定改为 fsNow() 主动查询（dev.12 探针实证闭包事件源会丢启动
       // 全屏回放）。命中后先查询，真全屏才建钮；查询失败退化用事件缓存。
       void fsNow().then((fs) => {
-        probe.inFullscreen = fs;
-        if (!fs || suppressEdgeMove) { probe.lastGuard = 'fullscreen-or-suppress'; return; }
-        probe.handlerFired += 1;
-        probe.lastGuard = 'pass';
+        if (!fs || suppressEdgeMove) return;
         const btn = ensureExitButton(document);
         if (btn) {
           showExitButton(btn, hideTimer);

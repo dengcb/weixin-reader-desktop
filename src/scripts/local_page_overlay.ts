@@ -15,7 +15,8 @@ import {
 } from './core/bookstore_switcher';
 import { subscribeRemoteHidButtons } from './core/remote_hid_source';
 import { showSiteSwitchLoading } from './core/site_switch_loading';
-import { invoke } from './core/tauri';
+import { invoke, listen } from './core/tauri';
+import { showToast } from './core/toast';
 
 interface BookstoreListItemPayload {
   id: string;
@@ -45,6 +46,10 @@ const fetchList = async (): Promise<BookstoreListItemPayload[]> => {
   const list = await invoke<BookstoreListItemPayload[]>('get_bookstore_list');
   return Array.isArray(list) ? list : [];
 };
+
+// 本地裸页不跑 AppRuntime 的 Toast 管理器：壳发来的 show-toast（Cmd+8 内存占用等）
+// 在此复用系统大字体 Toast，与注入页观感一致。
+void listen<string>('show-toast', (event) => showToast(event.payload));
 
 const commitEntry = (entry: BookstoreEntry): void => {
   if (currentId !== null && entry.id === currentId) return;

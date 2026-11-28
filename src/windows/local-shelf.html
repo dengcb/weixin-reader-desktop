@@ -130,6 +130,23 @@
       -webkit-user-select: text;
     }
     .search input::placeholder { color: var(--muted); }
+    .search-clear {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      flex: none;
+      border: 0;
+      padding: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .search-clear:hover { color: var(--ink); background: rgba(127, 127, 127, .18); }
+    .search-clear svg { width: 12px; height: 12px; }
+    .search-clear[hidden] { display: none; }
     .topbar-actions {
       display: flex;
       justify-content: flex-end;
@@ -388,6 +405,11 @@
         <path d="M20 20l-3.6-3.6"></path>
       </svg>
       <input id="search" type="text" placeholder="在书架中搜索" aria-label="搜索本地图书" spellcheck="false">
+      <button type="button" id="searchClear" class="search-clear" hidden aria-label="清除搜索">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6L6 18"></path>
+        </svg>
+      </button>
     </label>
     <div class="topbar-actions">
       <button type="button" class="pill" id="manageBtn">管理</button>
@@ -685,7 +707,9 @@
     };
 
     const applyFilter = () => {
-      const keyword = document.getElementById('search').value.trim().toLowerCase();
+      const searchEl = document.getElementById('search');
+      document.getElementById('searchClear').hidden = !searchEl.value;
+      const keyword = searchEl.value.trim().toLowerCase();
       const list = keyword
         ? books.filter((book) => book.title.toLowerCase().includes(keyword))
         : books;
@@ -704,6 +728,12 @@
     };
 
     document.getElementById('search').addEventListener('input', applyFilter);
+    document.getElementById('searchClear').addEventListener('click', () => {
+      const search = document.getElementById('search');
+      search.value = '';
+      applyFilter();
+      search.focus();
+    });
 
     const importBook = () => {
       void invoke('simulate_menu_click', { action: 'open_local_book' })?.catch?.(() => {});

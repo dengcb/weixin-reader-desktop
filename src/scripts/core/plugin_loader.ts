@@ -444,9 +444,33 @@ export class PluginLoader {
       const mod = await import(/* @vite-ignore */ url);
       const PluginClass = mod?.default;
       return typeof PluginClass === 'function' ? new PluginClass() : null;
+    } catch (error) {
+      // 部分站点（微信读书）CSP 的 script-src 不含 blob:，模块导入会被拦
+      // （TypeError: Importing a module script failed）。回退为 inline classic
+      // script：复制页面既有脚本的 nonce，nonce / strict-dynamic CSP 均放行。
+      log.warn(`[PluginLoader] blob import blocked, inline fallback: ${error}`);
+      return this.instantiateViaInlineScript(code);
     } finally {
       URL.revokeObjectURL(url);
     }
+  }
+
+  private instantiateViaInlineScript(code: string): ReaderPlugin | null {
+    const transformed = code
+      .replace(/export\s*\{\s*([A-Za-z0-9_$]+)\s+as\s+default\s*\}\s*;?/g,
+        'globalThis.__ATREADER_PLUGIN_DEFAULT__ = $1;')
+      .replace(/export\s+default\s+([A-Za-z0-9_$]+)\s*;?/g,
+        'globalThis.__ATREADER_PLUGIN_DEFAULT__ = $1;');
+    const script = document.createElement('script');
+    const nonceSource = document.querySelector('script[nonce]');
+    const nonce = nonceSource?.getAttribute('nonce') || (nonceSource as HTMLScriptElement | null)?.nonce;
+    if (nonce) script.setAttribute('nonce', nonce);
+    script.textContent = transformed;
+    document.head.appendChild(script);
+    script.remove();
+    const PluginClass = (globalThis as Record<string, unknown>).__ATREADER_PLUGIN_DEFAULT__;
+    delete (globalThis as Record<string, unknown>).__ATREADER_PLUGIN_DEFAULT__;
+    return typeof PluginClass === 'function' ? new (PluginClass as new () => ReaderPlugin)() : null;
   }
 
   destroy(): void {

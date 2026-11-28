@@ -286,7 +286,7 @@ fn is_library_page_url(url: &tauri::Url) -> bool {
     is_local_origin && url.path().trim_end_matches('/') == LIBRARY_PAGE_PATH
 }
 
-/// 本地书架页 URL：菜单「管理阅读记录」与书城切换到本地的落点。
+/// 本地书架页 URL：菜单「打开本地书架」与书城切换到本地的落点。
 #[cfg(target_os = "windows")]
 pub(crate) fn local_shelf_page_url() -> tauri::Url {
     "http://atreader.localhost/local-shelf"
@@ -733,7 +733,6 @@ pub fn run() {
                 // 不再画自己的默认白底，见 Cargo.toml macos-private-api）。
                 .background_color(Color::from((26, 26, 26)))
                 .visible(false)
-                // .initialization_script(console_filter_script)  <-- DISABLED
                 .initialization_script(inject_script)
                 .on_page_load(move |window, payload| {
                     if payload.event() == PageLoadEvent::Started {

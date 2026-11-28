@@ -11,12 +11,10 @@ function navigateToChapterTitle(title: string): void {
       }
     }
     if (!target) {
-      console.debug(`[RemoteManager] 目录选章未匹配: ${title}`);
       return;
     }
     const url = chapterManager.buildChapterUrl(target.chapterIdx);
     if (!url) return;
-    console.debug(`[RemoteManager] 目录跳转: ${target.title}`);
     window.location.href = url;
   }
 
